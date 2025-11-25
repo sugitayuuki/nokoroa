@@ -19,7 +19,6 @@ import {
   CircularProgress,
   IconButton,
   InputAdornment,
-  ListItem,
   ListItemIcon,
   ListItemText,
   Paper,
@@ -190,10 +189,9 @@ export const SearchForm = ({ onSearch, initialFilters }: SearchFormProps) => {
               return `${option.type}-${option.value}`;
             }}
             renderOption={(props, option) => {
-              const { key, ...restProps } =
-                props as React.HTMLAttributes<HTMLLIElement> & { key: string };
+              const { key, ...restProps } = props;
               return (
-                <ListItem {...restProps} key={key}>
+                <li key={key} {...restProps}>
                   <ListItemIcon>
                     {typeof option === 'object' && option.type === 'history' ? (
                       <HistoryIcon fontSize="small" />
@@ -215,7 +213,7 @@ export const SearchForm = ({ onSearch, initialFilters }: SearchFormProps) => {
                       <ClearIcon fontSize="small" />
                     </IconButton>
                   )}
-                </ListItem>
+                </li>
               );
             }}
             renderInput={(params) => (
@@ -277,12 +275,9 @@ export const SearchForm = ({ onSearch, initialFilters }: SearchFormProps) => {
                     return `${option.type}-${option.value}`;
                   }}
                   renderOption={(props, option) => {
-                    const { key, ...restProps } =
-                      props as React.HTMLAttributes<HTMLLIElement> & {
-                        key: string;
-                      };
+                    const { key, ...restProps } = props;
                     return (
-                      <ListItem {...restProps} key={key}>
+                      <li key={key} {...restProps}>
                         <ListItemIcon>
                           {typeof option === 'object' &&
                           option.type === 'history' ? (
@@ -308,7 +303,7 @@ export const SearchForm = ({ onSearch, initialFilters }: SearchFormProps) => {
                               <ClearIcon fontSize="small" />
                             </IconButton>
                           )}
-                      </ListItem>
+                      </li>
                     );
                   }}
                   renderInput={(params) => (
