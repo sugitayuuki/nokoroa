@@ -55,3 +55,13 @@ output "domain_name" {
   description = "Domain name"
   value       = "https://nokoroa.com"
 }
+
+output "ecr_backend_repository_url" {
+  description = "ECR repository URL for backend"
+  value       = aws_ecr_repository.backend.repository_url
+}
+
+output "ecr_frontend_repository_url" {
+  description = "ECR repository URL for frontend"
+  value       = aws_ecr_repository.frontend.repository_url
+}
