@@ -41,7 +41,7 @@ Instagramなどの既存SNSでは、投稿形式が限定されていたり、�
 
 コード解析 / フォーマッター: ESLint / Prettier
 
-CSSフレームワーク: Material-UI v7 (Emotion)
+CSSフレームワーク: Material-UI v7
 
 主要パッケージ: SWR / React Hook Form / Zod / react-hot-toast / date-fns
 
