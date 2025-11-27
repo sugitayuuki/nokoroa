@@ -29,59 +29,28 @@ Instagramなどの既存SNSでは、投稿形式が限定されていたり、�
 
 そこで、旅行の思い出共有に特化し、地図から投稿を探せるなど旅行体験に最適化されたプラットフォームを自分で作ることにしました。
 
-## 技術スタック
+## 使用技術一覧
 
-### フロントエンド
-- Next.js 15 (App Router / Server Components / Standalone Output)
-- React 19
-- TypeScript 5
-- Material-UI v7 (MUI)
-- MUI Icons
-- Emotion (CSS-in-JS)
-- SWR (データフェッチング・キャッシング)
-- React Hook Form (フォーム管理)
-- Zod (スキーマバリデーション)
-- date-fns (日付処理)
-- react-hot-toast (トースト通知)
-- Google Maps JavaScript API
-- Google OAuth 2.0
-- カスタムフック (無限スクロール、検索サジェスト等)
-- ESLint / Prettier
+**バックエンド**: Node.js 23 / NestJS 11 / TypeScript 5 / Prisma 6 / PostgreSQL
 
-### バックエンド
-- Node.js 23
-- NestJS 11
-- TypeScript 5
-- Prisma ORM 6
-- PostgreSQL
-- RESTful API設計
-- Passport.js (認証ミドルウェア)
-- passport-jwt (JWT戦略)
-- passport-google-oauth20 (Google OAuth)
-- JWT (トークン認証)
-- bcrypt (パスワードハッシュ)
-- class-validator / class-transformer (DTO バリデーション・変換)
-- Multer (ファイルアップロード)
-- RxJS (リアクティブプログラミング)
-- CORS (クロスオリジン制御)
-- Jest / SuperTest (テスト)
-- SWC (高速コンパイラ)
-- ESLint / Prettier
+コード解析 / フォーマッター: ESLint / Prettier
 
-### インフラ / DevOps
-- Docker (マルチステージビルド)
-- Docker Compose (ローカル開発環境)
-- AWS VPC (パブリック/プライベートサブネット)
-- AWS ECS Fargate (ARM64)
-- Amazon ECR (コンテナレジストリ)
-- Amazon RDS (PostgreSQL)
-- Amazon S3 (画像ストレージ)
-- Application Load Balancer
-- Route 53 (DNS)
-- AWS ACM (SSL証明書)
-- AWS Secrets Manager
-- AWS CloudWatch (ログ・モニタリング)
-- AWS Internet Gateway
-- Security Groups (ファイアウォール)
-- Terraform (IaC)
-- GitHub Actions (CI/CD)
+テストフレームワーク: Jest / SuperTest
+
+**フロントエンド**: TypeScript 5 / React 19 / Next.js 15 (App Router)
+
+コード解析 / フォーマッター: ESLint / Prettier
+
+CSSフレームワーク: Material-UI v7 (Emotion)
+
+主要パッケージ: SWR / React Hook Form / Zod / react-hot-toast / date-fns
+
+**インフラ**: AWS (Route53 / ACM / ALB / VPC / ECR / ECS Fargate / RDS PostgreSQL / S3 / CloudWatch)
+
+CI / CD: GitHub Actions
+
+IaC: Terraform
+
+環境構築: Docker / Docker Compose
+
+**認証**: JWT / Google OAuth 2.0 / Google Maps JavaScript API
