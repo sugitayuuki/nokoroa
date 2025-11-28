@@ -106,6 +106,11 @@ export class PostsController {
     return this.postsService.getTags();
   }
 
+  @Get('locations')
+  getLocations() {
+    return this.postsService.getLocations();
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.postsService.findOne(+id);

@@ -1,4 +1,10 @@
-import { IsString, IsOptional, IsArray, IsBoolean } from 'class-validator';
+import {
+  IsString,
+  IsOptional,
+  IsArray,
+  IsBoolean,
+  IsNumber,
+} from 'class-validator';
 
 export class UpdatePostDto {
   @IsOptional()
@@ -16,6 +22,18 @@ export class UpdatePostDto {
   @IsOptional()
   @IsString()
   location?: string;
+
+  @IsOptional()
+  @IsString()
+  prefecture?: string;
+
+  @IsOptional()
+  @IsNumber()
+  latitude?: number;
+
+  @IsOptional()
+  @IsNumber()
+  longitude?: number;
 
   @IsOptional()
   @IsArray()

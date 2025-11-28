@@ -4,22 +4,29 @@ import {
   IsArray,
   IsBoolean,
   IsNumber,
+  IsNotEmpty,
 } from 'class-validator';
 
 export class CreatePostDto {
   @IsString()
+  @IsNotEmpty()
   title: string;
 
   @IsString()
+  @IsNotEmpty()
   content: string;
 
-  @IsOptional()
   @IsString()
-  imageUrl?: string;
+  @IsNotEmpty({ message: '画像は必須です' })
+  imageUrl: string;
 
   @IsOptional()
   @IsString()
   location?: string;
+
+  @IsOptional()
+  @IsString()
+  prefecture?: string;
 
   @IsOptional()
   @IsNumber()

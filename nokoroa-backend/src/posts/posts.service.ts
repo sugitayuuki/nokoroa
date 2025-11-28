@@ -10,34 +10,168 @@ import { SearchPostsByLocationDto } from './dto/search-posts-by-location.dto';
 import { SearchPostsDto } from './dto/search-posts.dto';
 import { UpdatePostDto } from './dto/update-post.dto';
 
+function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, '')
+    .replace(/[\s_-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+const postInclude = {
+  author: {
+    select: { id: true, name: true, email: true, avatar: true },
+  },
+  location: true,
+  postTags: {
+    include: {
+      tag: true,
+    },
+  },
+};
+
+interface PostWithRelations {
+  id: number;
+  title: string;
+  content: string;
+  imageUrl: string | null;
+  isPublic: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+  authorId: number;
+  locationId: number | null;
+  author: {
+    id: number;
+    name: string;
+    email: string;
+    avatar: string | null;
+  };
+  location: {
+    id: number;
+    name: string;
+    country: string;
+    prefecture: string | null;
+    latitude: number | null;
+    longitude: number | null;
+    createdAt: Date;
+  } | null;
+  postTags: {
+    id: number;
+    postId: number;
+    tagId: number;
+    tag: {
+      id: number;
+      name: string;
+      slug: string;
+    };
+  }[];
+}
+
+function formatPost(post: PostWithRelations) {
+  return {
+    ...post,
+    tags: post.postTags.map((pt) => pt.tag.name),
+    location: post.location?.name || null,
+    latitude: post.location?.latitude || null,
+    longitude: post.location?.longitude || null,
+    prefecture: post.location?.prefecture || null,
+  };
+}
+
 @Injectable()
 export class PostsService {
   constructor(private prisma: PrismaService) {}
 
-  async create(createPostDto: CreatePostDto & { authorId: number }) {
-    return this.prisma.post.create({
-      data: {
-        ...createPostDto,
-        tags: createPostDto.tags || [],
-        isPublic: createPostDto.isPublic ?? true,
-      },
-      include: {
-        author: {
-          select: { id: true, name: true, email: true, avatar: true },
-        },
+  private async getOrCreateLocation(
+    locationName: string,
+    latitude?: number,
+    longitude?: number,
+    prefecture?: string,
+  ) {
+    const existing = await this.prisma.location.findFirst({
+      where: {
+        name: locationName,
+        ...(latitude !== undefined && longitude !== undefined
+          ? { latitude, longitude }
+          : {}),
       },
     });
+
+    if (existing) return existing;
+
+    return this.prisma.location.create({
+      data: {
+        name: locationName,
+        latitude: latitude ?? null,
+        longitude: longitude ?? null,
+        prefecture: prefecture ?? null,
+      },
+    });
+  }
+
+  private async getOrCreateTags(tagNames: string[]) {
+    const tags = await Promise.all(
+      tagNames.map(async (name) => {
+        const existing = await this.prisma.tag.findUnique({ where: { name } });
+        if (existing) return existing;
+
+        return this.prisma.tag.create({
+          data: {
+            name,
+            slug: slugify(name) || name.toLowerCase(),
+          },
+        });
+      }),
+    );
+    return tags;
+  }
+
+  async create(createPostDto: CreatePostDto & { authorId: number }) {
+    const {
+      tags,
+      location: locationName,
+      latitude,
+      longitude,
+      prefecture,
+      ...postData
+    } = createPostDto;
+
+    let locationId: number | undefined;
+    if (locationName) {
+      const locationRecord = await this.getOrCreateLocation(
+        locationName,
+        latitude,
+        longitude,
+        prefecture,
+      );
+      locationId = locationRecord.id;
+    }
+
+    const tagRecords = tags ? await this.getOrCreateTags(tags) : [];
+
+    const post = await this.prisma.post.create({
+      data: {
+        title: postData.title,
+        content: postData.content,
+        imageUrl: postData.imageUrl,
+        isPublic: postData.isPublic ?? true,
+        authorId: postData.authorId,
+        locationId,
+        postTags: {
+          create: tagRecords.map((tag) => ({ tagId: tag.id })),
+        },
+      },
+      include: postInclude,
+    });
+
+    return formatPost(post as PostWithRelations);
   }
 
   async findAll(limit: number = 10, offset: number = 0) {
     const [posts, total] = await Promise.all([
       this.prisma.post.findMany({
         where: { isPublic: true },
-        include: {
-          author: {
-            select: { id: true, name: true, email: true, avatar: true },
-          },
-        },
+        include: postInclude,
         orderBy: { createdAt: 'desc' },
         skip: offset,
         take: limit,
@@ -46,7 +180,7 @@ export class PostsService {
     ]);
 
     return {
-      posts,
+      posts: (posts as PostWithRelations[]).map(formatPost),
       total,
       hasMore: offset + limit < total,
     };
@@ -73,10 +207,18 @@ export class PostsService {
       }),
       ...(tags &&
         tags.length > 0 && {
-          tags: { hasSome: tags },
+          postTags: {
+            some: {
+              tag: {
+                name: { in: tags },
+              },
+            },
+          },
         }),
       ...(location && {
-        location: { contains: location, mode: 'insensitive' },
+        location: {
+          name: { contains: location, mode: 'insensitive' },
+        },
       }),
       ...(authorId && {
         authorId: authorId,
@@ -86,11 +228,7 @@ export class PostsService {
     const [posts, total] = await Promise.all([
       this.prisma.post.findMany({
         where,
-        include: {
-          author: {
-            select: { id: true, name: true, email: true, avatar: true },
-          },
-        },
+        include: postInclude,
         orderBy: { createdAt: 'desc' },
         skip: offset,
         take: limit,
@@ -99,7 +237,7 @@ export class PostsService {
     ]);
 
     return {
-      posts,
+      posts: (posts as PostWithRelations[]).map(formatPost),
       total,
       hasMore: offset + limit < total,
     };
@@ -109,11 +247,7 @@ export class PostsService {
     const [post, favoritesCount] = await Promise.all([
       this.prisma.post.findUnique({
         where: { id },
-        include: {
-          author: {
-            select: { id: true, name: true, email: true, avatar: true },
-          },
-        },
+        include: postInclude,
       }),
       this.prisma.bookmark.count({ where: { postId: id } }),
     ]);
@@ -123,7 +257,7 @@ export class PostsService {
     }
 
     return {
-      ...post,
+      ...formatPost(post as PostWithRelations),
       favoritesCount,
     };
   }
@@ -142,21 +276,55 @@ export class PostsService {
       throw new ForbiddenException('You can only update your own posts');
     }
 
+    const {
+      tags,
+      location: locationName,
+      latitude,
+      longitude,
+      prefecture,
+      ...postData
+    } = updatePostDto;
+
+    let locationId: number | undefined;
+    if (locationName !== undefined) {
+      if (locationName) {
+        const location = await this.getOrCreateLocation(
+          locationName,
+          latitude,
+          longitude,
+          prefecture,
+        );
+        locationId = location.id;
+      } else {
+        locationId = undefined;
+      }
+    }
+
+    if (tags !== undefined) {
+      await this.prisma.postTag.deleteMany({ where: { postId: id } });
+
+      if (tags.length > 0) {
+        const tagRecords = await this.getOrCreateTags(tags);
+        await this.prisma.postTag.createMany({
+          data: tagRecords.map((tag) => ({ postId: id, tagId: tag.id })),
+        });
+      }
+    }
+
     const [updatedPost, favoritesCount] = await Promise.all([
       this.prisma.post.update({
         where: { id },
-        data: updatePostDto,
-        include: {
-          author: {
-            select: { id: true, name: true, email: true, avatar: true },
-          },
+        data: {
+          ...postData,
+          ...(locationId !== undefined && { locationId }),
         },
+        include: postInclude,
       }),
       this.prisma.bookmark.count({ where: { postId: id } }),
     ]);
 
     return {
-      ...updatedPost,
+      ...formatPost(updatedPost as PostWithRelations),
       favoritesCount,
     };
   }
@@ -184,11 +352,7 @@ export class PostsService {
     const [posts, total] = await Promise.all([
       this.prisma.post.findMany({
         where: { authorId },
-        include: {
-          author: {
-            select: { id: true, name: true, email: true, avatar: true },
-          },
-        },
+        include: postInclude,
         orderBy: { createdAt: 'desc' },
         skip: offset,
         take: limit,
@@ -197,7 +361,7 @@ export class PostsService {
     ]);
 
     return {
-      posts,
+      posts: (posts as PostWithRelations[]).map(formatPost),
       total,
       hasMore: offset + limit < total,
     };
@@ -207,42 +371,44 @@ export class PostsService {
     const {
       centerLat,
       centerLng,
-      radius = 10, // デフォルト10km
+      radius = 10,
       limit = 10,
       offset = 0,
       q,
     } = searchDto;
 
     if (centerLat && centerLng) {
-      // Haversine formulaを使用した距離計算
       const distanceQuery = `
         (6371 * acos(
-          cos(radians(${centerLat})) * cos(radians(latitude)) *
-          cos(radians(longitude) - radians(${centerLng})) +
-          sin(radians(${centerLat})) * sin(radians(latitude))
+          cos(radians(${centerLat})) * cos(radians(l.latitude)) *
+          cos(radians(l.longitude) - radians(${centerLng})) +
+          sin(radians(${centerLat})) * sin(radians(l.latitude))
         ))
       `;
 
-      // 指定された半径内の投稿をフィルタリング
       const radiusFilter = `${distanceQuery} <= ${radius}`;
 
-      // Raw SQLを使用して距離でフィルタリング
       const posts = await this.prisma.$queryRaw`
-        SELECT p.*, u.id as "author_id", u.name as "author_name", u.email as "author_email", u.avatar as "author_avatar",
-               ${Prisma.raw(distanceQuery)} as distance
+        SELECT
+          p.id, p.title, p.content, p."imageUrl", p."isPublic",
+          p."createdAt", p."updatedAt", p."authorId", p."locationId",
+          u.id as "author_id", u.name as "author_name", u.email as "author_email", u.avatar as "author_avatar",
+          l.name as "location_name", l.prefecture, l.latitude, l.longitude,
+          ${Prisma.raw(distanceQuery)} as distance
         FROM post p
         JOIN "user" u ON p."authorId" = u.id
-        WHERE p."isPublic" = true 
-          AND p.latitude IS NOT NULL 
-          AND p.longitude IS NOT NULL
+        LEFT JOIN location l ON p."locationId" = l.id
+        WHERE p."isPublic" = true
+          AND l.latitude IS NOT NULL
+          AND l.longitude IS NOT NULL
           AND ${Prisma.raw(radiusFilter)}
         ${
           q
             ? Prisma.raw(`
           AND (
-            p.title ILIKE '%${q}%' OR 
-            p.content ILIKE '%${q}%' OR 
-            p.location ILIKE '%${q}%' OR 
+            p.title ILIKE '%${q}%' OR
+            p.content ILIKE '%${q}%' OR
+            l.name ILIKE '%${q}%' OR
             u.name ILIKE '%${q}%'
           )
         `)
@@ -256,17 +422,18 @@ export class PostsService {
         SELECT COUNT(*) as count
         FROM post p
         JOIN "user" u ON p."authorId" = u.id
-        WHERE p."isPublic" = true 
-          AND p.latitude IS NOT NULL 
-          AND p.longitude IS NOT NULL
+        LEFT JOIN location l ON p."locationId" = l.id
+        WHERE p."isPublic" = true
+          AND l.latitude IS NOT NULL
+          AND l.longitude IS NOT NULL
           AND ${Prisma.raw(radiusFilter)}
         ${
           q
             ? Prisma.raw(`
           AND (
-            p.title ILIKE '%${q}%' OR 
-            p.content ILIKE '%${q}%' OR 
-            p.location ILIKE '%${q}%' OR 
+            p.title ILIKE '%${q}%' OR
+            p.content ILIKE '%${q}%' OR
+            l.name ILIKE '%${q}%' OR
             u.name ILIKE '%${q}%'
           )
         `)
@@ -274,39 +441,54 @@ export class PostsService {
         }
       `;
 
-      interface PostWithAuthor {
+      const postIds = (posts as { id: number }[]).map((p) => p.id);
+      const postTags = await this.prisma.postTag.findMany({
+        where: { postId: { in: postIds } },
+        include: { tag: true },
+      });
+
+      const tagsByPostId = new Map<number, string[]>();
+      postTags.forEach((pt) => {
+        const existing = tagsByPostId.get(pt.postId) || [];
+        existing.push(pt.tag.name);
+        tagsByPostId.set(pt.postId, existing);
+      });
+
+      interface RawPost {
         id: number;
         title: string;
         content: string;
         imageUrl: string | null;
-        location: string | null;
-        latitude: number | null;
-        longitude: number | null;
-        tags: string[];
         isPublic: boolean;
         createdAt: Date;
         updatedAt: Date;
         authorId: number;
+        locationId: number | null;
         author_id: number;
         author_name: string;
         author_email: string;
         author_avatar: string | null;
+        location_name: string | null;
+        prefecture: string | null;
+        latitude: number | null;
+        longitude: number | null;
         distance?: number;
       }
 
-      const formattedPosts = (posts as PostWithAuthor[]).map((post) => ({
+      const formattedPosts = (posts as RawPost[]).map((post) => ({
         id: post.id,
         title: post.title,
         content: post.content,
         imageUrl: post.imageUrl,
-        location: post.location,
-        latitude: post.latitude,
-        longitude: post.longitude,
-        tags: post.tags,
         isPublic: post.isPublic,
         createdAt: post.createdAt,
         updatedAt: post.updatedAt,
         authorId: post.authorId,
+        location: post.location_name,
+        prefecture: post.prefecture,
+        latitude: post.latitude,
+        longitude: post.longitude,
+        tags: tagsByPostId.get(post.id) || [],
         author: {
           id: post.author_id,
           name: post.author_name,
@@ -323,21 +505,25 @@ export class PostsService {
       };
     }
 
-    // 中心点が指定されていない場合は、緯度・経度を持つすべての投稿を返す
     const posts = await this.prisma.$queryRaw`
-      SELECT p.*, u.id as "author_id", u.name as "author_name", u.email as "author_email", u.avatar as "author_avatar"
+      SELECT
+        p.id, p.title, p.content, p."imageUrl", p."isPublic",
+        p."createdAt", p."updatedAt", p."authorId", p."locationId",
+        u.id as "author_id", u.name as "author_name", u.email as "author_email", u.avatar as "author_avatar",
+        l.name as "location_name", l.prefecture, l.latitude, l.longitude
       FROM post p
       JOIN "user" u ON p."authorId" = u.id
-      WHERE p."isPublic" = true 
-        AND p.latitude IS NOT NULL 
-        AND p.longitude IS NOT NULL
+      LEFT JOIN location l ON p."locationId" = l.id
+      WHERE p."isPublic" = true
+        AND l.latitude IS NOT NULL
+        AND l.longitude IS NOT NULL
       ${
         q
           ? Prisma.raw(`
         AND (
-          p.title ILIKE '%${q}%' OR 
-          p.content ILIKE '%${q}%' OR 
-          p.location ILIKE '%${q}%' OR 
+          p.title ILIKE '%${q}%' OR
+          p.content ILIKE '%${q}%' OR
+          l.name ILIKE '%${q}%' OR
           u.name ILIKE '%${q}%'
         )
       `)
@@ -351,16 +537,17 @@ export class PostsService {
       SELECT COUNT(*) as count
       FROM post p
       JOIN "user" u ON p."authorId" = u.id
-      WHERE p."isPublic" = true 
-        AND p.latitude IS NOT NULL 
-        AND p.longitude IS NOT NULL
+      LEFT JOIN location l ON p."locationId" = l.id
+      WHERE p."isPublic" = true
+        AND l.latitude IS NOT NULL
+        AND l.longitude IS NOT NULL
       ${
         q
           ? Prisma.raw(`
         AND (
-          p.title ILIKE '%${q}%' OR 
-          p.content ILIKE '%${q}%' OR 
-          p.location ILIKE '%${q}%' OR 
+          p.title ILIKE '%${q}%' OR
+          p.content ILIKE '%${q}%' OR
+          l.name ILIKE '%${q}%' OR
           u.name ILIKE '%${q}%'
         )
       `)
@@ -368,39 +555,53 @@ export class PostsService {
       }
     `;
 
-    interface PostWithAuthor {
+    const postIds = (posts as { id: number }[]).map((p) => p.id);
+    const postTags = await this.prisma.postTag.findMany({
+      where: { postId: { in: postIds } },
+      include: { tag: true },
+    });
+
+    const tagsByPostId = new Map<number, string[]>();
+    postTags.forEach((pt) => {
+      const existing = tagsByPostId.get(pt.postId) || [];
+      existing.push(pt.tag.name);
+      tagsByPostId.set(pt.postId, existing);
+    });
+
+    interface RawPost {
       id: number;
       title: string;
       content: string;
       imageUrl: string | null;
-      location: string | null;
-      latitude: number | null;
-      longitude: number | null;
-      tags: string[];
       isPublic: boolean;
       createdAt: Date;
       updatedAt: Date;
       authorId: number;
+      locationId: number | null;
       author_id: number;
       author_name: string;
       author_email: string;
       author_avatar: string | null;
-      distance?: number;
+      location_name: string | null;
+      prefecture: string | null;
+      latitude: number | null;
+      longitude: number | null;
     }
 
-    const formattedPosts = (posts as PostWithAuthor[]).map((post) => ({
+    const formattedPosts = (posts as RawPost[]).map((post) => ({
       id: post.id,
       title: post.title,
       content: post.content,
       imageUrl: post.imageUrl,
-      location: post.location,
-      latitude: post.latitude,
-      longitude: post.longitude,
-      tags: post.tags,
       isPublic: post.isPublic,
       createdAt: post.createdAt,
       updatedAt: post.updatedAt,
       authorId: post.authorId,
+      location: post.location_name,
+      prefecture: post.prefecture,
+      latitude: post.latitude,
+      longitude: post.longitude,
+      tags: tagsByPostId.get(post.id) || [],
       author: {
         id: post.author_id,
         name: post.author_name,
@@ -417,28 +618,57 @@ export class PostsService {
   }
 
   async getTags() {
-    // 公開投稿からすべてのタグを取得し、使用回数とともに返す
-    const posts = await this.prisma.post.findMany({
-      where: { isPublic: true },
-      select: { tags: true },
+    const tags = await this.prisma.tag.findMany({
+      include: {
+        _count: {
+          select: { postTags: true },
+        },
+      },
+      orderBy: {
+        postTags: {
+          _count: 'desc',
+        },
+      },
     });
 
-    // すべてのタグを平坦化して集計
-    const tagCount: Record<string, number> = {};
-    posts.forEach((post) => {
-      post.tags.forEach((tag) => {
-        tagCount[tag] = (tagCount[tag] || 0) + 1;
-      });
-    });
-
-    // タグを使用回数の多い順にソートして返す
-    const sortedTags = Object.entries(tagCount)
-      .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => b.count - a.count);
+    const filteredTags = tags.filter((tag) => tag._count.postTags > 0);
 
     return {
-      tags: sortedTags,
-      total: sortedTags.length,
+      tags: filteredTags.map((tag) => ({
+        name: tag.name,
+        slug: tag.slug,
+        count: tag._count.postTags,
+      })),
+      total: filteredTags.length,
+    };
+  }
+
+  async getLocations() {
+    const locations = await this.prisma.location.findMany({
+      include: {
+        _count: {
+          select: { posts: true },
+        },
+      },
+      orderBy: {
+        posts: {
+          _count: 'desc',
+        },
+      },
+    });
+
+    return {
+      locations: locations
+        .filter((loc) => loc._count.posts > 0)
+        .map((loc) => ({
+          id: loc.id,
+          name: loc.name,
+          prefecture: loc.prefecture,
+          latitude: loc.latitude,
+          longitude: loc.longitude,
+          count: loc._count.posts,
+        })),
+      total: locations.length,
     };
   }
 }
