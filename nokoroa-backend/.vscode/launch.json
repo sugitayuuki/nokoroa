@@ -1,0 +1,21 @@
+{
+  "version": "0.1.0",
+  "configurations": [
+    {
+      "name": "Nest.js: debug full stack",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "npm run start:debug",   
+      "skipFiles": ["<node_internals>/**"],
+      "serverReadyAction": {
+        "pattern": "Nest application successfully started on (https?://.+)",
+        "uriFormat": "%s",
+        "action": "openExternally"
+      },
+      "resolveSourceMapLocations": [
+        "${workspaceFolder}/**",
+        "!**/node_modules/**"
+      ]
+    }
+  ]
+}
