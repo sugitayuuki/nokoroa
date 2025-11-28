@@ -44,8 +44,9 @@ coverage/
 terraform/.terraform/
 terraform/*.tfstate
 terraform/*.tfstate.*
-terraform/*.tfvars
 terraform/.terraform.lock.hcl
+**/terraform.tfvars
+!**/terraform.tfvars.example
 
 # Prisma
 /nokoroa-backend/generated/
@@ -53,3 +54,6 @@ terraform/.terraform.lock.hcl
 # Misc
 *.pem
 .vercel
+
+# Claude Code local settings
+.claude/
