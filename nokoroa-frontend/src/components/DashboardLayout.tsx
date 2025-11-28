@@ -286,6 +286,7 @@ export default function DashboardLayout({
                 }}
                 sx={{
                   fontSize: '0.75rem',
+                  whiteSpace: 'nowrap',
                   '&:hover': {
                     color: 'primary.main',
                   },
@@ -305,6 +306,7 @@ export default function DashboardLayout({
                 }}
                 sx={{
                   fontSize: '0.75rem',
+                  whiteSpace: 'nowrap',
                   '&:hover': {
                     color: 'primary.main',
                   },
