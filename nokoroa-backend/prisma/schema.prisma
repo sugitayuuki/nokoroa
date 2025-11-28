@@ -1,0 +1,86 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-arm64-openssl-1.1.x", "linux-arm64-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  name      String
+  password  String?  // Google認証の場合はパスワードなし
+  bio       String?
+  avatar    String?
+  
+  // OAuth認証用フィールド
+  googleId  String?  @unique
+  provider  String?  // 'local' | 'google'
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // リレーション
+  posts     Post[]
+  bookmarks Bookmark[]
+  
+  // フォロー機能
+  following Follow[] @relation("Following")
+  followers Follow[] @relation("Followers")
+
+  @@map("user")
+}
+
+model Post {
+  id          Int      @id @default(autoincrement())
+  title       String
+  content     String
+  imageUrl    String?
+  location    String?
+  latitude    Float?
+  longitude   Float?
+  tags        String[]
+  isPublic    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // リレーション
+  authorId    Int
+  author      User       @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  bookmarks   Bookmark[]
+
+  @@map("post")
+}
+
+model Bookmark {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+
+  // リレーション
+  userId    Int
+  postId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  // 同じユーザーが同じ投稿を複数回ブックマークできないようにする制約
+  @@unique([userId, postId])
+  @@map("bookmark")
+}
+
+model Follow {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+
+  // リレーション
+  followerId  Int
+  followingId Int
+  follower    User @relation("Following", fields: [followerId], references: [id], onDelete: Cascade)
+  following   User @relation("Followers", fields: [followingId], references: [id], onDelete: Cascade)
+
+  // 同じユーザーを複数回フォローできないようにする制約
+  @@unique([followerId, followingId])
+  @@map("follow")
+}
