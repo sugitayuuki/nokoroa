@@ -48,7 +48,6 @@ export const PostForm = ({
     isPublic: initialData?.isPublic ?? true,
   });
   const [newTag, setNewTag] = useState('');
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string>(
@@ -85,7 +84,7 @@ export const PostForm = ({
     }
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -101,7 +100,6 @@ export const PostForm = ({
       return;
     }
 
-    setSelectedFile(file);
     setUploadError(null);
 
     // プレビュー用URL生成
@@ -110,17 +108,20 @@ export const PostForm = ({
       setPreviewUrl(reader.result as string);
     };
     reader.readAsDataURL(file);
+
+    // 自動アップロード
+    await handleUploadImage(file);
   };
 
-  const handleUploadImage = async () => {
-    if (!selectedFile) return;
+  const handleUploadImage = async (file: File) => {
+    if (!file) return;
 
     setUploadingImage(true);
     setUploadError(null);
 
     try {
       const formDataUpload = new FormData();
-      formDataUpload.append('image', selectedFile);
+      formDataUpload.append('image', file);
 
       const token = getToken();
       if (!token) {
@@ -151,9 +152,7 @@ export const PostForm = ({
         ...prev,
         imageUrl: imageUrl,
       }));
-      setPreviewUrl(imageUrl);
-      setSelectedFile(null);
-      toast.success('画像をアップロードしました！');
+      // previewUrlはbase64のまま維持（サーバーURLは表示に使わない）
     } catch (error) {
       const errorMessage =
         error instanceof Error
@@ -168,7 +167,6 @@ export const PostForm = ({
 
   const handleRemoveImage = () => {
     setFormData((prev) => ({ ...prev, imageUrl: '' }));
-    setSelectedFile(null);
     setUploadError(null);
     setPreviewUrl('');
   };
@@ -203,7 +201,10 @@ export const PostForm = ({
 
           <Box>
             <Typography variant="body2" color="text.secondary" gutterBottom>
-              画像
+              画像{' '}
+              <Typography component="span" color="error.main">
+                *
+              </Typography>
             </Typography>
             <Paper
               variant="outlined"
@@ -230,7 +231,7 @@ export const PostForm = ({
               />
               <label htmlFor="image-upload" style={{ cursor: 'pointer' }}>
                 <Box sx={{ textAlign: 'center' }}>
-                  {previewUrl || formData.imageUrl ? (
+                  {formData.imageUrl ? (
                     <Box>
                       <Box
                         component="img"
@@ -271,32 +272,27 @@ export const PostForm = ({
                         </Button>
                       </Stack>
                     </Box>
-                  ) : selectedFile && !formData.imageUrl ? (
-                    <Box>
-                      <Typography
-                        variant="body2"
-                        color="text.secondary"
-                        sx={{ mb: 2 }}
-                      >
-                        {selectedFile.name}
+                  ) : uploadingImage ? (
+                    <Box sx={{ textAlign: 'center', py: 4 }}>
+                      {previewUrl && (
+                        <Box
+                          component="img"
+                          src={previewUrl}
+                          alt="プレビュー"
+                          sx={{
+                            width: '100%',
+                            maxHeight: 300,
+                            objectFit: 'cover',
+                            borderRadius: 1,
+                            mb: 2,
+                            opacity: 0.7,
+                          }}
+                        />
+                      )}
+                      <CircularProgress size={32} sx={{ mb: 1 }} />
+                      <Typography variant="body2" color="text.secondary">
+                        アップロード中...
                       </Typography>
-                      <Button
-                        variant="contained"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          handleUploadImage();
-                        }}
-                        disabled={uploadingImage}
-                        startIcon={
-                          uploadingImage ? (
-                            <CircularProgress size={16} color="inherit" />
-                          ) : (
-                            <CloudUploadIcon />
-                          )
-                        }
-                      >
-                        {uploadingImage ? 'アップロード中...' : 'アップロード'}
-                      </Button>
                     </Box>
                   ) : (
                     <Box>
@@ -398,7 +394,10 @@ export const PostForm = ({
               variant="contained"
               size="large"
               disabled={
-                isLoading || !formData.title.trim() || !formData.content.trim()
+                isLoading ||
+                !formData.title.trim() ||
+                !formData.content.trim() ||
+                !formData.imageUrl
               }
             >
               {isLoading ? '投稿中...' : '投稿する'}
