@@ -71,53 +71,36 @@ IaC: Terraform
 
 ```mermaid
 erDiagram
+    User ||--o{ Post : creates
+    User ||--o{ Bookmark : has
+    User ||--o{ Follow : follows
+    Post ||--o{ Bookmark : bookmarked
+
     User {
         int id PK
         string email UK
         string name
-        string password
-        string bio
-        string avatar
         string googleId UK
-        string provider
-        datetime createdAt
-        datetime updatedAt
     }
 
     Post {
         int id PK
         string title
         string content
-        string imageUrl
-        string location
-        float latitude
-        float longitude
-        string[] tags
-        boolean isPublic
         int authorId FK
-        datetime createdAt
-        datetime updatedAt
     }
 
     Bookmark {
         int id PK
         int userId FK
         int postId FK
-        datetime createdAt
     }
 
     Follow {
         int id PK
         int followerId FK
         int followingId FK
-        datetime createdAt
     }
-
-    User ||--o{ Post : "has many"
-    User ||--o{ Bookmark : "has many"
-    Post ||--o{ Bookmark : "has many"
-    User ||--o{ Follow : "following"
-    User ||--o{ Follow : "followers"
 ```
 
 ## ディレクトリ構成
@@ -240,4 +223,18 @@ graph TB
     ECR -.->|Pull| ECS
     Secrets -.->|環境変数| ECS
     ECS --> CloudWatch
+
+    %% AWS Colors
+    style Route53 fill:#8C4FFF,stroke:#5A189A,color:#fff
+    style ACM fill:#DD344C,stroke:#B02A3D,color:#fff
+    style ALB fill:#8C4FFF,stroke:#5A189A,color:#fff
+    style Frontend fill:#FF9900,stroke:#CC7A00,color:#fff
+    style Backend fill:#FF9900,stroke:#CC7A00,color:#fff
+    style RDS fill:#3B48CC,stroke:#2E3A9F,color:#fff
+    style S3 fill:#3F8624,stroke:#2D6119,color:#fff
+    style ECR fill:#FF9900,stroke:#CC7A00,color:#fff
+    style Secrets fill:#DD344C,stroke:#B02A3D,color:#fff
+    style CloudWatch fill:#FF4F8B,stroke:#CC3F6F,color:#fff
+    style User fill:#232F3E,stroke:#1A242F,color:#fff
+    style GitHub fill:#232F3E,stroke:#1A242F,color:#fff
 ```
