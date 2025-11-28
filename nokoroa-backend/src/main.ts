@@ -16,7 +16,7 @@ async function bootstrap() {
   );
 
   // 静的ファイルの提供設定
-  app.useStaticAssets(join(__dirname, '..', 'uploads'), {
+  app.useStaticAssets(join(process.cwd(), 'uploads'), {
     prefix: '/uploads/',
   });
 
