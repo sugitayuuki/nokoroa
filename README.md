@@ -21,6 +21,18 @@ Nokoroaは、旅行の思い出を写真と共に共有できるWebアプリケ�
 - ユーザープロフィール管理
 - Google OAuth認証
 
+## テストユーザー
+
+以下のアカウントでログインできます。
+
+| メールアドレス | パスワード |
+|---------------|-----------|
+| `michael@example.com` | `password123` |
+| `james@example.com` | `password123` |
+| `pierre@example.com` | `password123` |
+| `david@example.com` | `password123` |
+| `alex@example.com` | `password123` |
+
 ## 開発背景
 
 旅行が好きで、旅先での思い出を共有することに特化したサービスがあれば便利だと感じたのがきっかけです。
@@ -54,18 +66,6 @@ IaC: Terraform
 環境構築: Docker / Docker Compose
 
 **認証**: JWT / Google OAuth 2.0 / Google Maps JavaScript API
-
-## テストユーザー
-
-以下のアカウントでログインできます。
-
-| メールアドレス | パスワード |
-|---------------|-----------|
-| `michael@example.com` | `password123` |
-| `james@example.com` | `password123` |
-| `pierre@example.com` | `password123` |
-| `david@example.com` | `password123` |
-| `alex@example.com` | `password123` |
 
 ## ER図
 

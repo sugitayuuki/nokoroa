@@ -1,0 +1,7 @@
+# Docker Images (ECR URLs)
+backend_image  = "YOUR_AWS_ACCOUNT_ID.dkr.ecr.ap-northeast-1.amazonaws.com/nokoroa-backend:latest"
+frontend_image = "YOUR_AWS_ACCOUNT_ID.dkr.ecr.ap-northeast-1.amazonaws.com/nokoroa-frontend:latest"
+
+# Google OAuth (https://console.cloud.google.com/apis/credentials)
+google_client_id     = "YOUR_GOOGLE_CLIENT_ID"
+google_client_secret = "YOUR_GOOGLE_CLIENT_SECRET"
