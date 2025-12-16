@@ -129,7 +129,7 @@ const PostCard = ({ post }: { post: PostData }) => {
                     }}
                   />
                 )}
-                {post.tags.map((tag, index) => (
+                {(post.tags || []).map((tag, index) => (
                   <Chip
                     key={index}
                     label={tag.startsWith('#') ? tag : `#${tag}`}
@@ -169,7 +169,7 @@ const PostCard = ({ post }: { post: PostData }) => {
               src={post.author.avatar || undefined}
               sx={{ width: 32, height: 32 }}
             >
-              {!post.author.avatar && post.author.name.charAt(0)}
+              {!post.author.avatar && post.author.name?.charAt(0)}
             </Avatar>
             <Typography variant="body2" color="text.secondary">
               {post.author.name}

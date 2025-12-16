@@ -217,7 +217,7 @@ export default function TopPage() {
                           }}
                         />
                       )}
-                      {post.tags.map((tag, index) => (
+                      {(post.tags || []).map((tag, index) => (
                         <Chip
                           key={index}
                           label={tag.startsWith('#') ? tag : `#${tag}`}
@@ -257,7 +257,7 @@ export default function TopPage() {
                           src={post.author.avatar || undefined}
                           sx={{ width: 32, height: 32 }}
                         >
-                          {!post.author.avatar && post.author.name.charAt(0)}
+                          {!post.author.avatar && post.author.name?.charAt(0)}
                         </Avatar>
                         <Typography variant="body2" color="text.secondary">
                           {post.author.name}

@@ -232,7 +232,7 @@ export default function ProfileEditForm() {
                   }}
                   onClick={handleAvatarClick}
                 >
-                  {!avatarPreview && user.name.charAt(0).toUpperCase()}
+                  {!avatarPreview && user.name?.charAt(0).toUpperCase()}
                 </Avatar>
                 <IconButton
                   sx={{

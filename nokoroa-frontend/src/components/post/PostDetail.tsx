@@ -365,7 +365,7 @@ export const PostDetail = ({ post }: PostDetailProps) => {
                 タグ
               </Typography>
               <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                {post.tags.map((tag) => (
+                {(post.tags || []).map((tag) => (
                   <Chip
                     key={tag}
                     label={tag.startsWith('#') ? tag : `#${tag}`}

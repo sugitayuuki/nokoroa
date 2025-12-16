@@ -224,7 +224,7 @@ export default function BookmarksList() {
                         {favorite.post.location}
                       </Box>
                     )}
-                    {favorite.post.tags.map((tag, index) => (
+                    {(favorite.post.tags || []).map((tag, index) => (
                       <Box
                         key={index}
                         sx={{
@@ -258,7 +258,7 @@ export default function BookmarksList() {
                         sx={{ width: 32, height: 32 }}
                       >
                         {!favorite.post.author.avatar &&
-                          favorite.post.author.name.charAt(0)}
+                          favorite.post.author.name?.charAt(0)}
                       </Avatar>
                       <Typography variant="body2" color="text.secondary">
                         {favorite.post.author.name}
