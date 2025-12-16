@@ -147,10 +147,10 @@ export const PostForm = ({
       }
 
       const result = await response.json();
-      const imageUrl = `${API_URL}${result.path}`;
+      // S3 URLが直接返ってくる
       setFormData((prev) => ({
         ...prev,
-        imageUrl: imageUrl,
+        imageUrl: result.url,
       }));
       // previewUrlはbase64のまま維持（サーバーURLは表示に使わない）
     } catch (error) {
