@@ -45,6 +45,8 @@ export default function ProfilePage() {
     if (user?.posts) {
       const transformed = (user.posts || []).map((post) => ({
         ...post,
+        tags: post.tags || [],
+        location: post.location || null,
         author: {
           id: user.id,
           name: user.name,

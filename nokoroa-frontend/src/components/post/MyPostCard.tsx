@@ -311,7 +311,7 @@ const MyPostCard = ({
                   }}
                 />
               )}
-              {localPost.tags.map((tag, index) => (
+              {(localPost.tags || []).map((tag, index) => (
                 <Chip
                   key={index}
                   label={tag.startsWith('#') ? tag : `#${tag}`}
@@ -348,7 +348,7 @@ const MyPostCard = ({
                   src={localPost.author.avatar || undefined}
                   sx={{ width: 32, height: 32 }}
                 >
-                  {!localPost.author.avatar && localPost.author.name.charAt(0)}
+                  {!localPost.author.avatar && localPost.author.name?.charAt(0)}
                 </Avatar>
                 <Typography variant="body2" color="text.secondary">
                   {localPost.author.name}

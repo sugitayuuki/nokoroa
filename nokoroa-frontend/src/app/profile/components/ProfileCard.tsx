@@ -62,7 +62,7 @@ export default function ProfileCard({ user }: ProfileCardProps) {
               mb: { xs: 2, sm: 0 },
             }}
           >
-            {!user.avatar && user.name.charAt(0).toUpperCase()}
+            {!user.avatar && user.name?.charAt(0).toUpperCase()}
           </Avatar>
 
           <Box sx={{ flexGrow: 1, width: '100%' }}>
