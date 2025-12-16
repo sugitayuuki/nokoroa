@@ -142,6 +142,10 @@ resource "aws_ecs_task_definition" "backend" {
           value = "${var.project_name}-${var.environment}-uploads"
         },
         {
+          name  = "AWS_REGION"
+          value = var.aws_region
+        },
+        {
           name  = "GOOGLE_CLIENT_ID"
           value = var.google_client_id
         },
