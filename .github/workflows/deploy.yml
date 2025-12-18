@@ -118,6 +118,7 @@ jobs:
             ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_FRONTEND_REPOSITORY }}:latest
           build-args: |
             NEXT_PUBLIC_API_URL=https://nokoroa.com
+            NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=${{ secrets.GOOGLE_MAPS_API_KEY }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
