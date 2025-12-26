@@ -28,6 +28,7 @@ import {
 import { useRouter } from 'next/navigation';
 import { SyntheticEvent, useState } from 'react';
 
+import { API_CONFIG } from '@/lib/apiConfig';
 import { getTagColor } from '@/utils/tagColors';
 
 import { useAuth } from '../../providers/AuthProvider';
@@ -86,9 +87,13 @@ export const PostDetail = ({ post }: PostDetailProps) => {
 
     setIsDeleting(true);
     try {
-      const response = await fetch(`http://localhost:4000/posts/${post.id}`, {
-        method: 'DELETE',
-      });
+      const response = await fetch(
+        `${API_CONFIG.BASE_URL}${API_CONFIG.endpoints.postById(String(post.id))}`,
+        {
+          method: 'DELETE',
+          headers: API_CONFIG.getAuthHeaders(),
+        },
+      );
 
       if (!response.ok) {
         throw new Error('Failed to delete post');

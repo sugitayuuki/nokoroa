@@ -378,45 +378,43 @@ export class PostsService {
     } = searchDto;
 
     if (centerLat && centerLng) {
-      const distanceQuery = `
-        (6371 * acos(
-          cos(radians(${centerLat})) * cos(radians(l.latitude)) *
-          cos(radians(l.longitude) - radians(${centerLng})) +
-          sin(radians(${centerLat})) * sin(radians(l.latitude))
-        ))
-      `;
+      const searchPattern = q ? `%${q}%` : null;
 
-      const radiusFilter = `${distanceQuery} <= ${radius}`;
-
-      const searchClause = q
-        ? `AND (
-            p.title ILIKE '%${q.replace(/'/g, "''")}%' OR
-            p.content ILIKE '%${q.replace(/'/g, "''")}%' OR
-            l.name ILIKE '%${q.replace(/'/g, "''")}%' OR
-            u.name ILIKE '%${q.replace(/'/g, "''")}%'
-          )`
-        : '';
-
-      const posts = await this.prisma.$queryRawUnsafe(`
+      const posts = await this.prisma.$queryRaw`
         SELECT
           p.id, p.title, p.content, p."imageUrl", p."isPublic",
           p."createdAt", p."updatedAt", p."authorId", p."locationId",
           u.id as "author_id", u.name as "author_name", u.email as "author_email", u.avatar as "author_avatar",
           l.name as "location_name", l.prefecture, l.latitude, l.longitude,
-          ${distanceQuery} as distance
+          (6371 * acos(
+            cos(radians(${centerLat})) * cos(radians(l.latitude)) *
+            cos(radians(l.longitude) - radians(${centerLng})) +
+            sin(radians(${centerLat})) * sin(radians(l.latitude))
+          )) as distance
         FROM post p
         JOIN "user" u ON p."authorId" = u.id
         LEFT JOIN location l ON p."locationId" = l.id
         WHERE p."isPublic" = true
           AND l.latitude IS NOT NULL
           AND l.longitude IS NOT NULL
-          AND ${radiusFilter}
-        ${searchClause}
+          AND (6371 * acos(
+            cos(radians(${centerLat})) * cos(radians(l.latitude)) *
+            cos(radians(l.longitude) - radians(${centerLng})) +
+            sin(radians(${centerLat})) * sin(radians(l.latitude))
+          )) <= ${radius}
+          AND (
+            ${searchPattern}::text IS NULL OR (
+              p.title ILIKE ${searchPattern} OR
+              p.content ILIKE ${searchPattern} OR
+              l.name ILIKE ${searchPattern} OR
+              u.name ILIKE ${searchPattern}
+            )
+          )
         ORDER BY distance ASC, p."createdAt" DESC
         LIMIT ${limit} OFFSET ${offset}
-      `);
+      `;
 
-      const total = await this.prisma.$queryRawUnsafe<{ count: bigint }[]>(`
+      const total = await this.prisma.$queryRaw<{ count: bigint }[]>`
         SELECT COUNT(*) as count
         FROM post p
         JOIN "user" u ON p."authorId" = u.id
@@ -424,9 +422,20 @@ export class PostsService {
         WHERE p."isPublic" = true
           AND l.latitude IS NOT NULL
           AND l.longitude IS NOT NULL
-          AND ${radiusFilter}
-        ${searchClause}
-      `);
+          AND (6371 * acos(
+            cos(radians(${centerLat})) * cos(radians(l.latitude)) *
+            cos(radians(l.longitude) - radians(${centerLng})) +
+            sin(radians(${centerLat})) * sin(radians(l.latitude))
+          )) <= ${radius}
+          AND (
+            ${searchPattern}::text IS NULL OR (
+              p.title ILIKE ${searchPattern} OR
+              p.content ILIKE ${searchPattern} OR
+              l.name ILIKE ${searchPattern} OR
+              u.name ILIKE ${searchPattern}
+            )
+          )
+      `;
 
       const postIds = (posts as { id: number }[]).map((p) => p.id);
       const postTags = await this.prisma.postTag.findMany({
@@ -492,16 +501,9 @@ export class PostsService {
       };
     }
 
-    const searchClauseNoLocation = q
-      ? `AND (
-          p.title ILIKE '%${q.replace(/'/g, "''")}%' OR
-          p.content ILIKE '%${q.replace(/'/g, "''")}%' OR
-          l.name ILIKE '%${q.replace(/'/g, "''")}%' OR
-          u.name ILIKE '%${q.replace(/'/g, "''")}%'
-        )`
-      : '';
+    const searchPattern = q ? `%${q}%` : null;
 
-    const posts = await this.prisma.$queryRawUnsafe(`
+    const posts = await this.prisma.$queryRaw`
       SELECT
         p.id, p.title, p.content, p."imageUrl", p."isPublic",
         p."createdAt", p."updatedAt", p."authorId", p."locationId",
@@ -513,12 +515,19 @@ export class PostsService {
       WHERE p."isPublic" = true
         AND l.latitude IS NOT NULL
         AND l.longitude IS NOT NULL
-      ${searchClauseNoLocation}
+        AND (
+          ${searchPattern}::text IS NULL OR (
+            p.title ILIKE ${searchPattern} OR
+            p.content ILIKE ${searchPattern} OR
+            l.name ILIKE ${searchPattern} OR
+            u.name ILIKE ${searchPattern}
+          )
+        )
       ORDER BY p."createdAt" DESC
       LIMIT ${limit} OFFSET ${offset}
-    `);
+    `;
 
-    const total = await this.prisma.$queryRawUnsafe<{ count: bigint }[]>(`
+    const total = await this.prisma.$queryRaw<{ count: bigint }[]>`
       SELECT COUNT(*) as count
       FROM post p
       JOIN "user" u ON p."authorId" = u.id
@@ -526,8 +535,15 @@ export class PostsService {
       WHERE p."isPublic" = true
         AND l.latitude IS NOT NULL
         AND l.longitude IS NOT NULL
-      ${searchClauseNoLocation}
-    `);
+        AND (
+          ${searchPattern}::text IS NULL OR (
+            p.title ILIKE ${searchPattern} OR
+            p.content ILIKE ${searchPattern} OR
+            l.name ILIKE ${searchPattern} OR
+            u.name ILIKE ${searchPattern}
+          )
+        )
+    `;
 
     const postIds = (posts as { id: number }[]).map((p) => p.id);
     const postTags = await this.prisma.postTag.findMany({
