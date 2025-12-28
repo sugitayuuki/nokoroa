@@ -59,10 +59,10 @@ resource "aws_s3_bucket_policy" "uploads" {
     Version = "2012-10-17"
     Statement = [
       {
-        Effect = "Allow"
+        Effect    = "Allow"
         Principal = "*"
-        Action = "s3:GetObject"
-        Resource = "${aws_s3_bucket.uploads.arn}/public/*"
+        Action    = "s3:GetObject"
+        Resource  = "${aws_s3_bucket.uploads.arn}/public/*"
       }
     ]
   })
@@ -113,10 +113,10 @@ resource "aws_s3_bucket_public_access_block" "terraform_state" {
 
 # DynamoDB table for Terraform state locking
 resource "aws_dynamodb_table" "terraform_state_lock" {
-  count          = var.create_terraform_state_bucket ? 1 : 0
-  name           = "terraform-state-lock"
-  billing_mode   = "PAY_PER_REQUEST"
-  hash_key       = "LockID"
+  count        = var.create_terraform_state_bucket ? 1 : 0
+  name         = "terraform-state-lock"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "LockID"
 
   attribute {
     name = "LockID"

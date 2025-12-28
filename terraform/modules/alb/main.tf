@@ -4,10 +4,10 @@ resource "aws_lb" "main" {
   internal           = false
   load_balancer_type = "application"
   security_groups    = [var.alb_security_group_id]
-  subnets           = var.public_subnet_ids
+  subnets            = var.public_subnet_ids
 
   enable_deletion_protection = var.deletion_protection
-  enable_http2              = true
+  enable_http2               = true
 
   tags = {
     Name = "${var.project_name}-${var.environment}-alb"
@@ -84,7 +84,7 @@ resource "aws_lb_listener" "http" {
 # HTTPS Listener (requires SSL certificate)
 resource "aws_lb_listener" "https" {
   count = var.enable_https ? 1 : 0
-  
+
   load_balancer_arn = aws_lb.main.arn
   port              = "443"
   protocol          = "HTTPS"
@@ -100,7 +100,7 @@ resource "aws_lb_listener" "https" {
 # Listener Rule for Backend API
 resource "aws_lb_listener_rule" "backend_api" {
   count = var.enable_https ? 1 : 0
-  
+
   listener_arn = aws_lb_listener.https[0].arn
   priority     = 100
 
@@ -119,7 +119,7 @@ resource "aws_lb_listener_rule" "backend_api" {
 # HTTP Listener for development (when no SSL certificate)
 resource "aws_lb_listener" "http_dev" {
   count = !var.enable_https ? 1 : 0
-  
+
   load_balancer_arn = aws_lb.main.arn
   port              = "80"
   protocol          = "HTTP"
@@ -133,7 +133,7 @@ resource "aws_lb_listener" "http_dev" {
 # Listener Rule for Backend API (HTTP)
 resource "aws_lb_listener_rule" "backend_api_http" {
   count = !var.enable_https ? 1 : 0
-  
+
   listener_arn = aws_lb_listener.http_dev[0].arn
   priority     = 100
 
