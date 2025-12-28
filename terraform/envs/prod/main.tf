@@ -67,57 +67,11 @@ resource "aws_ecr_lifecycle_policy" "frontend" {
   })
 }
 
-# Random Passwords
+# Random Password for RDS
 resource "random_password" "db_password" {
-  length  = 16
-  special = true
+  length           = 16
+  special          = true
   override_special = "!#$%&*()-_=+[]{}<>:?"
-}
-
-resource "random_password" "jwt_secret" {
-  length  = 32
-  special = false
-}
-
-# AWS Secrets Manager - Database Password
-resource "aws_secretsmanager_secret" "db_password" {
-  name = "${var.project_name}-${var.environment}-db-password"
-  description = "Database password for RDS PostgreSQL"
-
-  tags = {
-    Name = "${var.project_name}-${var.environment}-db-password"
-  }
-}
-
-resource "aws_secretsmanager_secret_version" "db_password" {
-  secret_id = aws_secretsmanager_secret.db_password.id
-  secret_string = jsonencode({
-    username = var.db_username
-    password = random_password.db_password.result
-    engine   = "postgres"
-    host     = module.rds.db_instance_address
-    port     = 5432
-    dbname   = var.db_name
-  })
-
-  depends_on = [module.rds]
-}
-
-# AWS Secrets Manager - JWT Secret
-resource "aws_secretsmanager_secret" "jwt_secret" {
-  name = "${var.project_name}-${var.environment}-jwt-secret"
-  description = "JWT secret for authentication"
-
-  tags = {
-    Name = "${var.project_name}-${var.environment}-jwt-secret"
-  }
-}
-
-resource "aws_secretsmanager_secret_version" "jwt_secret" {
-  secret_id = aws_secretsmanager_secret.jwt_secret.id
-  secret_string = jsonencode({
-    secret = random_password.jwt_secret.result
-  })
 }
 
 # Route 53 Hosted Zone
@@ -169,7 +123,7 @@ resource "aws_acm_certificate_validation" "main" {
 
 # VPC Module
 module "vpc" {
-  source = "./modules/vpc"
+  source = "../../modules/vpc"
 
   project_name       = var.project_name
   environment        = var.environment
@@ -179,24 +133,41 @@ module "vpc" {
 
 # RDS Module
 module "rds" {
-  source = "./modules/rds"
+  source = "../../modules/rds"
 
-  project_name          = var.project_name
-  environment           = var.environment
-  database_subnet_ids   = module.vpc.database_subnet_ids
-  rds_security_group_id = module.vpc.rds_security_group_id
-  db_name               = var.db_name
-  db_username           = var.db_username
-  db_password           = random_password.db_password.result
-  instance_class        = "db.t4g.micro"
-  allocated_storage     = 20
+  project_name            = var.project_name
+  environment             = var.environment
+  database_subnet_ids     = module.vpc.database_subnet_ids
+  rds_security_group_id   = module.vpc.rds_security_group_id
+  db_name                 = var.db_name
+  db_username             = var.db_username
+  db_password             = random_password.db_password.result
+  instance_class          = "db.t4g.micro"
+  allocated_storage       = 20
   backup_retention_period = 14
-  deletion_protection   = true
+  deletion_protection     = true
+}
+
+# Secrets Module
+module "secrets" {
+  source = "../../modules/secrets"
+
+  project_name         = var.project_name
+  environment          = var.environment
+  db_host              = module.rds.db_instance_address
+  db_port              = 5432
+  db_name              = var.db_name
+  db_username          = var.db_username
+  db_password          = random_password.db_password.result
+  google_client_id     = var.google_client_id
+  google_client_secret = var.google_client_secret
+
+  depends_on = [module.rds]
 }
 
 # S3 Module
 module "s3" {
-  source = "./modules/s3"
+  source = "../../modules/s3"
 
   project_name                  = var.project_name
   environment                   = var.environment
@@ -206,7 +177,7 @@ module "s3" {
 
 # ALB Module
 module "alb" {
-  source = "./modules/alb"
+  source = "../../modules/alb"
 
   project_name          = var.project_name
   environment           = var.environment
@@ -222,47 +193,45 @@ module "alb" {
 
 # ECS Module
 module "ecs" {
-  source = "./modules/ecs"
+  source = "../../modules/ecs"
 
-  project_name      = var.project_name
-  environment       = var.environment
-  aws_region        = var.aws_region
+  project_name = var.project_name
+  environment  = var.environment
+  aws_region   = var.aws_region
 
   # Network
-  vpc_id               = module.vpc.vpc_id
-  private_subnet_ids   = module.vpc.private_subnet_ids
-  public_subnet_ids    = module.vpc.public_subnet_ids
+  vpc_id                = module.vpc.vpc_id
+  private_subnet_ids    = module.vpc.private_subnet_ids
+  public_subnet_ids     = module.vpc.public_subnet_ids
   ecs_security_group_id = module.vpc.ecs_security_group_id
-  
-  # Database
-  db_endpoint = module.rds.db_instance_address
-  db_name     = var.db_name
-  db_username = var.db_username
-  db_password = random_password.db_password.result
 
   # Application
-  backend_image         = var.backend_image
-  frontend_image        = var.frontend_image
-  backend_port          = var.backend_port
-  frontend_port         = var.frontend_port
-  jwt_secret           = random_password.jwt_secret.result
-  api_domain           = module.alb.alb_dns_name
-  google_client_id     = var.google_client_id
-  google_client_secret = var.google_client_secret
-  
+  backend_image  = var.backend_image
+  frontend_image = var.frontend_image
+  backend_port   = var.backend_port
+  frontend_port  = var.frontend_port
+  api_domain     = module.alb.alb_dns_name
+
+  # Secrets (from Secrets Manager)
+  database_url_secret_arn     = module.secrets.database_url_arn
+  jwt_secret_arn              = module.secrets.jwt_secret_arn
+  google_client_id_secret_arn = module.secrets.google_client_id_arn
+  google_client_secret_arn    = module.secrets.google_client_secret_arn
+  secrets_read_policy_arn     = module.secrets.secrets_read_policy_arn
+
   # ALB
   backend_target_group_arn  = module.alb.backend_target_group_arn
   frontend_target_group_arn = module.alb.frontend_target_group_arn
   backend_lb_listener_arn   = module.alb.listener_arn
   frontend_lb_listener_arn  = module.alb.listener_arn
-  
+
   # Scaling
   backend_desired_count  = 1
   frontend_desired_count = 1
-  backend_cpu           = 256
-  backend_memory        = 512
-  frontend_cpu          = 256
-  frontend_memory       = 512
+  backend_cpu            = 256
+  backend_memory         = 512
+  frontend_cpu           = 256
+  frontend_memory        = 512
 }
 
 # Route 53 A Record for ALB

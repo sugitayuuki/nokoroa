@@ -54,6 +54,12 @@ resource "aws_iam_role_policy_attachment" "ecs_task_execution" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
+# Attach secrets read policy to execution role
+resource "aws_iam_role_policy_attachment" "ecs_secrets_read" {
+  role       = aws_iam_role.ecs_task_execution.name
+  policy_arn = var.secrets_read_policy_arn
+}
+
 # IAM Role for ECS Task
 resource "aws_iam_role" "ecs_task" {
   name = "${var.project_name}-${var.environment}-ecs-task"
@@ -101,7 +107,7 @@ resource "aws_ecs_task_definition" "backend" {
   cpu                      = var.backend_cpu
   memory                   = var.backend_memory
   execution_role_arn       = aws_iam_role.ecs_task_execution.arn
-  task_role_arn           = aws_iam_role.ecs_task.arn
+  task_role_arn            = aws_iam_role.ecs_task.arn
 
   runtime_platform {
     operating_system_family = "LINUX"
@@ -112,7 +118,7 @@ resource "aws_ecs_task_definition" "backend" {
     {
       name  = "backend"
       image = var.backend_image != "" ? var.backend_image : "public.ecr.aws/docker/library/node:18-alpine"
-      
+
       portMappings = [
         {
           containerPort = var.backend_port
@@ -123,19 +129,11 @@ resource "aws_ecs_task_definition" "backend" {
       environment = [
         {
           name  = "NODE_ENV"
-          value = var.environment
+          value = var.environment == "prod" ? "production" : var.environment
         },
         {
           name  = "PORT"
           value = tostring(var.backend_port)
-        },
-        {
-          name  = "DATABASE_URL"
-          value = "postgresql://${var.db_username}:${var.db_password}@${var.db_endpoint}:5432/${var.db_name}"
-        },
-        {
-          name  = "JWT_SECRET"
-          value = var.jwt_secret
         },
         {
           name  = "AWS_BUCKET_NAME"
@@ -146,20 +144,31 @@ resource "aws_ecs_task_definition" "backend" {
           value = var.aws_region
         },
         {
-          name  = "GOOGLE_CLIENT_ID"
-          value = var.google_client_id
-        },
-        {
-          name  = "GOOGLE_CLIENT_SECRET"
-          value = var.google_client_secret
-        },
-        {
           name  = "GOOGLE_CALLBACK_URL"
           value = var.environment == "prod" ? "https://nokoroa.com/api/auth/google/callback" : "https://${var.api_domain}/api/auth/google/callback"
         },
         {
           name  = "FRONTEND_URL"
           value = var.environment == "prod" ? "https://nokoroa.com" : "http://localhost:3000"
+        }
+      ]
+
+      secrets = [
+        {
+          name      = "DATABASE_URL"
+          valueFrom = var.database_url_secret_arn
+        },
+        {
+          name      = "JWT_SECRET"
+          valueFrom = var.jwt_secret_arn
+        },
+        {
+          name      = "GOOGLE_CLIENT_ID"
+          valueFrom = var.google_client_id_secret_arn
+        },
+        {
+          name      = "GOOGLE_CLIENT_SECRET"
+          valueFrom = var.google_client_secret_arn
         }
       ]
 
@@ -201,7 +210,7 @@ resource "aws_ecs_task_definition" "frontend" {
     {
       name  = "frontend"
       image = var.frontend_image != "" ? var.frontend_image : "public.ecr.aws/docker/library/node:18-alpine"
-      
+
       portMappings = [
         {
           containerPort = var.frontend_port
@@ -212,7 +221,7 @@ resource "aws_ecs_task_definition" "frontend" {
       environment = [
         {
           name  = "NODE_ENV"
-          value = var.environment
+          value = var.environment == "prod" ? "production" : var.environment
         },
         {
           name  = "NEXT_PUBLIC_API_URL"

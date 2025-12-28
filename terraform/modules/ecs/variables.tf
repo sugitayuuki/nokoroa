@@ -33,27 +33,6 @@ variable "ecs_security_group_id" {
   type        = string
 }
 
-variable "db_endpoint" {
-  description = "Database endpoint"
-  type        = string
-}
-
-variable "db_name" {
-  description = "Database name"
-  type        = string
-}
-
-variable "db_username" {
-  description = "Database username"
-  type        = string
-}
-
-variable "db_password" {
-  description = "Database password"
-  type        = string
-  sensitive   = true
-}
-
 variable "backend_image" {
   description = "Backend Docker image"
   type        = string
@@ -72,12 +51,6 @@ variable "backend_port" {
 variable "frontend_port" {
   description = "Frontend port"
   type        = number
-}
-
-variable "jwt_secret" {
-  description = "JWT secret key"
-  type        = string
-  sensitive   = true
 }
 
 variable "api_domain" {
@@ -141,14 +114,28 @@ variable "frontend_memory" {
   default     = 512
 }
 
-variable "google_client_id" {
-  description = "Google OAuth Client ID"
+# Secrets Manager ARNs
+variable "database_url_secret_arn" {
+  description = "ARN of the DATABASE_URL secret in Secrets Manager"
   type        = string
-  sensitive   = true
 }
 
-variable "google_client_secret" {
-  description = "Google OAuth Client Secret"
+variable "jwt_secret_arn" {
+  description = "ARN of the JWT_SECRET in Secrets Manager"
   type        = string
-  sensitive   = true
+}
+
+variable "google_client_id_secret_arn" {
+  description = "ARN of the Google Client ID secret in Secrets Manager"
+  type        = string
+}
+
+variable "google_client_secret_arn" {
+  description = "ARN of the Google Client Secret in Secrets Manager"
+  type        = string
+}
+
+variable "secrets_read_policy_arn" {
+  description = "ARN of the IAM policy for reading secrets"
+  type        = string
 }
