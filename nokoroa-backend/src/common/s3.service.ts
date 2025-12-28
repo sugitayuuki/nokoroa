@@ -17,9 +17,9 @@ export class S3Service {
     this.region = this.configService.get('AWS_REGION') || 'ap-northeast-1';
     this.bucketName =
       this.configService.get('AWS_BUCKET_NAME') || 'nokoroa-prod-uploads';
-    this.isDevelopment =
-      this.configService.get('NODE_ENV') !== 'production' &&
-      !this.configService.get('AWS_ACCESS_KEY_ID');
+    const nodeEnv = this.configService.get('NODE_ENV');
+    const isProduction = nodeEnv === 'production' || nodeEnv === 'prod';
+    this.isDevelopment = !isProduction;
     const port = this.configService.get<number>('PORT') ?? 4000;
     this.backendUrl =
       this.configService.get('BACKEND_URL') || `http://localhost:${port}`;
