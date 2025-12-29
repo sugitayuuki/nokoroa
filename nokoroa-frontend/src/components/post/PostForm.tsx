@@ -2,8 +2,10 @@
 
 import {
   Add as AddIcon,
+  CheckCircle as CheckCircleIcon,
   CloudUpload as CloudUploadIcon,
   Delete as DeleteIcon,
+  LocationOn as LocationOnIcon,
 } from '@mui/icons-material';
 import {
   Alert,
@@ -20,7 +22,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { toast } from 'react-toastify';
 
 import { API_CONFIG } from '@/lib/apiConfig';
@@ -44,6 +46,8 @@ export const PostForm = ({
     content: initialData?.content || '',
     imageUrl: initialData?.imageUrl || '',
     location: initialData?.location || '',
+    latitude: initialData?.latitude,
+    longitude: initialData?.longitude,
     tags: initialData?.tags || [],
     isPublic: initialData?.isPublic ?? true,
   });
@@ -53,7 +57,75 @@ export const PostForm = ({
   const [previewUrl, setPreviewUrl] = useState<string>(
     initialData?.imageUrl || '',
   );
+  const [isGeocodingLocation, setIsGeocodingLocation] = useState(false);
+  const [geocodingSuccess, setGeocodingSuccess] = useState(
+    !!(initialData?.latitude && initialData?.longitude),
+  );
   const API_URL = API_CONFIG.BASE_URL;
+
+  const geocodeLocation = useCallback(async (locationName: string) => {
+    if (!locationName.trim()) {
+      setFormData((prev) => ({
+        ...prev,
+        latitude: undefined,
+        longitude: undefined,
+      }));
+      setGeocodingSuccess(false);
+      return;
+    }
+
+    setIsGeocodingLocation(true);
+    setGeocodingSuccess(false);
+
+    try {
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(locationName)}&format=json&limit=1&accept-language=ja`,
+        {
+          headers: {
+            'User-Agent': 'Nokoroa/1.0',
+          },
+        },
+      );
+
+      if (!response.ok) {
+        throw new Error('Geocoding failed');
+      }
+
+      const data = await response.json();
+
+      if (data.length > 0) {
+        const { lat, lon } = data[0];
+        setFormData((prev) => ({
+          ...prev,
+          latitude: parseFloat(lat),
+          longitude: parseFloat(lon),
+        }));
+        setGeocodingSuccess(true);
+      } else {
+        setFormData((prev) => ({
+          ...prev,
+          latitude: undefined,
+          longitude: undefined,
+        }));
+        setGeocodingSuccess(false);
+      }
+    } catch {
+      setFormData((prev) => ({
+        ...prev,
+        latitude: undefined,
+        longitude: undefined,
+      }));
+      setGeocodingSuccess(false);
+    } finally {
+      setIsGeocodingLocation(false);
+    }
+  }, []);
+
+  const handleLocationBlur = useCallback(() => {
+    if (formData.location) {
+      geocodeLocation(formData.location);
+    }
+  }, [formData.location, geocodeLocation]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -325,15 +397,50 @@ export const PostForm = ({
             )}
           </Box>
 
-          <TextField
-            fullWidth
-            label="場所"
-            value={formData.location}
-            onChange={(e) =>
-              setFormData((prev) => ({ ...prev, location: e.target.value }))
-            }
-            placeholder="場所を入力してください（任意）"
-          />
+          <Box>
+            <TextField
+              fullWidth
+              label="場所"
+              value={formData.location}
+              onChange={(e) => {
+                setFormData((prev) => ({ ...prev, location: e.target.value }));
+                setGeocodingSuccess(false);
+              }}
+              onBlur={handleLocationBlur}
+              placeholder="場所を入力してください（例：渋谷、京都駅、富士山）"
+              InputProps={{
+                endAdornment: (
+                  <InputAdornment position="end">
+                    {isGeocodingLocation ? (
+                      <CircularProgress size={20} />
+                    ) : geocodingSuccess ? (
+                      <CheckCircleIcon color="success" />
+                    ) : formData.location ? (
+                      <LocationOnIcon color="action" />
+                    ) : null}
+                  </InputAdornment>
+                ),
+              }}
+            />
+            {geocodingSuccess && formData.latitude && formData.longitude && (
+              <Typography
+                variant="caption"
+                color="success.main"
+                sx={{ mt: 0.5, display: 'block' }}
+              >
+                位置情報を取得しました（地図検索で表示されます）
+              </Typography>
+            )}
+            {formData.location && !geocodingSuccess && !isGeocodingLocation && (
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ mt: 0.5, display: 'block' }}
+              >
+                入力欄の外をクリックすると位置情報を取得します
+              </Typography>
+            )}
+          </Box>
 
           <Box>
             <TextField
