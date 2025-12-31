@@ -61,15 +61,10 @@ export default function MapPage() {
     accuracy?: string;
   } | null>(null);
 
-  // 投稿を検索
-  const searchPosts = async (lat?: number, lng?: number, query?: string) => {
+  // 投稿を検索（全世界のデータを取得）
+  const searchPosts = async (query?: string) => {
     try {
       const params = new URLSearchParams();
-      if (lat && lng) {
-        params.append('centerLat', lat.toString());
-        params.append('centerLng', lng.toString());
-        params.append('radius', '50'); // 50km radius
-      }
       if (query) {
         params.append('q', query);
       }
@@ -165,8 +160,8 @@ export default function MapPage() {
               setUserLocation(location);
               setMapCenter(location);
 
-              // 高精度位置情報で投稿を検索
-              await searchPosts(location.lat, location.lng);
+              // 全世界の投稿を検索
+              await searchPosts();
               if (isMounted) {
                 setLoading(false);
               }
@@ -175,12 +170,8 @@ export default function MapPage() {
               if (!isMounted) return;
 
               // 高精度位置情報の取得に失敗
-              // IP位置情報で投稿を検索
-              if (ipLoc) {
-                await searchPosts(ipLoc.lat, ipLoc.lng);
-              } else {
-                await searchPosts();
-              }
+              // 全世界の投稿を検索
+              await searchPosts();
               if (isMounted) {
                 setLoading(false);
               }
@@ -189,11 +180,8 @@ export default function MapPage() {
           );
         } else {
           // 位置情報APIが利用できない場合
-          if (ipLoc) {
-            await searchPosts(ipLoc.lat, ipLoc.lng);
-          } else {
-            await searchPosts();
-          }
+          // 全世界の投稿を検索
+          await searchPosts();
           if (isMounted) {
             setLoading(false);
           }
@@ -222,17 +210,11 @@ export default function MapPage() {
   const handleSearch = useCallback(async () => {
     setLoading(true);
     try {
-      if (userLocation) {
-        await searchPosts(userLocation.lat, userLocation.lng, searchQuery);
-      } else if (ipLocation) {
-        await searchPosts(ipLocation.lat, ipLocation.lng, searchQuery);
-      } else {
-        await searchPosts(undefined, undefined, searchQuery);
-      }
+      await searchPosts(searchQuery || undefined);
     } finally {
       setLoading(false);
     }
-  }, [userLocation, ipLocation, searchQuery]);
+  }, [searchQuery]);
 
   // 投稿クリック時の処理
   const handlePostClick = useCallback((post: PostData) => {

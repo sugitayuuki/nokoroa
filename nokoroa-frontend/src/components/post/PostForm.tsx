@@ -61,6 +61,10 @@ export const PostForm = ({
   const [geocodingSuccess, setGeocodingSuccess] = useState(
     !!(initialData?.latitude && initialData?.longitude),
   );
+  const [geocodedDisplayName, setGeocodedDisplayName] = useState<string | null>(
+    null,
+  );
+  const [geocodingAttempted, setGeocodingAttempted] = useState(false);
   const API_URL = API_CONFIG.BASE_URL;
 
   const geocodeLocation = useCallback(async (locationName: string) => {
@@ -71,11 +75,14 @@ export const PostForm = ({
         longitude: undefined,
       }));
       setGeocodingSuccess(false);
+      setGeocodedDisplayName(null);
       return;
     }
 
     setIsGeocodingLocation(true);
     setGeocodingSuccess(false);
+    setGeocodedDisplayName(null);
+    setGeocodingAttempted(true);
 
     try {
       const response = await fetch(
@@ -94,13 +101,14 @@ export const PostForm = ({
       const data = await response.json();
 
       if (data.length > 0) {
-        const { lat, lon } = data[0];
+        const { lat, lon, display_name } = data[0];
         setFormData((prev) => ({
           ...prev,
           latitude: parseFloat(lat),
           longitude: parseFloat(lon),
         }));
         setGeocodingSuccess(true);
+        setGeocodedDisplayName(display_name);
       } else {
         setFormData((prev) => ({
           ...prev,
@@ -108,6 +116,7 @@ export const PostForm = ({
           longitude: undefined,
         }));
         setGeocodingSuccess(false);
+        setGeocodedDisplayName(null);
       }
     } catch {
       setFormData((prev) => ({
@@ -116,6 +125,7 @@ export const PostForm = ({
         longitude: undefined,
       }));
       setGeocodingSuccess(false);
+      setGeocodedDisplayName(null);
     } finally {
       setIsGeocodingLocation(false);
     }
@@ -405,6 +415,8 @@ export const PostForm = ({
               onChange={(e) => {
                 setFormData((prev) => ({ ...prev, location: e.target.value }));
                 setGeocodingSuccess(false);
+                setGeocodingAttempted(false);
+                setGeocodedDisplayName(null);
               }}
               onBlur={handleLocationBlur}
               placeholder="場所を入力してください（例：渋谷、京都駅、富士山）"
@@ -428,18 +440,34 @@ export const PostForm = ({
                 color="success.main"
                 sx={{ mt: 0.5, display: 'block' }}
               >
-                位置情報を取得しました（地図検索で表示されます）
+                位置情報を取得しました:{' '}
+                {geocodedDisplayName || formData.location}
               </Typography>
             )}
-            {formData.location && !geocodingSuccess && !isGeocodingLocation && (
-              <Typography
-                variant="caption"
-                color="text.secondary"
-                sx={{ mt: 0.5, display: 'block' }}
-              >
-                入力欄の外をクリックすると位置情報を取得します
-              </Typography>
-            )}
+            {formData.location &&
+              !geocodingSuccess &&
+              !isGeocodingLocation &&
+              !geocodingAttempted && (
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ mt: 0.5, display: 'block' }}
+                >
+                  入力欄の外をクリックすると位置情報を取得します
+                </Typography>
+              )}
+            {formData.location &&
+              !geocodingSuccess &&
+              !isGeocodingLocation &&
+              geocodingAttempted && (
+                <Typography
+                  variant="caption"
+                  color="error.main"
+                  sx={{ mt: 0.5, display: 'block' }}
+                >
+                  該当する場所が見つかりませんでした
+                </Typography>
+              )}
           </Box>
 
           <Box>
