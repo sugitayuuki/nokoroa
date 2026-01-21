@@ -8,6 +8,10 @@
 
 ![Nokoroa Mobile](https://github.com/sugitayuuki/nokoroa/releases/download/assets/946935E3-951D-4129-B0F8-0241B9FE813D.jpeg)
 
+## デモ動画
+
+https://github.com/sugitayuuki/nokoroa/raw/main/demo.mp4
+
 ## 概要
 
 Nokoroaは、旅行の思い出を写真と共に共有できるWebアプリケーションです。ユーザーは旅先での体験を投稿し、地図上で視覚的に探索できます。
