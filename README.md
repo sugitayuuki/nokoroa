@@ -10,7 +10,7 @@
 
 ## デモ動画
 
-https://github.com/sugitayuuki/nokoroa/raw/main/demo.mp4
+<a href="https://github.com/sugitayuuki/nokoroa/releases/download/assets/nokoroa.mov" target="_blank">デモ動画を見る</a>
 
 ## 概要
 
