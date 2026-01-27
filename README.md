@@ -4,6 +4,8 @@
 
 **URL**: https://nokoroa.com
 
+> **Note**: 現在、コスト削減のため本番環境の稼働を停止しています。動作確認はデモ動画をご覧ください。
+
 ![Nokoroa Screenshot](https://github.com/sugitayuuki/nokoroa/releases/download/assets/screencapture-localhost-3000-2025-11-26-02_41_56.png)
 
 ![Nokoroa Mobile](https://github.com/sugitayuuki/nokoroa/releases/download/assets/946935E3-951D-4129-B0F8-0241B9FE813D.jpeg)
