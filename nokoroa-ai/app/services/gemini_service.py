@@ -55,9 +55,9 @@ class GeminiService:
         }
 
     def chat_stream(
-        self, message: str, history: list[dict] | None = None
+        self, message: str, history: list[dict] | None = None, context_posts: list[dict] | None = None
     ):
-        contents = self._build_contents(message, history)
+        contents = self._build_contents(message, history, context_posts)
 
         response = self.client.models.generate_content_stream(
             model=self.model,
@@ -157,7 +157,7 @@ class GeminiService:
             return []
 
     def _build_contents(
-        self, message: str, history: list[dict] | None = None
+        self, message: str, history: list[dict] | None = None, context_posts: list[dict] | None = None
     ) -> list[types.Content]:
         contents = []
         if history:
@@ -169,10 +169,23 @@ class GeminiService:
                         parts=[types.Part(text=msg["content"])],
                     )
                 )
+
+        user_text = ""
+        if context_posts:
+            user_text += "以下はNokoroaユーザーの関連する旅行投稿です。回答に役立つ場合は参考にしてください。\n"
+            user_text += "【ユーザー投稿】\n"
+            for post in context_posts:
+                location_info = f"(場所: {post['location']}, 投稿者: {post['author']})" if post.get("location") else f"(投稿者: {post['author']})"
+                content_preview = post["content"][:200] if post.get("content") else ""
+                user_text += f"- 「{post['title']}」{location_info}: {content_preview}\n"
+            user_text += "\n【ユーザーの質問】\n"
+
+        user_text += message
+
         contents.append(
             types.Content(
                 role="user",
-                parts=[types.Part(text=message)],
+                parts=[types.Part(text=user_text)],
             )
         )
         return contents

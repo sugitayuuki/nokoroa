@@ -20,12 +20,78 @@ export class ChatService {
   }
 
   async streamChat(dto: ChatRequestDto, res: Response): Promise<void> {
+    let contextPosts: Array<{
+      title: string;
+      content: string;
+      location: string;
+      author: string;
+    }> = [];
+    let relatedPostsRaw: unknown[] = [];
+
+    try {
+      const searchResult = await this.postsService.search({
+        q: dto.message,
+        limit: 5,
+        offset: 0,
+      });
+
+      let posts = searchResult.posts;
+
+      if (posts.length === 0) {
+        const words = dto.message
+          .split(/[\s\u3000,、。のはがをでにへともより]+/)
+          .filter((w) => w.length >= 2);
+        const seen = new Set<number>();
+        for (const word of words) {
+          const wordResult = await this.postsService.search({
+            q: word,
+            limit: 5,
+            offset: 0,
+          });
+          for (const post of wordResult.posts) {
+            if (!seen.has(post.id)) {
+              seen.add(post.id);
+              posts.push(post);
+            }
+          }
+          if (posts.length >= 5) break;
+        }
+        posts = posts.slice(0, 5);
+      }
+
+      if (posts.length > 0) {
+        relatedPostsRaw = posts;
+        contextPosts = posts.map(
+          (post: {
+            title?: string;
+            content?: string;
+            location?: string | { name?: string };
+            author?: string | { name?: string };
+          }) => ({
+            title: post.title || '',
+            content: post.content || '',
+            location:
+              typeof post.location === 'string'
+                ? post.location
+                : post.location?.name || '',
+            author:
+              typeof post.author === 'string'
+                ? post.author
+                : post.author?.name || '',
+          }),
+        );
+      }
+    } catch {
+      // noop
+    }
+
     const response = await fetch(`${this.aiServiceUrl}/api/chat/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         message: dto.message,
         history: dto.history || [],
+        context_posts: contextPosts,
       }),
     });
 
@@ -45,23 +111,27 @@ export class ChatService {
         if (done) break;
         res.write(Buffer.from(value));
       }
+      if (relatedPostsRaw.length > 0) {
+        const relatedPostsEvent = JSON.stringify({
+          type: 'related_posts',
+          posts: relatedPostsRaw,
+        });
+        res.write(`data: ${relatedPostsEvent}\n\n`);
+      }
     } finally {
       res.end();
     }
   }
 
   async getSuggestions(dto: SuggestionsRequestDto): Promise<string[]> {
-    const response = await fetch(
-      `${this.aiServiceUrl}/api/chat/suggestions`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: dto.message,
-          ai_response: dto.ai_response,
-        }),
-      },
-    );
+    const response = await fetch(`${this.aiServiceUrl}/api/chat/suggestions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: dto.message,
+        ai_response: dto.ai_response,
+      }),
+    });
 
     if (!response.ok) {
       return [];
