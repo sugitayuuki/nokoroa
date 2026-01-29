@@ -48,6 +48,11 @@ terraform/.terraform.lock.hcl
 **/terraform.tfvars
 !**/terraform.tfvars.example
 
+# Python
+venv/
+__pycache__/
+*.pyc
+
 # Prisma
 /nokoroa-backend/generated/
 
