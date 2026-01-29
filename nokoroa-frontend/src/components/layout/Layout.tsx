@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 
 import { useAuth } from '@/providers/AuthProvider';
 
+import Chat from '../chat';
 import DashboardLayout from '../DashboardLayout';
 import Footer from './Footer';
 import Header from './Header';
@@ -76,6 +77,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             <Footer />
           </Box>
         )}
+        <Chat />
       </Box>
     </Fade>
   );
