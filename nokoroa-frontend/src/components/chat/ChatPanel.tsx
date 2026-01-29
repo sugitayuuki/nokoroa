@@ -18,7 +18,9 @@ import {
 } from '@mui/material';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useCallback, useMemo, useRef, useState } from 'react';
+
 import { PostData } from '@/types/post';
+
 import ChatPostCard from './ChatPostCard';
 
 interface Message {
@@ -39,12 +41,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 const MotionPaper = motion.create(Paper);
 const MotionBox = motion.create(Box);
 
-const SUGGESTIONS = [
-  '京都 2泊3日',
-  '沖縄 おすすめ',
-  '温泉旅行',
-  '週末旅行',
-];
+const SUGGESTIONS = ['京都 2泊3日', '沖縄 おすすめ', '温泉旅行', '週末旅行'];
 
 function TypingIndicator() {
   return (
@@ -93,14 +90,13 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
         height: isMobile ? 450 : 550,
       },
     }),
-    [isMobile]
+    [isMobile],
   );
 
   const [messages, setMessages] = useState<Message[]>([
     {
       role: 'assistant',
-      content:
-        'こんにちは！Sora AIです。旅行の相談があればお気軽にどうぞ！',
+      content: 'こんにちは！Sora AIです。旅行の相談があればお気軽にどうぞ！',
       id: 'initial',
     },
   ]);
@@ -130,7 +126,10 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
     setInput('');
     setDynamicSuggestions([]);
     const userMsgId = `user-${Date.now()}`;
-    setMessages((prev) => [...prev, { role: 'user', content: userMessage, id: userMsgId }]);
+    setMessages((prev) => [
+      ...prev,
+      { role: 'user', content: userMessage, id: userMsgId },
+    ]);
     setIsLoading(true);
 
     setTimeout(scrollToBottom, 100);
@@ -164,11 +163,15 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
       }
 
       const assistantMsgId = `assistant-${Date.now()}`;
-      setMessages((prev) => [...prev, { role: 'assistant', content: '', id: assistantMsgId }]);
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: '', id: assistantMsgId },
+      ]);
       setIsLoading(false);
 
       let buffer = '';
       let fullResponse = '';
+      let receivedRelatedPosts: PostData[] | null = null;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -187,6 +190,27 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
             if (data.startsWith('[ERROR]')) {
               throw new Error(data);
             }
+
+            if (data.startsWith('{')) {
+              try {
+                const parsed = JSON.parse(data);
+                if (parsed.type === 'related_posts' && parsed.posts) {
+                  receivedRelatedPosts = parsed.posts as PostData[];
+                  setMessages((prev) => {
+                    const lastMsg = prev[prev.length - 1];
+                    if (lastMsg?.role === 'assistant') {
+                      return [
+                        ...prev.slice(0, -1),
+                        { ...lastMsg, relatedPosts: parsed.posts },
+                      ];
+                    }
+                    return prev;
+                  });
+                  continue;
+                }
+              } catch {}
+            }
+
             fullResponse += data;
             setMessages((prev) => {
               const lastMessage = prev[prev.length - 1];
@@ -203,49 +227,39 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
         }
       }
 
-      if (fullResponse) {
-        const requestBody = JSON.stringify({
-          message: userMessage,
-          ai_response: fullResponse,
+      if (receivedRelatedPosts) {
+        setMessages((prev) => {
+          const lastMsg = prev[prev.length - 1];
+          if (lastMsg?.role === 'assistant') {
+            return [
+              ...prev.slice(0, -1),
+              { ...lastMsg, relatedPosts: receivedRelatedPosts as PostData[] },
+            ];
+          }
+          return prev;
         });
-        const headers = { 'Content-Type': 'application/json' };
+      }
 
-        const [suggestionsResult, relatedPostsResult] = await Promise.allSettled([
-          fetch(`${API_URL}/api/chat/suggestions`, {
-            method: 'POST',
-            headers,
-            body: requestBody,
-          }).then((res) => (res.ok ? res.json() : null)),
-          fetch(`${API_URL}/api/chat/related-posts`, {
-            method: 'POST',
-            headers,
-            body: requestBody,
-          }).then((res) => (res.ok ? res.json() : null)),
-        ]);
-
-        if (
-          suggestionsResult.status === 'fulfilled' &&
-          suggestionsResult.value?.suggestions?.length > 0
-        ) {
-          setDynamicSuggestions(suggestionsResult.value.suggestions);
-        }
-
-        if (
-          relatedPostsResult.status === 'fulfilled' &&
-          relatedPostsResult.value?.posts?.length > 0
-        ) {
-          const posts = relatedPostsResult.value.posts as PostData[];
-          setMessages((prev) => {
-            const lastMsg = prev[prev.length - 1];
-            if (lastMsg?.role === 'assistant') {
-              return [
-                ...prev.slice(0, -1),
-                { ...lastMsg, relatedPosts: posts },
-              ];
+      if (fullResponse) {
+        try {
+          const suggestionsRes = await fetch(
+            `${API_URL}/api/chat/suggestions`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                message: userMessage,
+                ai_response: fullResponse,
+              }),
+            },
+          );
+          if (suggestionsRes.ok) {
+            const suggestionsData = await suggestionsRes.json();
+            if (suggestionsData?.suggestions?.length > 0) {
+              setDynamicSuggestions(suggestionsData.suggestions);
             }
-            return prev;
-          });
-        }
+          }
+        } catch {}
       }
     } catch {
       setMessages((prev) => {
@@ -255,7 +269,8 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
             ...prev.slice(0, -1),
             {
               role: 'assistant',
-              content: '申し訳ありません。エラーが発生しました。もう一度お試しください。',
+              content:
+                '申し訳ありません。エラーが発生しました。もう一度お試しください。',
               id: `error-${Date.now()}`,
             },
           ];
@@ -264,7 +279,8 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
           ...prev,
           {
             role: 'assistant',
-            content: '申し訳ありません。エラーが発生しました。もう一度お試しください。',
+            content:
+              '申し訳ありません。エラーが発生しました。もう一度お試しください。',
             id: `error-${Date.now()}`,
           },
         ];
@@ -285,8 +301,10 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
   };
 
   const currentSize = panelSizes[panelSize];
-  const activeSuggestions = dynamicSuggestions.length > 0 ? dynamicSuggestions : SUGGESTIONS;
-  const showSuggestions = (messages.length <= 2 || dynamicSuggestions.length > 0) && !isLoading;
+  const activeSuggestions =
+    dynamicSuggestions.length > 0 ? dynamicSuggestions : SUGGESTIONS;
+  const showSuggestions =
+    (messages.length <= 2 || dynamicSuggestions.length > 0) && !isLoading;
 
   return (
     <AnimatePresence>
@@ -414,10 +432,17 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
                       variant="outlined"
                       sx={{
                         p: 1.5,
-                        bgcolor: message.role === 'user' ? 'primary.main' : 'background.paper',
-                        color: message.role === 'user' ? 'primary.contrastText' : 'text.primary',
+                        bgcolor:
+                          message.role === 'user'
+                            ? 'primary.main'
+                            : 'background.paper',
+                        color:
+                          message.role === 'user'
+                            ? 'primary.contrastText'
+                            : 'text.primary',
                         borderRadius: 2,
-                        borderColor: message.role === 'user' ? 'primary.main' : 'divider',
+                        borderColor:
+                          message.role === 'user' ? 'primary.main' : 'divider',
                       }}
                     >
                       <Typography
@@ -431,16 +456,28 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
                         {message.content}
                       </Typography>
                     </Paper>
-                    {message.relatedPosts && message.relatedPosts.length > 0 && (
-                      <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                        <Typography variant="caption" color="text.secondary" sx={{ pl: 0.5 }}>
-                          関連する投稿
-                        </Typography>
-                        {message.relatedPosts.map((post) => (
-                          <ChatPostCard key={post.id} post={post} />
-                        ))}
-                      </Box>
-                    )}
+                    {message.relatedPosts &&
+                      message.relatedPosts.length > 0 && (
+                        <Box
+                          sx={{
+                            mt: 1,
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 0.5,
+                          }}
+                        >
+                          <Typography
+                            variant="caption"
+                            color="text.secondary"
+                            sx={{ pl: 0.5 }}
+                          >
+                            関連する投稿
+                          </Typography>
+                          {message.relatedPosts.map((post) => (
+                            <ChatPostCard key={post.id} post={post} />
+                          ))}
+                        </Box>
+                      )}
                   </Box>
                 </MotionBox>
               ))}

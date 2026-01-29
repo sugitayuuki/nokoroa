@@ -15,9 +15,17 @@ class Message(BaseModel):
     content: str
 
 
+class ContextPost(BaseModel):
+    title: str
+    content: str
+    location: str
+    author: str
+
+
 class ChatRequest(BaseModel):
     message: str
     history: list[Message] | None = None
+    context_posts: list[ContextPost] | None = None
 
 
 class ChatResponse(BaseModel):
@@ -52,9 +60,17 @@ async def chat_stream(request: ChatRequest):
             if request.history:
                 history = [{"role": msg.role, "content": msg.content} for msg in request.history]
 
+            context_posts = None
+            if request.context_posts:
+                context_posts = [
+                    {"title": p.title, "content": p.content, "location": p.location, "author": p.author}
+                    for p in request.context_posts
+                ]
+
             for chunk in gemini_service.chat_stream(
                 message=request.message,
                 history=history,
+                context_posts=context_posts,
             ):
                 yield f"data: {chunk}\n\n"
             yield "data: [DONE]\n\n"
