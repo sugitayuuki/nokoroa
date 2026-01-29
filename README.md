@@ -8,7 +8,10 @@
 
 ![Nokoroa Screenshot](https://github.com/sugitayuuki/nokoroa/releases/download/assets/screencapture-localhost-3000-2025-11-26-02_41_56.png)
 
-![Nokoroa Mobile](https://github.com/sugitayuuki/nokoroa/releases/download/assets/946935E3-951D-4129-B0F8-0241B9FE813D.jpeg)
+
+AIチャット機能を作成中
+
+![Image](https://github.com/user-attachments/assets/caa08bd7-da73-4388-b8d2-4e2108cda0a7)
 
 ## デモ動画
 
