@@ -56,5 +56,6 @@ terraform/.terraform.lock.hcl
 .vercel
 
 # Claude Code local settings
-.claude/
+.claude/*
+!.claude/skills/
 .codex/

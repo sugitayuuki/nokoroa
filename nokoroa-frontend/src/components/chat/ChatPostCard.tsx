@@ -2,6 +2,7 @@
 
 import LocationOnIcon from '@mui/icons-material/LocationOn';
 import { Box, Chip, Paper, Typography } from '@mui/material';
+
 import { PostData } from '@/types/post';
 import { getTagColor } from '@/utils/tagColors';
 
