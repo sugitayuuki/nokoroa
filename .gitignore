@@ -61,5 +61,6 @@ __pycache__/
 .vercel
 
 # Claude Code local settings
-.claude/
+.claude/*
+!.claude/skills/
 .codex/
