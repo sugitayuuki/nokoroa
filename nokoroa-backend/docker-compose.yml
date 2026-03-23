@@ -12,9 +12,10 @@ services:
     command: npm run start:dev
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/nokoroa_db
-      - FRONTEND_URL=http://localhost:3000
+      - FRONTEND_URL=http://localhost:3003
       - JWT_SECRET=your-super-secret-jwt-key-change-this-in-production
       - NODE_ENV=development
+      - PORT=4000
       - AI_SERVICE_URL=http://ai:8000
     depends_on:
       - postgres

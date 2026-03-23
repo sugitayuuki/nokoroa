@@ -146,7 +146,7 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
         content: msg.content,
       }));
 
-      const token = localStorage.getItem('token');
+      const token = localStorage.getItem('jwt');
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
       };
