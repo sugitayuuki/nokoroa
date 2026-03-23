@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Response } from 'express';
 import { PostsService } from '../posts/posts.service';
@@ -8,6 +8,7 @@ import { SuggestionsRequestDto } from './dto/suggestions-request.dto';
 
 @Injectable()
 export class ChatService {
+  private readonly logger = new Logger(ChatService.name);
   private readonly aiServiceUrl: string;
 
   constructor(
@@ -81,8 +82,10 @@ export class ChatService {
           }),
         );
       }
-    } catch {
-      // noop
+    } catch (error) {
+      this.logger.warn(
+        `Failed to search related posts: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
 
     const response = await fetch(`${this.aiServiceUrl}/api/chat/stream`, {
@@ -183,7 +186,10 @@ export class ChatService {
       });
 
       return { posts: fallbackResult.posts };
-    } catch {
+    } catch (error) {
+      this.logger.warn(
+        `Failed to get related posts: ${error instanceof Error ? error.message : String(error)}`,
+      );
       return { posts: [] };
     }
   }

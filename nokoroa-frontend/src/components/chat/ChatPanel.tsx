@@ -42,6 +42,7 @@ const MotionPaper = motion.create(Paper);
 const MotionBox = motion.create(Box);
 
 const SUGGESTIONS = ['京都 2泊3日', '沖縄 おすすめ', '温泉旅行', '週末旅行'];
+const MAX_MESSAGES = 100;
 
 function TypingIndicator() {
   return (
@@ -126,10 +127,15 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
     setInput('');
     setDynamicSuggestions([]);
     const userMsgId = `user-${Date.now()}`;
-    setMessages((prev) => [
-      ...prev,
-      { role: 'user', content: userMessage, id: userMsgId },
-    ]);
+    setMessages((prev) => {
+      const updated = [
+        ...prev,
+        { role: 'user' as const, content: userMessage, id: userMsgId },
+      ];
+      return updated.length > MAX_MESSAGES
+        ? updated.slice(-MAX_MESSAGES)
+        : updated;
+    });
     setIsLoading(true);
 
     setTimeout(scrollToBottom, 100);
@@ -140,11 +146,17 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
         content: msg.content,
       }));
 
+      const token = localStorage.getItem('token');
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
       const response = await fetch(`${API_URL}/api/chat/stream`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers,
         body: JSON.stringify({
           message: userMessage,
           history,
@@ -185,7 +197,7 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
           if (line.startsWith('data: ')) {
             const data = line.slice(6);
             if (data === '[DONE]') {
-              break;
+              continue;
             }
             if (data.startsWith('[ERROR]')) {
               throw new Error(data);
@@ -242,11 +254,17 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
 
       if (fullResponse) {
         try {
+          const suggestionsHeaders: Record<string, string> = {
+            'Content-Type': 'application/json',
+          };
+          if (token) {
+            suggestionsHeaders['Authorization'] = `Bearer ${token}`;
+          }
           const suggestionsRes = await fetch(
             `${API_URL}/api/chat/suggestions`,
             {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: suggestionsHeaders,
               body: JSON.stringify({
                 message: userMessage,
                 ai_response: fullResponse,

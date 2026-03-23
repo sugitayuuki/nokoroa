@@ -15,9 +15,10 @@ services:
       - FRONTEND_URL=http://localhost:3000
       - JWT_SECRET=your-super-secret-jwt-key-change-this-in-production
       - NODE_ENV=development
-      - AI_SERVICE_URL=http://host.docker.internal:8000
+      - AI_SERVICE_URL=http://ai:8000
     depends_on:
       - postgres
+      - ai
 
   postgres:
     image: postgres:16
@@ -30,6 +31,16 @@ services:
       POSTGRES_DB: nokoroa_db
     volumes:
       - postgres_data:/var/lib/postgresql/data
+
+  ai:
+    container_name: nokoroa-ai
+    build:
+      context: ../nokoroa-ai
+      dockerfile: Dockerfile
+    ports:
+      - '8000:8000'
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
 
 volumes:
   postgres_data:
