@@ -84,7 +84,7 @@ export class ChatService {
       }
     } catch (error) {
       this.logger.warn(
-        `Failed to search related posts: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to search related posts: ${error instanceof Error ? error.message : 'Unknown error'}`,
       );
     }
 
@@ -140,8 +140,8 @@ export class ChatService {
       return [];
     }
 
-    const data = await response.json();
-    return data.suggestions || [];
+    const data = (await response.json()) as { suggestions?: string[] };
+    return data.suggestions ?? [];
   }
 
   async getRelatedPosts(dto: RelatedPostsRequestDto) {
@@ -162,15 +162,19 @@ export class ChatService {
         return { posts: [] };
       }
 
-      const keywordsData = await keywordsRes.json();
+      const keywordsData = (await keywordsRes.json()) as {
+        keywords?: { location?: string };
+      };
       const keywords = keywordsData.keywords;
 
       if (!keywords) {
         return { posts: [] };
       }
 
+      const location = keywords.location ?? '';
+
       const result = await this.postsService.search({
-        location: keywords.location,
+        location,
         limit: 3,
         offset: 0,
       });
@@ -180,7 +184,7 @@ export class ChatService {
       }
 
       const fallbackResult = await this.postsService.search({
-        q: keywords.location,
+        q: location,
         limit: 3,
         offset: 0,
       });
@@ -188,7 +192,7 @@ export class ChatService {
       return { posts: fallbackResult.posts };
     } catch (error) {
       this.logger.warn(
-        `Failed to get related posts: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to get related posts: ${error instanceof Error ? error.message : 'Unknown error'}`,
       );
       return { posts: [] };
     }
