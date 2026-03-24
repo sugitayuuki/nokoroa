@@ -17,7 +17,7 @@ import {
   useTheme,
 } from '@mui/material';
 import { AnimatePresence, motion } from 'framer-motion';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { PostData } from '@/types/post';
 
@@ -106,9 +106,51 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
   const [panelSize, setPanelSize] = useState<PanelSize>('medium');
   const [dynamicSuggestions, setDynamicSuggestions] = useState<string[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const charQueueRef = useRef<string[]>([]);
+  const typingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, []);
+
+  const startTyping = useCallback(() => {
+    if (typingTimerRef.current) return;
+    typingTimerRef.current = setInterval(() => {
+      if (charQueueRef.current.length === 0) {
+        if (typingTimerRef.current) {
+          clearInterval(typingTimerRef.current);
+          typingTimerRef.current = null;
+        }
+        return;
+      }
+      const char = charQueueRef.current.shift()!;
+      setMessages((prev) => {
+        const lastMessage = prev[prev.length - 1];
+        if (lastMessage?.role === 'assistant') {
+          return [
+            ...prev.slice(0, -1),
+            { ...lastMessage, content: lastMessage.content + char },
+          ];
+        }
+        return prev;
+      });
+      scrollToBottom();
+    }, 20);
+  }, [scrollToBottom]);
+
+  const stopTyping = useCallback(() => {
+    if (typingTimerRef.current) {
+      clearInterval(typingTimerRef.current);
+      typingTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (typingTimerRef.current) {
+        clearInterval(typingTimerRef.current);
+      }
+    };
   }, []);
 
   const handleToggleSize = () => {
@@ -180,6 +222,7 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
         { role: 'assistant', content: '', id: assistantMsgId },
       ]);
       setIsLoading(false);
+      charQueueRef.current = [];
 
       let buffer = '';
       let fullResponse = '';
@@ -224,19 +267,27 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
             }
 
             fullResponse += data;
-            setMessages((prev) => {
-              const lastMessage = prev[prev.length - 1];
-              if (lastMessage?.role === 'assistant') {
-                return [
-                  ...prev.slice(0, -1),
-                  { ...lastMessage, content: lastMessage.content + data },
-                ];
-              }
-              return prev;
-            });
-            setTimeout(scrollToBottom, 10);
+            charQueueRef.current.push(...data.split(''));
+            startTyping();
           }
         }
+      }
+
+      // Flush remaining characters in queue
+      if (charQueueRef.current.length > 0) {
+        const remaining = charQueueRef.current.join('');
+        charQueueRef.current = [];
+        stopTyping();
+        setMessages((prev) => {
+          const lastMsg = prev[prev.length - 1];
+          if (lastMsg?.role === 'assistant') {
+            return [
+              ...prev.slice(0, -1),
+              { ...lastMsg, content: lastMsg.content + remaining },
+            ];
+          }
+          return prev;
+        });
       }
 
       if (receivedRelatedPosts) {
@@ -280,6 +331,8 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
         } catch {}
       }
     } catch {
+      stopTyping();
+      charQueueRef.current = [];
       setMessages((prev) => {
         const lastMessage = prev[prev.length - 1];
         if (lastMessage?.role === 'assistant' && lastMessage.content === '') {
