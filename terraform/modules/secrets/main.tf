@@ -4,6 +4,12 @@ resource "random_password" "jwt_secret" {
   special = false
 }
 
+# Internal API token used between Backend ECS task and AI sidecar
+resource "random_password" "internal_api_key" {
+  length  = 48
+  special = false
+}
+
 # Database Password Secret
 resource "aws_secretsmanager_secret" "db_password" {
   name        = "${var.project_name}-${var.environment}-db-password"
@@ -79,6 +85,36 @@ resource "aws_secretsmanager_secret_version" "google_client_secret" {
   secret_string = var.google_client_secret
 }
 
+# Gemini API Key
+resource "aws_secretsmanager_secret" "gemini_api_key" {
+  name        = "${var.project_name}-${var.environment}-gemini-api-key"
+  description = "Google Gemini API key used by AI sidecar"
+
+  tags = {
+    Name = "${var.project_name}-${var.environment}-gemini-api-key"
+  }
+}
+
+resource "aws_secretsmanager_secret_version" "gemini_api_key" {
+  secret_id     = aws_secretsmanager_secret.gemini_api_key.id
+  secret_string = var.gemini_api_key
+}
+
+# Internal API Key (Backend <-> AI sidecar shared secret)
+resource "aws_secretsmanager_secret" "internal_api_key" {
+  name        = "${var.project_name}-${var.environment}-internal-api-key"
+  description = "Shared secret between Backend and AI sidecar"
+
+  tags = {
+    Name = "${var.project_name}-${var.environment}-internal-api-key"
+  }
+}
+
+resource "aws_secretsmanager_secret_version" "internal_api_key" {
+  secret_id     = aws_secretsmanager_secret.internal_api_key.id
+  secret_string = random_password.internal_api_key.result
+}
+
 # IAM Policy for ECS to read secrets
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
@@ -100,7 +136,9 @@ resource "aws_iam_policy" "secrets_read" {
           aws_secretsmanager_secret.jwt_secret.arn,
           aws_secretsmanager_secret.database_url.arn,
           aws_secretsmanager_secret.google_client_id.arn,
-          aws_secretsmanager_secret.google_client_secret.arn
+          aws_secretsmanager_secret.google_client_secret.arn,
+          aws_secretsmanager_secret.gemini_api_key.arn,
+          aws_secretsmanager_secret.internal_api_key.arn
         ]
       }
     ]

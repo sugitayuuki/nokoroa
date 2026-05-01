@@ -1,9 +1,11 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   ForbiddenException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { EmbeddingsService } from '../embeddings/embeddings.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreatePostDto } from './dto/create-post.dto';
 import { SearchPostsByLocationDto } from './dto/search-posts-by-location.dto';
@@ -80,7 +82,22 @@ function formatPost(post: PostWithRelations) {
 
 @Injectable()
 export class PostsService {
-  constructor(private prisma: PrismaService) {}
+  private readonly logger = new Logger(PostsService.name);
+
+  constructor(
+    private prisma: PrismaService,
+    private embeddingsService: EmbeddingsService,
+  ) {}
+
+  private fireEmbedding(postId: number, title: string, content: string): void {
+    this.embeddingsService
+      .generateForPost(postId, title, content)
+      .catch((err: unknown) => {
+        this.logger.error(
+          `embedding generation failed for post ${postId}: ${err instanceof Error ? err.message : 'unknown'}`,
+        );
+      });
+  }
 
   private async getOrCreateLocation(
     locationName: string,
@@ -164,6 +181,8 @@ export class PostsService {
       include: postInclude,
     });
 
+    this.fireEmbedding(post.id, post.title, post.content);
+
     return formatPost(post as PostWithRelations);
   }
 
@@ -241,6 +260,15 @@ export class PostsService {
       total,
       hasMore: offset + limit < total,
     };
+  }
+
+  async findManyByIds(ids: number[]) {
+    if (ids.length === 0) return [];
+    const posts = await this.prisma.post.findMany({
+      where: { id: { in: ids }, isPublic: true },
+      include: postInclude,
+    });
+    return (posts as PostWithRelations[]).map(formatPost);
   }
 
   async findOne(id: number) {
@@ -322,6 +350,8 @@ export class PostsService {
       }),
       this.prisma.bookmark.count({ where: { postId: id } }),
     ]);
+
+    this.fireEmbedding(updatedPost.id, updatedPost.title, updatedPost.content);
 
     return {
       ...formatPost(updatedPost as PostWithRelations),

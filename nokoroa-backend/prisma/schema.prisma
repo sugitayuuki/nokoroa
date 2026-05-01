@@ -48,8 +48,25 @@ model Post {
 
   postTags  PostTag[]
   bookmarks Bookmark[]
+  embedding PostEmbedding?
 
   @@map("post")
+}
+
+/// Vector(768)はpgvector拡張に依存。Prisma Clientから embedding カラムには直接アクセスできず、
+/// raw SQL（$queryRawUnsafe / $executeRawUnsafe）で扱う。
+/// Post削除時は onDelete: Cascade で自動削除されるため、明示的な削除は不要。
+/// 次元数 768 は nokoroa-ai/app/services/gemini_service.py の EMBEDDING_DIM と整合させること。
+model PostEmbedding {
+  id          Int                        @id @default(autoincrement())
+  postId      Int                        @unique
+  post        Post                       @relation(fields: [postId], references: [id], onDelete: Cascade)
+  contentText String                     @db.Text
+  embedding   Unsupported("vector(768)")
+  createdAt   DateTime                   @default(now())
+  updatedAt   DateTime                   @updatedAt
+
+  @@map("post_embedding")
 }
 
 model Tag {

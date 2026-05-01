@@ -139,3 +139,38 @@ variable "secrets_read_policy_arn" {
   description = "ARN of the IAM policy for reading secrets"
   type        = string
 }
+
+# AI sidecar (Python FastAPI, embedded into the backend task)
+variable "ai_image" {
+  description = "AI sidecar Docker image"
+  type        = string
+  default     = ""
+}
+
+variable "ai_port" {
+  description = "AI sidecar port (localhost only)"
+  type        = number
+  default     = 8000
+}
+
+variable "ai_cpu" {
+  description = "AI sidecar CPU units"
+  type        = number
+  default     = 256
+}
+
+variable "ai_memory" {
+  description = "AI sidecar memory"
+  type        = number
+  default     = 512
+}
+
+variable "gemini_api_key_secret_arn" {
+  description = "ARN of the Gemini API key secret"
+  type        = string
+}
+
+variable "internal_api_key_secret_arn" {
+  description = "ARN of the internal API key secret (Backend <-> AI sidecar)"
+  type        = string
+}

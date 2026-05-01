@@ -31,6 +31,15 @@ resource "aws_cloudwatch_log_group" "frontend" {
   }
 }
 
+resource "aws_cloudwatch_log_group" "ai" {
+  name              = "/ecs/${var.project_name}-${var.environment}/ai"
+  retention_in_days = 30
+
+  tags = {
+    Name = "${var.project_name}-${var.environment}-ai-logs"
+  }
+}
+
 # IAM Role for ECS Task Execution
 resource "aws_iam_role" "ecs_task_execution" {
   name = "${var.project_name}-${var.environment}-ecs-task-execution"
@@ -99,13 +108,13 @@ resource "aws_iam_role_policy" "ecs_s3_access" {
   })
 }
 
-# Backend Task Definition
+# Backend Task Definition (with AI sidecar)
 resource "aws_ecs_task_definition" "backend" {
   family                   = "${var.project_name}-${var.environment}-backend"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
-  cpu                      = var.backend_cpu
-  memory                   = var.backend_memory
+  cpu                      = var.backend_cpu + var.ai_cpu
+  memory                   = var.backend_memory + var.ai_memory
   execution_role_arn       = aws_iam_role.ecs_task_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
 
@@ -150,6 +159,10 @@ resource "aws_ecs_task_definition" "backend" {
         {
           name  = "FRONTEND_URL"
           value = var.environment == "prod" ? "https://nokoroa.com" : "http://localhost:3000"
+        },
+        {
+          name  = "AI_SERVICE_URL"
+          value = "http://localhost:${var.ai_port}"
         }
       ]
 
@@ -169,6 +182,17 @@ resource "aws_ecs_task_definition" "backend" {
         {
           name      = "GOOGLE_CLIENT_SECRET"
           valueFrom = var.google_client_secret_arn
+        },
+        {
+          name      = "INTERNAL_AI_TOKEN"
+          valueFrom = var.internal_api_key_secret_arn
+        }
+      ]
+
+      dependsOn = [
+        {
+          containerName = "ai"
+          condition     = "HEALTHY"
         }
       ]
 
@@ -187,6 +211,46 @@ resource "aws_ecs_task_definition" "backend" {
         timeout     = 5
         retries     = 3
         startPeriod = 60
+      }
+    },
+    {
+      name      = "ai"
+      image     = var.ai_image != "" ? var.ai_image : "public.ecr.aws/docker/library/python:3.12-slim"
+      essential = true
+
+      environment = [
+        {
+          name  = "CORS_ORIGINS"
+          value = "http://localhost:${var.backend_port}"
+        }
+      ]
+
+      secrets = [
+        {
+          name      = "GEMINI_API_KEY"
+          valueFrom = var.gemini_api_key_secret_arn
+        },
+        {
+          name      = "INTERNAL_API_KEY"
+          valueFrom = var.internal_api_key_secret_arn
+        }
+      ]
+
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = aws_cloudwatch_log_group.ai.name
+          "awslogs-region"        = var.aws_region
+          "awslogs-stream-prefix" = "ecs"
+        }
+      }
+
+      healthCheck = {
+        command     = ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:${var.ai_port}/health').status==200 else 1)\""]
+        interval    = 30
+        timeout     = 5
+        retries     = 3
+        startPeriod = 30
       }
     }
   ])

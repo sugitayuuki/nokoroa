@@ -2,6 +2,7 @@ import { NotFoundException, ForbiddenException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 
 import { PostsService } from './posts.service';
+import { EmbeddingsService } from '../embeddings/embeddings.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 describe('PostsService', () => {
@@ -68,11 +69,17 @@ describe('PostsService', () => {
     ],
   };
 
+  const mockEmbeddingsService = {
+    generateForPost: jest.fn().mockResolvedValue(undefined),
+    searchSimilar: jest.fn().mockResolvedValue([]),
+  };
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PostsService,
         { provide: PrismaService, useValue: mockPrismaService },
+        { provide: EmbeddingsService, useValue: mockEmbeddingsService },
       ],
     }).compile();
 

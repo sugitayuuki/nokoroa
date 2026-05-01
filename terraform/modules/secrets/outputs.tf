@@ -24,6 +24,16 @@ output "google_client_secret_arn" {
   value       = aws_secretsmanager_secret.google_client_secret.arn
 }
 
+output "gemini_api_key_arn" {
+  description = "ARN of the Gemini API key secret"
+  value       = aws_secretsmanager_secret.gemini_api_key.arn
+}
+
+output "internal_api_key_arn" {
+  description = "ARN of the internal API key secret"
+  value       = aws_secretsmanager_secret.internal_api_key.arn
+}
+
 # IAM Policy ARN (to attach to ECS execution role)
 output "secrets_read_policy_arn" {
   description = "ARN of the IAM policy for reading secrets"

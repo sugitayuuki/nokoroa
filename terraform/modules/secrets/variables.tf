@@ -46,3 +46,9 @@ variable "google_client_secret" {
   type        = string
   sensitive   = true
 }
+
+variable "gemini_api_key" {
+  description = "Gemini API key for AI service"
+  type        = string
+  sensitive   = true
+}

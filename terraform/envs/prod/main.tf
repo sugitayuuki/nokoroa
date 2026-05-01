@@ -25,6 +25,40 @@ resource "aws_ecr_repository" "frontend" {
   }
 }
 
+resource "aws_ecr_repository" "ai" {
+  name                 = "${var.project_name}-ai"
+  image_tag_mutability = "MUTABLE"
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+
+  tags = {
+    Name = "${var.project_name}-ai"
+  }
+}
+
+resource "aws_ecr_lifecycle_policy" "ai" {
+  repository = aws_ecr_repository.ai.name
+
+  policy = jsonencode({
+    rules = [
+      {
+        rulePriority = 1
+        description  = "Keep last 10 images"
+        selection = {
+          tagStatus   = "any"
+          countType   = "imageCountMoreThan"
+          countNumber = 10
+        }
+        action = {
+          type = "expire"
+        }
+      }
+    ]
+  })
+}
+
 resource "aws_ecr_lifecycle_policy" "backend" {
   repository = aws_ecr_repository.backend.name
 
@@ -161,6 +195,7 @@ module "secrets" {
   db_password          = random_password.db_password.result
   google_client_id     = var.google_client_id
   google_client_secret = var.google_client_secret
+  gemini_api_key       = var.gemini_api_key
 
   depends_on = [module.rds]
 }
@@ -208,6 +243,7 @@ module "ecs" {
   # Application
   backend_image  = var.backend_image
   frontend_image = var.frontend_image
+  ai_image       = var.ai_image
   backend_port   = var.backend_port
   frontend_port  = var.frontend_port
   api_domain     = module.alb.alb_dns_name
@@ -217,6 +253,8 @@ module "ecs" {
   jwt_secret_arn              = module.secrets.jwt_secret_arn
   google_client_id_secret_arn = module.secrets.google_client_id_arn
   google_client_secret_arn    = module.secrets.google_client_secret_arn
+  gemini_api_key_secret_arn   = module.secrets.gemini_api_key_arn
+  internal_api_key_secret_arn = module.secrets.internal_api_key_arn
   secrets_read_policy_arn     = module.secrets.secrets_read_policy_arn
 
   # ALB

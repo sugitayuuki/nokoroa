@@ -48,6 +48,12 @@ variable "frontend_image" {
   default     = ""
 }
 
+variable "ai_image" {
+  description = "AI sidecar Docker image"
+  type        = string
+  default     = ""
+}
+
 variable "backend_port" {
   description = "Backend application port"
   type        = number
@@ -69,6 +75,12 @@ variable "google_client_id" {
 
 variable "google_client_secret" {
   description = "Google OAuth Client Secret"
+  type        = string
+  sensitive   = true
+}
+
+variable "gemini_api_key" {
+  description = "Gemini API key (Google AI Studio)"
   type        = string
   sensitive   = true
 }

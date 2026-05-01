@@ -9,9 +9,10 @@ description: "Nokoroa本番デプロイ（DockerイメージビルドARM64→ECR
 
 - AWS CLIがインストール・認証済み（`aws sts get-caller-identity` で確認）
 - Dockerが起動済み
-- ECRリポジトリ: `<AWS_ACCOUNT_ID>.dkr.ecr.ap-northeast-1.amazonaws.com/nokoroa-backend` / `nokoroa-frontend`
+- ECRリポジトリ: `<AWS_ACCOUNT_ID>.dkr.ecr.ap-northeast-1.amazonaws.com/nokoroa-backend` / `nokoroa-frontend` / `nokoroa-ai`
 - ECSクラスター: `nokoroa-prod-cluster`
 - **アーキテクチャ: ARM64（Graviton）** — 必ず `--platform linux/arm64` でビルドすること
+- **構成**: backend と AI service は同一 ECS task に sidecar として同居（backend が `http://localhost:8000` で AI を呼ぶ）。AI 単独サービスは存在しない
 
 ## 鉄則
 
@@ -56,6 +57,9 @@ cd nokoroa-backend && docker build --platform linux/arm64 -t nokoroa-backend .
 
 # Frontend
 cd nokoroa-frontend && docker build --platform linux/arm64 -t nokoroa-frontend .
+
+# AI service (sidecar)
+cd nokoroa-ai && docker build --platform linux/arm64 -t nokoroa-ai .
 ```
 
 **注意:** frontendのlintエラーでビルドが失敗した場合は修正してから再ビルド。
@@ -78,16 +82,22 @@ docker push <AWS_ACCOUNT_ID>.dkr.ecr.ap-northeast-1.amazonaws.com/nokoroa-backen
 # Frontend
 docker tag nokoroa-frontend:latest <AWS_ACCOUNT_ID>.dkr.ecr.ap-northeast-1.amazonaws.com/nokoroa-frontend:latest
 docker push <AWS_ACCOUNT_ID>.dkr.ecr.ap-northeast-1.amazonaws.com/nokoroa-frontend:latest
+
+# AI sidecar
+docker tag nokoroa-ai:latest <AWS_ACCOUNT_ID>.dkr.ecr.ap-northeast-1.amazonaws.com/nokoroa-ai:latest
+docker push <AWS_ACCOUNT_ID>.dkr.ecr.ap-northeast-1.amazonaws.com/nokoroa-ai:latest
 ```
 
 ## Phase 4: ECSタスク定義更新
 
-現在のタスク定義を取得し、イメージを `:latest` に更新して新リビジョンを登録:
+通常は `terraform apply` でTerraformが新リビジョンを登録する。手動更新する場合は以下を使用:
 
 ```bash
-# Backend
+# Backend (backend + ai sidecar、2 コンテナ)
 aws ecs describe-task-definition --task-definition nokoroa-prod-backend --region ap-northeast-1 --query 'taskDefinition' \
-  | jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy) | .containerDefinitions[0].image = "<AWS_ACCOUNT_ID>.dkr.ecr.ap-northeast-1.amazonaws.com/nokoroa-backend:latest"' \
+  | jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)
+        | (.containerDefinitions[] | select(.name=="backend").image) = "<AWS_ACCOUNT_ID>.dkr.ecr.ap-northeast-1.amazonaws.com/nokoroa-backend:latest"
+        | (.containerDefinitions[] | select(.name=="ai").image) = "<AWS_ACCOUNT_ID>.dkr.ecr.ap-northeast-1.amazonaws.com/nokoroa-ai:latest"' \
   > /tmp/backend-task-def.json
 aws ecs register-task-definition --cli-input-json file:///tmp/backend-task-def.json --region ap-northeast-1
 
@@ -199,3 +209,53 @@ aws ecs describe-services --cluster nokoroa-prod-cluster \
 - **アーキテクチャ**: ECSタスク定義はARM64。`--platform linux/amd64` でビルドすると起動しない
 - **フロントエンドヘルスチェック**: コンテナヘルスチェックは除去済み（ALBヘルスチェックのみ使用）
 - **force-new-deployment だけでは不十分**: タスク定義のイメージタグが古い場合、新リビジョンを登録してからサービスを更新する必要がある
+
+---
+
+## RAG (pgvector) 初回セットアップ
+
+RAG機能のEmbeddingテーブルを使うには pgvector 拡張が必要。**初回のみ**以下の手順:
+
+### 1. パラメータグループ更新（Terraform 適用済みなら反映済み）
+```bash
+# shared_preload_libraries に "vector" 含まれているか確認
+aws rds describe-db-parameters \
+  --db-parameter-group-name nokoroa-prod-pg15-params \
+  --region ap-northeast-1 \
+  --query "Parameters[?ParameterName=='shared_preload_libraries']"
+```
+
+### 2. RDS 再起動（pending-reboot 反映）
+```bash
+aws rds reboot-db-instance \
+  --db-instance-identifier nokoroa-prod-postgres \
+  --region ap-northeast-1
+# available 状態になるまで待機
+```
+
+### 3. CREATE EXTENSION 実行
+RDS のマスターユーザーで実行（migration内では実行できないことがあるため）:
+```bash
+psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS vector;"
+```
+
+### 4. Prisma マイグレーション実行
+ECS task一回限りで実行 or ローカルからVPC接続して実行:
+```bash
+cd nokoroa-backend && npx prisma migrate deploy
+```
+
+### 5. backfill実行
+既存投稿の埋め込み生成:
+```bash
+cd nokoroa-backend && npm run backfill:embeddings
+# or 全件強制再生成: npm run backfill:embeddings -- --all
+```
+
+### 6. Secrets値設定（Terraform で空のまま作成された場合）
+```bash
+aws secretsmanager put-secret-value \
+  --secret-id nokoroa-prod-gemini-api-key \
+  --secret-string "$GEMINI_API_KEY" \
+  --region ap-northeast-1
+```

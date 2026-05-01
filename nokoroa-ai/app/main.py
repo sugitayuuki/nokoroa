@@ -1,17 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic_settings import BaseSettings
 
-
-class Settings(BaseSettings):
-    gemini_api_key: str
-    cors_origins: str = "http://localhost:3000,http://localhost:4000"
-
-    class Config:
-        env_file = ".env"
-
-
-settings = Settings()
+from app.config import settings
 
 app = FastAPI(
     title="Nokoroa AI",
@@ -33,6 +23,7 @@ async def health_check():
     return {"status": "ok"}
 
 
-from app.routers import chat
+from app.routers import chat, embeddings
 
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
+app.include_router(embeddings.router, prefix="/api/embeddings", tags=["embeddings"])

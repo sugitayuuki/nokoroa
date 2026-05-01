@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Response } from 'express';
+import { EmbeddingsService } from '../embeddings/embeddings.service';
 import { PostsService } from '../posts/posts.service';
 import { ChatRequestDto } from './dto/chat-request.dto';
 import { RelatedPostsRequestDto } from './dto/related-posts-request.dto';
@@ -14,6 +15,7 @@ export class ChatService {
   constructor(
     private configService: ConfigService,
     private postsService: PostsService,
+    private embeddingsService: EmbeddingsService,
   ) {
     this.aiServiceUrl =
       this.configService.get<string>('AI_SERVICE_URL') ||
@@ -29,14 +31,29 @@ export class ChatService {
     }> = [];
     let relatedPostsRaw: unknown[] = [];
 
-    try {
-      const searchResult = await this.postsService.search({
-        q: dto.message,
-        limit: 5,
-        offset: 0,
-      });
+    type ChatPost = {
+      id: number;
+      title?: string;
+      content?: string;
+      location?: string | null | { name?: string };
+      author?: string | { name?: string };
+      [key: string]: unknown;
+    };
+    const toChatPost = (p: unknown): ChatPost => p as ChatPost;
 
-      let posts = searchResult.posts;
+    try {
+      const posts: ChatPost[] = (await this.searchByVector(dto.message, 5)).map(
+        toChatPost,
+      );
+
+      if (posts.length === 0) {
+        const searchResult = await this.postsService.search({
+          q: dto.message,
+          limit: 5,
+          offset: 0,
+        });
+        for (const p of searchResult.posts) posts.push(toChatPost(p));
+      }
 
       if (posts.length === 0) {
         const words = dto.message
@@ -49,38 +66,31 @@ export class ChatService {
             limit: 5,
             offset: 0,
           });
-          for (const post of wordResult.posts) {
-            if (!seen.has(post.id)) {
-              seen.add(post.id);
-              posts.push(post);
+          for (const p of wordResult.posts) {
+            if (!seen.has(p.id)) {
+              seen.add(p.id);
+              posts.push(toChatPost(p));
             }
           }
           if (posts.length >= 5) break;
         }
-        posts = posts.slice(0, 5);
+        if (posts.length > 5) posts.length = 5;
       }
 
       if (posts.length > 0) {
         relatedPostsRaw = posts;
-        contextPosts = posts.map(
-          (post: {
-            title?: string;
-            content?: string;
-            location?: string | { name?: string };
-            author?: string | { name?: string };
-          }) => ({
-            title: post.title || '',
-            content: post.content || '',
-            location:
-              typeof post.location === 'string'
-                ? post.location
-                : post.location?.name || '',
-            author:
-              typeof post.author === 'string'
-                ? post.author
-                : post.author?.name || '',
-          }),
-        );
+        contextPosts = posts.map((post) => ({
+          title: post.title || '',
+          content: post.content || '',
+          location:
+            typeof post.location === 'string'
+              ? post.location
+              : post.location?.name || '',
+          author:
+            typeof post.author === 'string'
+              ? post.author
+              : post.author?.name || '',
+        }));
       }
     } catch (error) {
       this.logger.warn(
@@ -88,15 +98,25 @@ export class ChatService {
       );
     }
 
-    const response = await fetch(`${this.aiServiceUrl}/api/chat/stream`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        message: dto.message,
-        history: dto.history || [],
-        context_posts: contextPosts,
-      }),
-    });
+    let response: globalThis.Response;
+    try {
+      response = await fetch(`${this.aiServiceUrl}/api/chat/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: dto.message,
+          history: dto.history || [],
+          context_posts: contextPosts,
+        }),
+        signal: AbortSignal.timeout(60_000),
+      });
+    } catch (err) {
+      this.logger.error(
+        `AI chat fetch failed: ${err instanceof Error ? err.message : 'unknown'}`,
+      );
+      res.status(502).json({ error: 'AI service unreachable' });
+      return;
+    }
 
     if (!response.ok || !response.body) {
       res.status(response.status).json({ error: 'AI service request failed' });
@@ -142,6 +162,27 @@ export class ChatService {
 
     const data = (await response.json()) as { suggestions?: string[] };
     return data.suggestions ?? [];
+  }
+
+  private async searchByVector(
+    query: string,
+    limit: number,
+  ): Promise<Array<Record<string, unknown>>> {
+    const hits = await this.embeddingsService.searchSimilar(query, limit);
+    if (hits.length === 0) return [];
+
+    const ids = hits.map((h) => h.postId);
+    const posts = await this.postsService.findManyByIds(ids);
+    const byId = new Map(
+      posts.map((p) => [(p as unknown as { id: number }).id, p]),
+    );
+
+    const found: Record<string, unknown>[] = [];
+    for (const hit of hits) {
+      const post = byId.get(hit.postId);
+      if (post) found.push(post as unknown as Record<string, unknown>);
+    }
+    return found;
   }
 
   async getRelatedPosts(dto: RelatedPostsRequestDto) {

@@ -24,6 +24,10 @@ GOOGLE_SEARCH_TOOL = types.Tool(
 )
 
 
+EMBEDDING_MODEL = "text-embedding-004"
+EMBEDDING_DIM = 768
+
+
 class GeminiService:
     def __init__(self, api_key: str):
         self.client = genai.Client(api_key=api_key)
@@ -35,6 +39,14 @@ class GeminiService:
             max_output_tokens=2048,
             tools=[GOOGLE_SEARCH_TOOL],
         )
+
+    def embed(self, text: str, task_type: str = "RETRIEVAL_DOCUMENT") -> list[float]:
+        result = self.client.models.embed_content(
+            model=EMBEDDING_MODEL,
+            contents=text,
+            config=types.EmbedContentConfig(task_type=task_type),
+        )
+        return list(result.embeddings[0].values)
 
     async def chat(
         self, message: str, history: list[dict] | None = None
