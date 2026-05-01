@@ -13,6 +13,33 @@ description: "Nokoroa本番デプロイ（DockerイメージビルドARM64→ECR
 - ECSクラスター: `nokoroa-prod-cluster`
 - **アーキテクチャ: ARM64（Graviton）** — 必ず `--platform linux/arm64` でビルドすること
 
+## 鉄則
+
+- **既存ログは絶対に消さない**（実装中に追加したデバッグログのみ削除対象）
+- **DB・マイグレーションをリセットしない**
+- **リモートからpullしない**
+
+---
+
+## Phase 0: デバッグログ削除（デプロイ前必須）
+
+実装中に紛れ込んだデバッグ出力を検出して削除する。
+
+```bash
+# 検出（変更ファイルから抽出 — 既存ログは対象外）
+git diff origin/main --name-only | xargs grep -nE "(console\.log|debugger|TODO: remove|FIXME: temp)" 2>/dev/null
+```
+
+**削除対象:**
+- `console.log` / `debugger` ステートメント
+- `TODO: remove` / `FIXME: temp` コメント
+- 実装時に追加した一時的な確認ログ
+
+**保持対象（消さない）:**
+- `console.error` / `console.warn`（エラーログ）
+- 既存のNestJS Loggerやpino等の正規ロガー出力
+- ビジネスロジックに必要なログ
+
 ---
 
 ## Phase 1: ECRログイン
@@ -32,6 +59,14 @@ cd nokoroa-frontend && docker build --platform linux/arm64 -t nokoroa-frontend .
 ```
 
 **注意:** frontendのlintエラーでビルドが失敗した場合は修正してから再ビルド。
+
+### ビルド失敗時の修正ループ
+
+```
+ビルド失敗 → エラーログ確認 → 修正 → 再ビルド
+    ↓（同一原因で3回失敗）
+ユーザーへ報告（残エラー・試行差分・推奨アクション）
+```
 
 ## Phase 3: ECRプッシュ
 
@@ -86,6 +121,47 @@ aws ecs describe-services --cluster nokoroa-prod-cluster \
 # ログ確認
 aws logs tail "/ecs/nokoroa-prod/backend" --since 5m --region ap-northeast-1
 aws logs tail "/ecs/nokoroa-prod/frontend" --since 5m --region ap-northeast-1
+```
+
+---
+
+## Phase 7: Go/No-Go 判定基準
+
+以下を**順番に**確認し、全てpassで初めてデプロイ完了と判定する。
+
+| 段階 | チェック | Goの条件 | No-Goの場合 |
+|------|---------|---------|-------------|
+| 1 | ECSサービス状態 | `runningCount == desiredCount` かつ `rolloutState == COMPLETED` | ロールバック検討 |
+| 2 | ALBヘルスチェック | ターゲット全て `healthy` | タスクログ確認 |
+| 3 | エンドポイント疎通 | Backend `/health` が 200 / Frontend `/` が 200 | 設定見直し |
+| 4 | エラーログ | 過去5分の `ERROR` レベルが急増していない | 原因特定→ロールバック |
+
+```bash
+# 段階3の例
+curl -sf https://api.nokoroa.example.com/health
+curl -sfI https://nokoroa.example.com/ | head -1
+```
+
+---
+
+## Phase 8: 完了報告テンプレート
+
+```
+## デプロイ完了報告
+
+| Phase | 内容 | ステータス |
+|-------|------|------|
+| 0 | デバッグログ削除 | ✅ N件削除 |
+| 1〜2 | ECRログイン・ARM64ビルド | ✅ |
+| 3 | ECRプッシュ | ✅ backend / frontend |
+| 4 | タスク定義更新 | ✅ rev:NNN |
+| 5 | サービス更新 | ✅ force-new-deployment |
+| 6 | サービス安定化 | ✅ running == desired |
+| 7 | Go/No-Go判定 | ✅ 全項目pass |
+
+**新リビジョン:** backend rev:N / frontend rev:N
+**確認URL:** （本番エンドポイント）
+**ロールバック手順:** タスク定義の前リビジョンを再指定して force-new-deployment
 ```
 
 ---
