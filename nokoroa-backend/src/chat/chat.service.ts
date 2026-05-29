@@ -4,7 +4,6 @@ import { Response } from 'express';
 import { EmbeddingsService } from '../embeddings/embeddings.service';
 import { PostsService } from '../posts/posts.service';
 import { ChatRequestDto } from './dto/chat-request.dto';
-import { RelatedPostsRequestDto } from './dto/related-posts-request.dto';
 import { SuggestionsRequestDto } from './dto/suggestions-request.dto';
 
 @Injectable()
@@ -183,59 +182,5 @@ export class ChatService {
       if (post) found.push(post as unknown as Record<string, unknown>);
     }
     return found;
-  }
-
-  async getRelatedPosts(dto: RelatedPostsRequestDto) {
-    try {
-      const keywordsRes = await fetch(
-        `${this.aiServiceUrl}/api/chat/related-keywords`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            message: dto.message,
-            ai_response: dto.ai_response,
-          }),
-        },
-      );
-
-      if (!keywordsRes.ok) {
-        return { posts: [] };
-      }
-
-      const keywordsData = (await keywordsRes.json()) as {
-        keywords?: { location?: string };
-      };
-      const keywords = keywordsData.keywords;
-
-      if (!keywords) {
-        return { posts: [] };
-      }
-
-      const location = keywords.location ?? '';
-
-      const result = await this.postsService.search({
-        location,
-        limit: 3,
-        offset: 0,
-      });
-
-      if (result.posts.length > 0) {
-        return { posts: result.posts };
-      }
-
-      const fallbackResult = await this.postsService.search({
-        q: location,
-        limit: 3,
-        offset: 0,
-      });
-
-      return { posts: fallbackResult.posts };
-    } catch (error) {
-      this.logger.warn(
-        `Failed to get related posts: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      );
-      return { posts: [] };
-    }
   }
 }
