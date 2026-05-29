@@ -22,6 +22,7 @@ import { formatDistanceToNow } from '@/utils/dateFormat';
 import { getTagColor } from '@/utils/tagColors';
 
 import { useInfiniteScroll } from '../../hooks/useInfiniteScroll';
+import { SearchFetchError } from '../../hooks/useSearchPosts';
 import { Post, SearchMode, SearchResponse } from '../../types/search';
 import BookmarkButton from '../bookmarks/BookmarkButton';
 
@@ -223,6 +224,17 @@ export const SearchResults = ({
   }
 
   if (error) {
+    if (
+      mode === 'semantic' &&
+      error instanceof SearchFetchError &&
+      error.status === 401
+    ) {
+      return (
+        <Alert severity="info" sx={{ mb: 2 }}>
+          AI意味検索を利用するにはログインが必要です。
+        </Alert>
+      );
+    }
     return (
       <Alert severity="error" sx={{ mb: 2 }}>
         検索中にエラーが発生しました。もう一度お試しください。

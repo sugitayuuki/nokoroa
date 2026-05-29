@@ -49,7 +49,8 @@ export const API_CONFIG = {
   },
 
   getAuthHeaders: () => {
-    const token = localStorage.getItem('jwt');
+    const token =
+      typeof window !== 'undefined' ? localStorage.getItem('jwt') : null;
     return {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -57,7 +58,8 @@ export const API_CONFIG = {
   },
 
   getFormDataAuthHeaders: () => {
-    const token = localStorage.getItem('jwt');
+    const token =
+      typeof window !== 'undefined' ? localStorage.getItem('jwt') : null;
     return {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     };
