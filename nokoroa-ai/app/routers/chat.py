@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -5,6 +7,8 @@ from pydantic import BaseModel
 from app.config import settings
 from app.deps import verify_internal_token
 from app.services.gemini_service import GeminiService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -52,8 +56,9 @@ async def chat(
             response=result["response"],
             grounding_metadata=result["grounding_metadata"],
         )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("chat failed")
+        raise HTTPException(status_code=500, detail="chat failed")
 
 
 @router.post("/stream")
@@ -81,8 +86,9 @@ async def chat_stream(
             ):
                 yield f"data: {chunk}\n\n"
             yield "data: [DONE]\n\n"
-        except Exception as e:
-            yield f"data: [ERROR] {str(e)}\n\n"
+        except Exception:
+            logger.exception("chat stream failed")
+            yield "data: [ERROR] chat stream failed\n\n"
 
     return StreamingResponse(
         generate(),

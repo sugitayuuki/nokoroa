@@ -114,17 +114,20 @@ export class EmbeddingsService {
     }
   }
 
-  private async embed(text: string, taskType: string): Promise<number[]> {
+  private aiHeaders(): Record<string, string> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     };
     if (this.internalToken) {
       headers['X-Internal-Token'] = this.internalToken;
     }
+    return headers;
+  }
 
+  private async embed(text: string, taskType: string): Promise<number[]> {
     const res = await fetch(`${this.aiServiceUrl}/api/embeddings/`, {
       method: 'POST',
-      headers,
+      headers: this.aiHeaders(),
       body: JSON.stringify({ text, task_type: taskType }),
       signal: AbortSignal.timeout(EMBED_TIMEOUT_MS),
     });

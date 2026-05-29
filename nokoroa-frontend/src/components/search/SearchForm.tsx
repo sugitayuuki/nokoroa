@@ -164,7 +164,14 @@ export const SearchForm = ({ onSearch, initialFilters }: SearchFormProps) => {
     _event: React.MouseEvent<HTMLElement>,
     newMode: SearchMode | null,
   ) => {
-    if (newMode) setMode(newMode);
+    if (!newMode || newMode === mode) return;
+    setMode(newMode);
+    setQuery('');
+    if (newMode === 'semantic') {
+      setTags([]);
+      setLocation('');
+      setTagInputValue('');
+    }
   };
 
   const handleAddTag = (value: string) => {

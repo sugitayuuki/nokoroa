@@ -1,12 +1,12 @@
 import { ApiPropertyOptional, ApiProperty } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
-  IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
   Max,
   Min,
+  MinLength,
 } from 'class-validator';
 
 export class SearchPostsSemanticDto {
@@ -15,7 +15,10 @@ export class SearchPostsSemanticDto {
     example: '紅葉と温泉が楽しめる秋の旅行',
   })
   @IsString()
-  @IsNotEmpty()
+  @Transform(({ value }): string =>
+    typeof value === 'string' ? value.trim() : '',
+  )
+  @MinLength(1)
   q!: string;
 
   @ApiPropertyOptional({

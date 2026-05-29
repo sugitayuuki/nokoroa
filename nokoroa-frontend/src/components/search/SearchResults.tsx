@@ -22,7 +22,7 @@ import { formatDistanceToNow } from '@/utils/dateFormat';
 import { getTagColor } from '@/utils/tagColors';
 
 import { useInfiniteScroll } from '../../hooks/useInfiniteScroll';
-import { Post, SearchResponse } from '../../types/search';
+import { Post, SearchMode, SearchResponse } from '../../types/search';
 import BookmarkButton from '../bookmarks/BookmarkButton';
 
 interface SearchResultsProps {
@@ -33,6 +33,7 @@ interface SearchResultsProps {
   hasMore: boolean;
   isLoadingMore: boolean;
   onLoadMore: () => void;
+  mode?: SearchMode;
 }
 
 const SearchPostCard = ({ post }: { post: Post }) => {
@@ -71,8 +72,9 @@ const SearchPostCard = ({ post }: { post: Post }) => {
           {typeof post.similarity === 'number' && (
             <Chip
               icon={<AutoAwesomeIcon fontSize="small" />}
-              label={`類似度 ${Math.round(post.similarity * 100)}%`}
+              label={`類似度 ${Math.max(1, Math.round(post.similarity * 100))}%`}
               size="small"
+              aria-label={`類似度 ${Math.round(post.similarity * 100)} パーセント`}
               sx={{
                 position: 'absolute',
                 top: 8,
@@ -203,6 +205,7 @@ export const SearchResults = ({
   hasMore,
   isLoadingMore,
   onLoadMore,
+  mode,
 }: SearchResultsProps) => {
   const { lastElementRef } = useInfiniteScroll({
     hasMore,
@@ -254,6 +257,11 @@ export const SearchResults = ({
         <Typography variant="body2" color="text.secondary">
           {data.total}件の投稿が見つかりました
         </Typography>
+        {mode === 'semantic' && (
+          <Alert severity="info" sx={{ mt: 2 }} icon={false}>
+            AI意味検索は類似度が高い上位 {data.posts.length} 件のみ表示します
+          </Alert>
+        )}
       </Box>
 
       <Divider sx={{ mb: 3 }} />
