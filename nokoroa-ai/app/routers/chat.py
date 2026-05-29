@@ -1,9 +1,14 @@
-from fastapi import APIRouter, HTTPException
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from app.main import settings
+from app.config import settings
+from app.deps import verify_internal_token
 from app.services.gemini_service import GeminiService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -34,7 +39,10 @@ class ChatResponse(BaseModel):
 
 
 @router.post("/", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(
+    request: ChatRequest,
+    _: None = Depends(verify_internal_token),
+):
     try:
         history = None
         if request.history:
@@ -48,12 +56,16 @@ async def chat(request: ChatRequest):
             response=result["response"],
             grounding_metadata=result["grounding_metadata"],
         )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("chat failed")
+        raise HTTPException(status_code=500, detail="chat failed")
 
 
 @router.post("/stream")
-async def chat_stream(request: ChatRequest):
+async def chat_stream(
+    request: ChatRequest,
+    _: None = Depends(verify_internal_token),
+):
     def generate():
         try:
             history = None
@@ -74,8 +86,9 @@ async def chat_stream(request: ChatRequest):
             ):
                 yield f"data: {chunk}\n\n"
             yield "data: [DONE]\n\n"
-        except Exception as e:
-            yield f"data: [ERROR] {str(e)}\n\n"
+        except Exception:
+            logger.exception("chat stream failed")
+            yield "data: [ERROR] chat stream failed\n\n"
 
     return StreamingResponse(
         generate(),
@@ -106,7 +119,10 @@ class RelatedKeywordsResponse(BaseModel):
 
 
 @router.post("/suggestions", response_model=SuggestionsResponse)
-async def get_suggestions(request: SuggestionsRequest):
+async def get_suggestions(
+    request: SuggestionsRequest,
+    _: None = Depends(verify_internal_token),
+):
     try:
         result = gemini_service.generate_suggestions(
             user_message=request.message,
@@ -114,11 +130,15 @@ async def get_suggestions(request: SuggestionsRequest):
         )
         return SuggestionsResponse(suggestions=result)
     except Exception:
+        logger.exception("suggestions generation failed")
         return SuggestionsResponse(suggestions=[])
 
 
 @router.post("/related-keywords", response_model=RelatedKeywordsResponse)
-async def get_related_keywords(request: RelatedKeywordsRequest):
+async def get_related_keywords(
+    request: RelatedKeywordsRequest,
+    _: None = Depends(verify_internal_token),
+):
     try:
         result = gemini_service.extract_search_keywords(
             user_message=request.message,
@@ -126,4 +146,5 @@ async def get_related_keywords(request: RelatedKeywordsRequest):
         )
         return RelatedKeywordsResponse(keywords=result)
     except Exception:
+        logger.exception("related keywords extraction failed")
         return RelatedKeywordsResponse(keywords=None)

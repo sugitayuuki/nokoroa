@@ -1,5 +1,6 @@
 'use client';
 
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import LocationOnIcon from '@mui/icons-material/LocationOn';
 import {
   Alert,
@@ -21,7 +22,8 @@ import { formatDistanceToNow } from '@/utils/dateFormat';
 import { getTagColor } from '@/utils/tagColors';
 
 import { useInfiniteScroll } from '../../hooks/useInfiniteScroll';
-import { Post, SearchResponse } from '../../types/search';
+import { SearchFetchError } from '../../hooks/useSearchPosts';
+import { Post, SearchMode, SearchResponse } from '../../types/search';
 import BookmarkButton from '../bookmarks/BookmarkButton';
 
 interface SearchResultsProps {
@@ -32,6 +34,7 @@ interface SearchResultsProps {
   hasMore: boolean;
   isLoadingMore: boolean;
   onLoadMore: () => void;
+  mode?: SearchMode;
 }
 
 const SearchPostCard = ({ post }: { post: Post }) => {
@@ -60,12 +63,32 @@ const SearchPostCard = ({ post }: { post: Post }) => {
           },
         }}
       >
-        <CardMedia
-          component="img"
-          height="280"
-          image={post.imageUrl || '/top.jpg'}
-          alt={post.title}
-        />
+        <Box sx={{ position: 'relative' }}>
+          <CardMedia
+            component="img"
+            height="280"
+            image={post.imageUrl || '/top.jpg'}
+            alt={post.title}
+          />
+          {typeof post.similarity === 'number' && (
+            <Chip
+              icon={<AutoAwesomeIcon fontSize="small" />}
+              label={`類似度 ${Math.round(post.similarity * 100)}%`}
+              size="small"
+              sx={{
+                position: 'absolute',
+                top: 8,
+                right: 8,
+                bgcolor:
+                  post.similarity >= 0.3
+                    ? 'rgba(255, 152, 0, 0.95)'
+                    : 'rgba(120, 120, 120, 0.85)',
+                color: '#fff',
+                fontWeight: 600,
+              }}
+            />
+          )}
+        </Box>
         <CardContent sx={{ flexGrow: 1, bgcolor: 'background.paper' }}>
           <Stack spacing={2}>
             <Box>
@@ -185,6 +208,7 @@ export const SearchResults = ({
   hasMore,
   isLoadingMore,
   onLoadMore,
+  mode,
 }: SearchResultsProps) => {
   const { lastElementRef } = useInfiniteScroll({
     hasMore,
@@ -200,6 +224,17 @@ export const SearchResults = ({
   }
 
   if (error) {
+    if (
+      mode === 'semantic' &&
+      error instanceof SearchFetchError &&
+      error.status === 401
+    ) {
+      return (
+        <Alert severity="info" sx={{ mb: 2 }}>
+          AI意味検索を利用するにはログインが必要です。
+        </Alert>
+      );
+    }
     return (
       <Alert severity="error" sx={{ mb: 2 }}>
         検索中にエラーが発生しました。もう一度お試しください。
@@ -214,6 +249,14 @@ export const SearchResults = ({
           検索条件を入力して投稿を検索してみてください。
         </Typography>
       </Box>
+    );
+  }
+
+  if (mode === 'semantic' && data?.aiAvailable === false) {
+    return (
+      <Alert severity="warning" sx={{ mb: 2 }}>
+        AI意味検索が一時的に利用できません。少し時間をおいて再度お試しください。
+      </Alert>
     );
   }
 
@@ -236,6 +279,11 @@ export const SearchResults = ({
         <Typography variant="body2" color="text.secondary">
           {data.total}件の投稿が見つかりました
         </Typography>
+        {mode === 'semantic' && (
+          <Alert severity="info" sx={{ mt: 2 }} icon={false}>
+            AI意味検索は類似度が高い上位 {data.posts.length} 件のみ表示します
+          </Alert>
+        )}
       </Box>
 
       <Divider sx={{ mb: 3 }} />

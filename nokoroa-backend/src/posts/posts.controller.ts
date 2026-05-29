@@ -30,6 +30,7 @@ import { memoryStorage } from 'multer';
 import { S3Service } from '../common/s3.service';
 import { CreatePostDto } from './dto/create-post.dto';
 import { SearchPostsByLocationDto } from './dto/search-posts-by-location.dto';
+import { SearchPostsSemanticDto } from './dto/search-posts-semantic.dto';
 import { SearchPostsDto } from './dto/search-posts.dto';
 import { UpdatePostDto } from './dto/update-post.dto';
 import { PostsService } from './posts.service';
@@ -148,6 +149,20 @@ export class PostsController {
   @ApiResponse({ status: 200, description: '検索成功' })
   search(@Query() searchPostsDto: SearchPostsDto) {
     return this.postsService.search(searchPostsDto);
+  }
+
+  @Get('search/semantic')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: '意味検索（ベクトル検索）',
+    description:
+      '自然文クエリを Gemini で埋め込み、pgvector の cosine 類似度で投稿を検索します（要ログイン: 課金 API のため）',
+  })
+  @ApiResponse({ status: 200, description: '検索成功' })
+  @ApiResponse({ status: 401, description: '認証エラー' })
+  searchSemantic(@Query() dto: SearchPostsSemanticDto) {
+    return this.postsService.searchSemantic(dto);
   }
 
   @Get('search-by-location')

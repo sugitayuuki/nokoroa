@@ -13,9 +13,11 @@ describe('EmbeddingsService', () => {
   };
 
   const mockConfig = {
-    get: jest.fn((key: string) =>
-      key === 'AI_SERVICE_URL' ? 'http://test-ai:8000' : undefined,
-    ),
+    get: jest.fn((key: string) => {
+      if (key === 'AI_SERVICE_URL') return 'http://test-ai:8000';
+      if (key === 'INTERNAL_AI_TOKEN') return 'test-token';
+      return undefined;
+    }),
   };
 
   const mockEmbedding = Array.from({ length: 768 }, (_, i) => i / 768);
@@ -76,6 +78,21 @@ describe('EmbeddingsService', () => {
         service.generateForPost(1, 'タイトル', '本文'),
       ).resolves.toBeUndefined();
       expect(mockPrisma.$executeRawUnsafe).not.toHaveBeenCalled();
+    });
+
+    it('AI service に X-Internal-Token header を送る', async () => {
+      mockPrisma.$executeRawUnsafe.mockResolvedValue(1);
+
+      await service.generateForPost(7, 'タイトル', '本文');
+
+      const calls = (
+        global.fetch as jest.Mock<
+          unknown,
+          [string, { headers: Record<string, string> }]
+        >
+      ).mock.calls;
+      const init = calls[0][1];
+      expect(init.headers['X-Internal-Token']).toBe('test-token');
     });
   });
 

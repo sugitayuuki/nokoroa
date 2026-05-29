@@ -5,10 +5,14 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { EmbeddingsService } from '../embeddings/embeddings.service';
+import {
+  EmbeddingsService,
+  SimilarPostHit,
+} from '../embeddings/embeddings.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreatePostDto } from './dto/create-post.dto';
 import { SearchPostsByLocationDto } from './dto/search-posts-by-location.dto';
+import { SearchPostsSemanticDto } from './dto/search-posts-semantic.dto';
 import { SearchPostsDto } from './dto/search-posts.dto';
 import { UpdatePostDto } from './dto/update-post.dto';
 
@@ -269,6 +273,44 @@ export class PostsService {
       include: postInclude,
     });
     return (posts as PostWithRelations[]).map(formatPost);
+  }
+
+  async searchSemantic(dto: SearchPostsSemanticDto) {
+    const { q, limit = 10 } = dto;
+
+    let hits: SimilarPostHit[];
+    try {
+      hits = await this.embeddingsService.searchSimilarStrict(q, limit);
+    } catch (err) {
+      this.logger.error(
+        `Semantic search AI unavailable: ${err instanceof Error ? err.message : 'unknown'}`,
+      );
+      return { posts: [], total: 0, hasMore: false, aiAvailable: false };
+    }
+
+    if (hits.length === 0) {
+      return { posts: [], total: 0, hasMore: false, aiAvailable: true };
+    }
+
+    const ids = hits.map((h) => h.postId);
+    const hydrated = await this.findManyByIds(ids);
+    const byId = new Map(hydrated.map((p) => [p.id, p]));
+
+    const ranked = hits
+      .map((hit) => {
+        const post = byId.get(hit.postId);
+        if (!post) return null;
+        const similarity = Math.max(0, 1 - hit.distance);
+        return { ...post, similarity };
+      })
+      .filter((p): p is NonNullable<typeof p> => p !== null);
+
+    return {
+      posts: ranked,
+      total: ranked.length,
+      hasMore: false,
+      aiAvailable: true,
+    };
   }
 
   async findOne(id: number) {
