@@ -68,9 +68,30 @@ export const PostForm = ({
   const API_URL = API_CONFIG.BASE_URL;
 
   const geocodeAbortRef = useRef<AbortController | null>(null);
+  const GEOCODE_CACHE_MAX = 50;
   const geocodeCacheRef = useRef<
     Map<string, { lat: number; lon: number; display_name: string } | null>
   >(new Map());
+
+  const normalizeCacheKey = (raw: string): string =>
+    raw.trim().toLowerCase().replace(/\s+/g, ' ');
+
+  const cacheSet = useCallback(
+    (
+      key: string,
+      value: { lat: number; lon: number; display_name: string } | null,
+    ) => {
+      const cache = geocodeCacheRef.current;
+      if (cache.has(key)) cache.delete(key);
+      cache.set(key, value);
+      while (cache.size > GEOCODE_CACHE_MAX) {
+        const oldest = cache.keys().next().value;
+        if (oldest === undefined) break;
+        cache.delete(oldest);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     return () => {
@@ -78,40 +99,11 @@ export const PostForm = ({
     };
   }, []);
 
-  const geocodeLocation = useCallback(async (locationName: string) => {
-    const trimmed = locationName.trim();
-    if (!trimmed) {
-      geocodeAbortRef.current?.abort();
-      setFormData((prev) => ({
-        ...prev,
-        latitude: undefined,
-        longitude: undefined,
-      }));
-      setGeocodingSuccess(false);
-      setGeocodedDisplayName(null);
-      return;
-    }
-
-    geocodeAbortRef.current?.abort();
-    const controller = new AbortController();
-    geocodeAbortRef.current = controller;
-
-    setIsGeocodingLocation(true);
-    setGeocodingSuccess(false);
-    setGeocodedDisplayName(null);
-    setGeocodingAttempted(true);
-
-    const cached = geocodeCacheRef.current.get(trimmed);
-    if (cached !== undefined) {
-      if (cached) {
-        setFormData((prev) => ({
-          ...prev,
-          latitude: cached.lat,
-          longitude: cached.lon,
-        }));
-        setGeocodingSuccess(true);
-        setGeocodedDisplayName(cached.display_name);
-      } else {
+  const geocodeLocation = useCallback(
+    async (locationName: string) => {
+      const trimmed = locationName.trim();
+      if (!trimmed) {
+        geocodeAbortRef.current?.abort();
         setFormData((prev) => ({
           ...prev,
           latitude: undefined,
@@ -119,78 +111,114 @@ export const PostForm = ({
         }));
         setGeocodingSuccess(false);
         setGeocodedDisplayName(null);
-      }
-      setIsGeocodingLocation(false);
-      return;
-    }
-
-    try {
-      const response = await fetch(
-        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(trimmed)}&format=json&limit=1&accept-language=ja`,
-        { signal: controller.signal },
-      );
-
-      if (!response.ok) {
-        throw new Error('Geocoding failed');
-      }
-
-      const data = (await response.json()) as Array<{
-        lat: string;
-        lon: string;
-        display_name: string;
-      }>;
-
-      if (controller.signal.aborted) return;
-
-      if (data.length > 0) {
-        const { lat, lon, display_name } = data[0];
-        const parsedLat = parseFloat(lat);
-        const parsedLon = parseFloat(lon);
-        if (!Number.isFinite(parsedLat) || !Number.isFinite(parsedLon)) {
-          throw new Error('Invalid coordinates returned');
-        }
-        geocodeCacheRef.current.set(trimmed, {
-          lat: parsedLat,
-          lon: parsedLon,
-          display_name,
-        });
-        setFormData((prev) => ({
-          ...prev,
-          latitude: parsedLat,
-          longitude: parsedLon,
-        }));
-        setGeocodingSuccess(true);
-        setGeocodedDisplayName(display_name);
-      } else {
-        geocodeCacheRef.current.set(trimmed, null);
-        setFormData((prev) => ({
-          ...prev,
-          latitude: undefined,
-          longitude: undefined,
-        }));
-        setGeocodingSuccess(false);
-        setGeocodedDisplayName(null);
-      }
-    } catch (err) {
-      if (err instanceof DOMException && err.name === 'AbortError') {
         return;
       }
-      setFormData((prev) => ({
-        ...prev,
-        latitude: undefined,
-        longitude: undefined,
-      }));
+
+      geocodeAbortRef.current?.abort();
+      const controller = new AbortController();
+      geocodeAbortRef.current = controller;
+
+      setIsGeocodingLocation(true);
       setGeocodingSuccess(false);
       setGeocodedDisplayName(null);
-      toast.error(
-        '位置情報の取得に失敗しました。時間をおいて再度お試しください',
-      );
-    } finally {
-      if (!controller.signal.aborted) {
+      setGeocodingAttempted(true);
+
+      const cacheKey = normalizeCacheKey(trimmed);
+      const cached = geocodeCacheRef.current.get(cacheKey);
+      if (cached !== undefined) {
+        if (cached) {
+          setFormData((prev) => ({
+            ...prev,
+            latitude: cached.lat,
+            longitude: cached.lon,
+          }));
+          setGeocodingSuccess(true);
+          setGeocodedDisplayName(cached.display_name);
+        } else {
+          setFormData((prev) => ({
+            ...prev,
+            latitude: undefined,
+            longitude: undefined,
+          }));
+          setGeocodingSuccess(false);
+          setGeocodedDisplayName(null);
+        }
         setIsGeocodingLocation(false);
+        return;
       }
-    }
-  }, []);
+
+      try {
+        const response = await fetch(
+          `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(trimmed)}&format=json&limit=1&accept-language=ja`,
+          { signal: controller.signal },
+        );
+
+        if (!response.ok) {
+          throw new Error('Geocoding failed');
+        }
+
+        const data = (await response.json()) as Array<{
+          lat: string;
+          lon: string;
+          display_name: string;
+        }>;
+
+        if (controller.signal.aborted) return;
+
+        if (data.length > 0) {
+          const { lat, lon, display_name } = data[0];
+          const parsedLat = parseFloat(lat);
+          const parsedLon = parseFloat(lon);
+          if (!Number.isFinite(parsedLat) || !Number.isFinite(parsedLon)) {
+            throw new Error('Invalid coordinates returned');
+          }
+          cacheSet(cacheKey, {
+            lat: parsedLat,
+            lon: parsedLon,
+            display_name,
+          });
+          if (controller.signal.aborted) return;
+          setFormData((prev) => ({
+            ...prev,
+            latitude: parsedLat,
+            longitude: parsedLon,
+          }));
+          setGeocodingSuccess(true);
+          setGeocodedDisplayName(display_name);
+        } else {
+          cacheSet(cacheKey, null);
+          if (controller.signal.aborted) return;
+          setFormData((prev) => ({
+            ...prev,
+            latitude: undefined,
+            longitude: undefined,
+          }));
+          setGeocodingSuccess(false);
+          setGeocodedDisplayName(null);
+        }
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') {
+          return;
+        }
+        if (controller.signal.aborted) return;
+        setFormData((prev) => ({
+          ...prev,
+          latitude: undefined,
+          longitude: undefined,
+        }));
+        setGeocodingSuccess(false);
+        setGeocodedDisplayName(null);
+        toast.error(
+          '位置情報の取得に失敗しました。時間をおいて再度お試しください',
+        );
+      } finally {
+        if (!controller.signal.aborted) {
+          setIsGeocodingLocation(false);
+        }
+      }
+    },
+    [cacheSet],
+  );
 
   const handleLocationBlur = useCallback(() => {
     if (formData.location) {

@@ -491,7 +491,7 @@ export class PostsService {
                 u.name ILIKE ${searchPattern}
               )
             )
-          ORDER BY distance ASC, p."createdAt" DESC
+          ORDER BY distance ASC, p."createdAt" DESC, p.id ASC
           LIMIT ${limit} OFFSET ${offset}
         `
       : await this.prisma.$queryRaw<RawPost[]>`
@@ -523,7 +523,7 @@ export class PostsService {
                 u.name ILIKE ${searchPattern}
               )
             )
-          ORDER BY p."createdAt" DESC
+          ORDER BY p."createdAt" DESC, p.id ASC
           LIMIT ${limit} OFFSET ${offset}
         `;
 
