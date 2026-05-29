@@ -304,7 +304,7 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
           }
 
           fullResponse += data;
-          charQueueRef.current.push(...data.split(''));
+          charQueueRef.current.push(...Array.from(data));
           startTyping();
         }
       }
@@ -458,7 +458,11 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const native = e.nativeEvent as KeyboardEvent;
+    if (native.isComposing || e.key === 'Process' || native.keyCode === 229) {
+      return;
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
