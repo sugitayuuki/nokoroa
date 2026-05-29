@@ -4,9 +4,11 @@ import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import CloseFullscreenIcon from '@mui/icons-material/CloseFullscreen';
 import OpenInFullIcon from '@mui/icons-material/OpenInFull';
 import SendIcon from '@mui/icons-material/Send';
+import StopIcon from '@mui/icons-material/Stop';
 import {
   Avatar,
   Box,
+  Button,
   Chip,
   IconButton,
   Paper,
@@ -17,6 +19,7 @@ import {
   useTheme,
 } from '@mui/material';
 import { AnimatePresence, motion } from 'framer-motion';
+import NextLink from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { PostData } from '@/types/post';
@@ -28,6 +31,7 @@ interface Message {
   content: string;
   id: string;
   relatedPosts?: PostData[];
+  needsLogin?: boolean;
 }
 
 interface ChatPanelProps {
@@ -173,6 +177,10 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
       return 'small';
     });
   };
+
+  const handleStop = useCallback(() => {
+    abortControllerRef.current?.abort();
+  }, []);
 
   const handleSend = async (messageText?: string) => {
     const textToSend = messageText || input.trim();
@@ -428,6 +436,7 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
           role: 'assistant',
           content: errorContent,
           id: `error-${Date.now()}`,
+          needsLogin: responseStatus === 401,
         };
         const lastIdx = prev.length - 1;
         const lastMessage = prev[lastIdx];
@@ -628,6 +637,18 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
                       >
                         {message.content}
                       </Typography>
+                      {message.needsLogin && (
+                        <Button
+                          component={NextLink}
+                          href="/login"
+                          size="small"
+                          variant="contained"
+                          color="primary"
+                          sx={{ mt: 1, textTransform: 'none' }}
+                        >
+                          ログインページへ
+                        </Button>
+                      )}
                     </Paper>
                     {message.relatedPosts &&
                       message.relatedPosts.length > 0 && (
@@ -751,24 +772,44 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
                   },
                 }}
               />
-              <IconButton
-                color="primary"
-                onClick={() => handleSend()}
-                disabled={!input.trim() || isResponding}
-                sx={{
-                  bgcolor: 'primary.main',
-                  color: 'primary.contrastText',
-                  '&:hover': {
-                    bgcolor: 'primary.dark',
-                  },
-                  '&:disabled': {
-                    bgcolor: 'action.disabledBackground',
-                    color: 'action.disabled',
-                  },
-                }}
-              >
-                <SendIcon fontSize="small" />
-              </IconButton>
+              {isResponding ? (
+                <Tooltip title="停止">
+                  <IconButton
+                    color="primary"
+                    onClick={handleStop}
+                    aria-label="応答を停止"
+                    sx={{
+                      bgcolor: 'primary.main',
+                      color: 'primary.contrastText',
+                      '&:hover': {
+                        bgcolor: 'primary.dark',
+                      },
+                    }}
+                  >
+                    <StopIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              ) : (
+                <IconButton
+                  color="primary"
+                  onClick={() => handleSend()}
+                  disabled={!input.trim()}
+                  aria-label="送信"
+                  sx={{
+                    bgcolor: 'primary.main',
+                    color: 'primary.contrastText',
+                    '&:hover': {
+                      bgcolor: 'primary.dark',
+                    },
+                    '&:disabled': {
+                      bgcolor: 'action.disabledBackground',
+                      color: 'action.disabled',
+                    },
+                  }}
+                >
+                  <SendIcon fontSize="small" />
+                </IconButton>
+              )}
             </Box>
           </Box>
         </MotionPaper>
