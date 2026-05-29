@@ -105,25 +105,40 @@ export class PostsService {
     longitude?: number,
     prefecture?: string,
   ) {
+    const whereClause = {
+      name: locationName,
+      ...(latitude !== undefined && longitude !== undefined
+        ? { latitude, longitude }
+        : {}),
+    };
+
     const existing = await this.prisma.location.findFirst({
-      where: {
-        name: locationName,
-        ...(latitude !== undefined && longitude !== undefined
-          ? { latitude, longitude }
-          : {}),
-      },
+      where: whereClause,
     });
 
     if (existing) return existing;
 
-    return this.prisma.location.create({
-      data: {
-        name: locationName,
-        latitude: latitude ?? null,
-        longitude: longitude ?? null,
-        prefecture: prefecture ?? null,
-      },
-    });
+    try {
+      return await this.prisma.location.create({
+        data: {
+          name: locationName,
+          latitude: latitude ?? null,
+          longitude: longitude ?? null,
+          prefecture: prefecture ?? null,
+        },
+      });
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2002'
+      ) {
+        const retry = await this.prisma.location.findFirst({
+          where: whereClause,
+        });
+        if (retry) return retry;
+      }
+      throw err;
+    }
   }
 
   private async getOrCreateTags(tagNames: string[]) {
@@ -407,186 +422,8 @@ export class PostsService {
       q,
     } = searchDto;
 
-    if (centerLat && centerLng) {
-      const searchPattern = q ? `%${q}%` : null;
-
-      const posts = await this.prisma.$queryRaw`
-        SELECT
-          p.id, p.title, p.content, p."imageUrl", p."isPublic",
-          p."createdAt", p."updatedAt", p."authorId", p."locationId",
-          u.id as "author_id", u.name as "author_name", u.email as "author_email", u.avatar as "author_avatar",
-          l.name as "location_name", l.prefecture, l.latitude, l.longitude,
-          (6371 * acos(
-            cos(radians(${centerLat})) * cos(radians(l.latitude)) *
-            cos(radians(l.longitude) - radians(${centerLng})) +
-            sin(radians(${centerLat})) * sin(radians(l.latitude))
-          )) as distance
-        FROM post p
-        JOIN "user" u ON p."authorId" = u.id
-        LEFT JOIN location l ON p."locationId" = l.id
-        WHERE p."isPublic" = true
-          AND l.latitude IS NOT NULL
-          AND l.longitude IS NOT NULL
-          AND (6371 * acos(
-            cos(radians(${centerLat})) * cos(radians(l.latitude)) *
-            cos(radians(l.longitude) - radians(${centerLng})) +
-            sin(radians(${centerLat})) * sin(radians(l.latitude))
-          )) <= ${radius}
-          AND (
-            ${searchPattern}::text IS NULL OR (
-              p.title ILIKE ${searchPattern} OR
-              p.content ILIKE ${searchPattern} OR
-              l.name ILIKE ${searchPattern} OR
-              u.name ILIKE ${searchPattern}
-            )
-          )
-        ORDER BY distance ASC, p."createdAt" DESC
-        LIMIT ${limit} OFFSET ${offset}
-      `;
-
-      const total = await this.prisma.$queryRaw<{ count: bigint }[]>`
-        SELECT COUNT(*) as count
-        FROM post p
-        JOIN "user" u ON p."authorId" = u.id
-        LEFT JOIN location l ON p."locationId" = l.id
-        WHERE p."isPublic" = true
-          AND l.latitude IS NOT NULL
-          AND l.longitude IS NOT NULL
-          AND (6371 * acos(
-            cos(radians(${centerLat})) * cos(radians(l.latitude)) *
-            cos(radians(l.longitude) - radians(${centerLng})) +
-            sin(radians(${centerLat})) * sin(radians(l.latitude))
-          )) <= ${radius}
-          AND (
-            ${searchPattern}::text IS NULL OR (
-              p.title ILIKE ${searchPattern} OR
-              p.content ILIKE ${searchPattern} OR
-              l.name ILIKE ${searchPattern} OR
-              u.name ILIKE ${searchPattern}
-            )
-          )
-      `;
-
-      const postIds = (posts as { id: number }[]).map((p) => p.id);
-      const postTags = await this.prisma.postTag.findMany({
-        where: { postId: { in: postIds } },
-        include: { tag: true },
-      });
-
-      const tagsByPostId = new Map<number, string[]>();
-      postTags.forEach((pt) => {
-        const existing = tagsByPostId.get(pt.postId) || [];
-        existing.push(pt.tag.name);
-        tagsByPostId.set(pt.postId, existing);
-      });
-
-      interface RawPost {
-        id: number;
-        title: string;
-        content: string;
-        imageUrl: string | null;
-        isPublic: boolean;
-        createdAt: Date;
-        updatedAt: Date;
-        authorId: number;
-        locationId: number | null;
-        author_id: number;
-        author_name: string;
-        author_email: string;
-        author_avatar: string | null;
-        location_name: string | null;
-        prefecture: string | null;
-        latitude: number | null;
-        longitude: number | null;
-        distance?: number;
-      }
-
-      const formattedPosts = (posts as RawPost[]).map((post) => ({
-        id: post.id,
-        title: post.title,
-        content: post.content,
-        imageUrl: post.imageUrl,
-        isPublic: post.isPublic,
-        createdAt: post.createdAt,
-        updatedAt: post.updatedAt,
-        authorId: post.authorId,
-        location: post.location_name,
-        prefecture: post.prefecture,
-        latitude: post.latitude,
-        longitude: post.longitude,
-        tags: tagsByPostId.get(post.id) || [],
-        author: {
-          id: post.author_id,
-          name: post.author_name,
-          email: post.author_email,
-          avatar: post.author_avatar,
-        },
-        distance: post.distance,
-      }));
-
-      return {
-        posts: formattedPosts,
-        total: Number(total[0].count),
-        hasMore: offset + limit < Number(total[0].count),
-      };
-    }
-
+    const hasGeo = centerLat !== undefined && centerLng !== undefined;
     const searchPattern = q ? `%${q}%` : null;
-
-    const posts = await this.prisma.$queryRaw`
-      SELECT
-        p.id, p.title, p.content, p."imageUrl", p."isPublic",
-        p."createdAt", p."updatedAt", p."authorId", p."locationId",
-        u.id as "author_id", u.name as "author_name", u.email as "author_email", u.avatar as "author_avatar",
-        l.name as "location_name", l.prefecture, l.latitude, l.longitude
-      FROM post p
-      JOIN "user" u ON p."authorId" = u.id
-      LEFT JOIN location l ON p."locationId" = l.id
-      WHERE p."isPublic" = true
-        AND l.latitude IS NOT NULL
-        AND l.longitude IS NOT NULL
-        AND (
-          ${searchPattern}::text IS NULL OR (
-            p.title ILIKE ${searchPattern} OR
-            p.content ILIKE ${searchPattern} OR
-            l.name ILIKE ${searchPattern} OR
-            u.name ILIKE ${searchPattern}
-          )
-        )
-      ORDER BY p."createdAt" DESC
-      LIMIT ${limit} OFFSET ${offset}
-    `;
-
-    const total = await this.prisma.$queryRaw<{ count: bigint }[]>`
-      SELECT COUNT(*) as count
-      FROM post p
-      JOIN "user" u ON p."authorId" = u.id
-      LEFT JOIN location l ON p."locationId" = l.id
-      WHERE p."isPublic" = true
-        AND l.latitude IS NOT NULL
-        AND l.longitude IS NOT NULL
-        AND (
-          ${searchPattern}::text IS NULL OR (
-            p.title ILIKE ${searchPattern} OR
-            p.content ILIKE ${searchPattern} OR
-            l.name ILIKE ${searchPattern} OR
-            u.name ILIKE ${searchPattern}
-          )
-        )
-    `;
-
-    const postIds = (posts as { id: number }[]).map((p) => p.id);
-    const postTags = await this.prisma.postTag.findMany({
-      where: { postId: { in: postIds } },
-      include: { tag: true },
-    });
-
-    const tagsByPostId = new Map<number, string[]>();
-    postTags.forEach((pt) => {
-      const existing = tagsByPostId.get(pt.postId) || [];
-      existing.push(pt.tag.name);
-      tagsByPostId.set(pt.postId, existing);
-    });
 
     interface RawPost {
       id: number;
@@ -606,34 +443,119 @@ export class PostsService {
       prefecture: string | null;
       latitude: number | null;
       longitude: number | null;
+      distance: number | null;
+      tags: string[] | null;
+      total_count: bigint;
     }
 
-    const formattedPosts = (posts as RawPost[]).map((post) => ({
-      id: post.id,
-      title: post.title,
-      content: post.content,
-      imageUrl: post.imageUrl,
-      isPublic: post.isPublic,
-      createdAt: post.createdAt,
-      updatedAt: post.updatedAt,
-      authorId: post.authorId,
-      location: post.location_name,
-      prefecture: post.prefecture,
-      latitude: post.latitude,
-      longitude: post.longitude,
-      tags: tagsByPostId.get(post.id) || [],
+    const rows = hasGeo
+      ? await this.prisma.$queryRaw<RawPost[]>`
+          SELECT
+            p.id, p.title, p.content, p."imageUrl", p."isPublic",
+            p."createdAt", p."updatedAt", p."authorId", p."locationId",
+            u.id as "author_id", u.name as "author_name", u.email as "author_email", u.avatar as "author_avatar",
+            l.name as "location_name", l.prefecture, l.latitude, l.longitude,
+            (6371 * acos(
+              LEAST(1.0, GREATEST(-1.0,
+                cos(radians(${centerLat})) * cos(radians(l.latitude)) *
+                cos(radians(l.longitude) - radians(${centerLng})) +
+                sin(radians(${centerLat})) * sin(radians(l.latitude))
+              ))
+            )) as distance,
+            COUNT(*) OVER() AS total_count,
+            COALESCE(
+              (SELECT array_agg(t.name ORDER BY t.name)
+               FROM post_tag pt
+               JOIN tag t ON pt."tagId" = t.id
+               WHERE pt."postId" = p.id),
+              ARRAY[]::text[]
+            ) as tags
+          FROM post p
+          JOIN "user" u ON p."authorId" = u.id
+          LEFT JOIN location l ON p."locationId" = l.id
+          WHERE p."isPublic" = true
+            AND l.latitude IS NOT NULL
+            AND l.longitude IS NOT NULL
+            AND (6371 * acos(
+              LEAST(1.0, GREATEST(-1.0,
+                cos(radians(${centerLat})) * cos(radians(l.latitude)) *
+                cos(radians(l.longitude) - radians(${centerLng})) +
+                sin(radians(${centerLat})) * sin(radians(l.latitude))
+              ))
+            )) <= ${radius}
+            AND (
+              ${searchPattern}::text IS NULL OR (
+                p.title ILIKE ${searchPattern} OR
+                p.content ILIKE ${searchPattern} OR
+                l.name ILIKE ${searchPattern} OR
+                u.name ILIKE ${searchPattern}
+              )
+            )
+          ORDER BY distance ASC, p."createdAt" DESC
+          LIMIT ${limit} OFFSET ${offset}
+        `
+      : await this.prisma.$queryRaw<RawPost[]>`
+          SELECT
+            p.id, p.title, p.content, p."imageUrl", p."isPublic",
+            p."createdAt", p."updatedAt", p."authorId", p."locationId",
+            u.id as "author_id", u.name as "author_name", u.email as "author_email", u.avatar as "author_avatar",
+            l.name as "location_name", l.prefecture, l.latitude, l.longitude,
+            NULL::float as distance,
+            COUNT(*) OVER() AS total_count,
+            COALESCE(
+              (SELECT array_agg(t.name ORDER BY t.name)
+               FROM post_tag pt
+               JOIN tag t ON pt."tagId" = t.id
+               WHERE pt."postId" = p.id),
+              ARRAY[]::text[]
+            ) as tags
+          FROM post p
+          JOIN "user" u ON p."authorId" = u.id
+          LEFT JOIN location l ON p."locationId" = l.id
+          WHERE p."isPublic" = true
+            AND l.latitude IS NOT NULL
+            AND l.longitude IS NOT NULL
+            AND (
+              ${searchPattern}::text IS NULL OR (
+                p.title ILIKE ${searchPattern} OR
+                p.content ILIKE ${searchPattern} OR
+                l.name ILIKE ${searchPattern} OR
+                u.name ILIKE ${searchPattern}
+              )
+            )
+          ORDER BY p."createdAt" DESC
+          LIMIT ${limit} OFFSET ${offset}
+        `;
+
+    const total = rows.length > 0 ? Number(rows[0].total_count) : 0;
+
+    const formattedPosts = rows.map((row) => ({
+      id: row.id,
+      title: row.title,
+      content: row.content,
+      imageUrl: row.imageUrl,
+      isPublic: row.isPublic,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      authorId: row.authorId,
+      location: row.location_name,
+      prefecture: row.prefecture,
+      latitude: row.latitude,
+      longitude: row.longitude,
+      tags: row.tags ?? [],
       author: {
-        id: post.author_id,
-        name: post.author_name,
-        email: post.author_email,
-        avatar: post.author_avatar,
+        id: row.author_id,
+        name: row.author_name,
+        email: row.author_email,
+        avatar: row.author_avatar,
       },
+      ...(hasGeo && { distance: row.distance ?? undefined }),
     }));
 
     return {
       posts: formattedPosts,
-      total: Number(total[0].count),
-      hasMore: offset + limit < Number(total[0].count),
+      total,
+      hasMore: offset + limit < total,
     };
   }
 

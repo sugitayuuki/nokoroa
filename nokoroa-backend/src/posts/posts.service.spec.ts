@@ -1,5 +1,6 @@
 import { NotFoundException, ForbiddenException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
+import { Prisma } from '@prisma/client';
 
 import { PostsService } from './posts.service';
 import { EmbeddingsService } from '../embeddings/embeddings.service';
@@ -28,10 +29,12 @@ describe('PostsService', () => {
     postTag: {
       deleteMany: jest.fn(),
       createMany: jest.fn(),
+      findMany: jest.fn(),
     },
     bookmark: {
       count: jest.fn(),
     },
+    $queryRaw: jest.fn(),
   };
 
   const mockPost = {
@@ -315,6 +318,166 @@ describe('PostsService', () => {
 
       expect(result.tags).toHaveLength(2);
       expect(result.tags[0].count).toBe(5);
+    });
+  });
+
+  describe('searchByLocation', () => {
+    const rawRow = {
+      id: 1,
+      title: 'Cafe Visit',
+      content: 'Nice cafe',
+      imageUrl: null,
+      isPublic: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      authorId: 1,
+      locationId: 1,
+      author_id: 1,
+      author_name: 'Alice',
+      author_email: 'alice@example.com',
+      author_avatar: null,
+      location_name: 'Shibuya',
+      prefecture: 'Tokyo',
+      latitude: 35.6595,
+      longitude: 139.7005,
+      distance: 1.23,
+      tags: ['cafe', 'travel'],
+      total_count: BigInt(1),
+    };
+
+    it('geo 指定ありで distance を含めて返す', async () => {
+      mockPrismaService.$queryRaw.mockResolvedValueOnce([rawRow]);
+
+      const result = await service.searchByLocation({
+        centerLat: 35.6762,
+        centerLng: 139.6503,
+        radius: 5,
+        limit: 10,
+        offset: 0,
+      });
+
+      expect(mockPrismaService.$queryRaw).toHaveBeenCalledTimes(1);
+      expect(result.posts).toHaveLength(1);
+      expect(result.posts[0]).toMatchObject({
+        id: 1,
+        location: 'Shibuya',
+        tags: ['cafe', 'travel'],
+        distance: 1.23,
+      });
+      expect(result.total).toBe(1);
+      expect(result.hasMore).toBe(false);
+    });
+
+    it('centerLat=0 を有効値として扱う (truthiness バグ防止)', async () => {
+      mockPrismaService.$queryRaw.mockResolvedValueOnce([
+        { ...rawRow, distance: 0.5, total_count: BigInt(1) },
+      ]);
+
+      const result = await service.searchByLocation({
+        centerLat: 0,
+        centerLng: 0,
+        radius: 50,
+      });
+
+      expect(mockPrismaService.$queryRaw).toHaveBeenCalledTimes(1);
+      expect(result.posts[0].distance).toBe(0.5);
+    });
+
+    it('geo なしのとき distance を含めない', async () => {
+      mockPrismaService.$queryRaw.mockResolvedValueOnce([
+        { ...rawRow, distance: null, total_count: BigInt(1) },
+      ]);
+
+      const result = await service.searchByLocation({});
+
+      expect(mockPrismaService.$queryRaw).toHaveBeenCalledTimes(1);
+      expect(result.posts).toHaveLength(1);
+      expect(result.posts[0]).not.toHaveProperty('distance');
+    });
+
+    it('結果 0 件のとき total=0, hasMore=false', async () => {
+      mockPrismaService.$queryRaw.mockResolvedValueOnce([]);
+
+      const result = await service.searchByLocation({
+        centerLat: 35.6762,
+        centerLng: 139.6503,
+      });
+
+      expect(result.posts).toEqual([]);
+      expect(result.total).toBe(0);
+      expect(result.hasMore).toBe(false);
+    });
+
+    it('tags が null でも空配列にフォールバック', async () => {
+      mockPrismaService.$queryRaw.mockResolvedValueOnce([
+        { ...rawRow, tags: null },
+      ]);
+
+      const result = await service.searchByLocation({});
+
+      expect(result.posts[0].tags).toEqual([]);
+    });
+  });
+
+  describe('getOrCreateLocation race safety (via create flow)', () => {
+    it('Location create が P2002 で衝突したら findFirst で再取得', async () => {
+      const existing = {
+        id: 99,
+        name: 'Race City',
+        prefecture: null,
+        latitude: null,
+        longitude: null,
+      };
+
+      mockPrismaService.location.findFirst
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(existing);
+      mockPrismaService.location.create.mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError('unique constraint failed', {
+          code: 'P2002',
+          clientVersion: 'test',
+        }),
+      );
+      mockPrismaService.tag.findUnique = jest.fn().mockResolvedValue(null);
+      mockPrismaService.tag.create = jest.fn().mockResolvedValue({
+        id: 1,
+        name: 'travel',
+        slug: 'travel',
+      });
+      mockPrismaService.post.create.mockResolvedValue({
+        ...mockPost,
+        locationId: existing.id,
+      });
+
+      const result = await service.create({
+        title: 'Race Post',
+        content: 'Body',
+        imageUrl: 'https://example.com/img.jpg',
+        location: 'Race City',
+        tags: ['travel'],
+        authorId: 1,
+      });
+
+      expect(result.title).toBe('Test Post');
+      expect(mockPrismaService.location.findFirst).toHaveBeenCalledTimes(2);
+      expect(mockPrismaService.location.create).toHaveBeenCalledTimes(1);
+    });
+
+    it('Location create が他エラーなら投げ直す', async () => {
+      mockPrismaService.location.findFirst.mockResolvedValue(null);
+      mockPrismaService.location.create.mockRejectedValue(
+        new Error('connection lost'),
+      );
+
+      await expect(
+        service.create({
+          title: 'Post',
+          content: 'Body',
+          imageUrl: 'https://example.com/img.jpg',
+          location: 'Anywhere',
+          authorId: 1,
+        }),
+      ).rejects.toThrow('connection lost');
     });
   });
 });

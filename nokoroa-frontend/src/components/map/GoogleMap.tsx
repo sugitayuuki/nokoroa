@@ -8,6 +8,108 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import { PostData } from '../../types/post';
 
+const isSafeImageUrl = (url: string | null | undefined): url is string => {
+  if (!url) return false;
+  try {
+    const u = new URL(url, window.location.href);
+    return u.protocol === 'http:' || u.protocol === 'https:';
+  } catch {
+    return false;
+  }
+};
+
+const buildPostInfoContent = (post: PostData): HTMLElement => {
+  const root = document.createElement('div');
+  root.style.maxWidth = '250px';
+  root.style.padding = '8px';
+
+  const title = document.createElement('h3');
+  title.textContent = post.title;
+  title.style.margin = '0 0 8px 0';
+  title.style.fontSize = '16px';
+  title.style.color = '#333';
+  root.appendChild(title);
+
+  if (isSafeImageUrl(post.imageUrl)) {
+    const img = document.createElement('img');
+    img.src = post.imageUrl as string;
+    img.alt = post.title;
+    img.style.width = '100%';
+    img.style.height = '120px';
+    img.style.objectFit = 'cover';
+    img.style.borderRadius = '4px';
+    img.style.marginBottom = '8px';
+    root.appendChild(img);
+  }
+
+  const snippet =
+    post.content.length > 100
+      ? `${post.content.substring(0, 100)}...`
+      : post.content;
+  const body = document.createElement('p');
+  body.textContent = snippet;
+  body.style.margin = '0 0 8px 0';
+  body.style.fontSize = '14px';
+  body.style.color = '#666';
+  body.style.lineHeight = '1.4';
+  root.appendChild(body);
+
+  if (post.location) {
+    const loc = document.createElement('p');
+    loc.textContent = post.location;
+    loc.style.margin = '0';
+    loc.style.fontSize = '12px';
+    loc.style.color = '#999';
+    root.appendChild(loc);
+  }
+
+  return root;
+};
+
+const buildLocationInfoContent = (params: {
+  heading: string;
+  headingColor: string;
+  lat: number;
+  lng: number;
+  city?: string;
+  country?: string;
+  accuracy?: string;
+}): HTMLElement => {
+  const root = document.createElement('div');
+  root.style.padding = '8px';
+  root.style.textAlign = 'center';
+
+  const h = document.createElement('h4');
+  h.textContent = params.heading;
+  h.style.margin = '0 0 4px 0';
+  h.style.color = params.headingColor;
+  root.appendChild(h);
+
+  if (params.city || params.country) {
+    const loc = document.createElement('p');
+    loc.textContent = [params.city, params.country].filter(Boolean).join(', ');
+    loc.style.margin = '0 0 4px 0';
+    loc.style.fontSize = '14px';
+    loc.style.color = '#333';
+    root.appendChild(loc);
+  }
+
+  const coords = document.createElement('p');
+  coords.style.margin = '0';
+  coords.style.fontSize = '12px';
+  coords.style.color = '#666';
+  coords.appendChild(document.createTextNode(`緯度: ${params.lat.toFixed(6)}`));
+  coords.appendChild(document.createElement('br'));
+  coords.appendChild(document.createTextNode(`経度: ${params.lng.toFixed(6)}`));
+  if (params.accuracy) {
+    coords.appendChild(document.createElement('br'));
+    coords.appendChild(document.createTextNode(params.accuracy));
+  }
+  root.appendChild(coords);
+
+  return root;
+};
+
 declare global {
   interface Window {
     google: typeof google;
@@ -104,14 +206,7 @@ export const GoogleMap: React.FC<GoogleMapProps> = ({
           });
 
           const infoWindow = new window.google.maps.InfoWindow({
-            content: `
-              <div style="max-width: 250px; padding: 8px;">
-                <h3 style="margin: 0 0 8px 0; font-size: 16px; color: #333;">${post.title}</h3>
-                ${post.imageUrl ? `<img src="${post.imageUrl}" alt="${post.title}" style="width: 100%; height: 120px; object-fit: cover; border-radius: 4px; margin-bottom: 8px;" />` : ''}
-                <p style="margin: 0 0 8px 0; font-size: 14px; color: #666; line-height: 1.4;">${post.content.substring(0, 100)}${post.content.length > 100 ? '...' : ''}</p>
-                <p style="margin: 0; font-size: 12px; color: #999;">${post.location || ''}</p>
-              </div>
-            `,
+            content: buildPostInfoContent(post),
           });
 
           marker.addListener('click', () => {
@@ -142,12 +237,12 @@ export const GoogleMap: React.FC<GoogleMapProps> = ({
         });
 
         const currentLocationInfoWindow = new window.google.maps.InfoWindow({
-          content: `
-            <div style="padding: 8px; text-align: center;">
-              <h4 style="margin: 0 0 4px 0; color: #2196f3;">📍 現在位置</h4>
-              <p style="margin: 0; font-size: 12px; color: #666;">緯度: ${userLocation.lat.toFixed(6)}<br/>経度: ${userLocation.lng.toFixed(6)}</p>
-            </div>
-          `,
+          content: buildLocationInfoContent({
+            heading: '📍 現在位置',
+            headingColor: '#2196f3',
+            lat: userLocation.lat,
+            lng: userLocation.lng,
+          }),
         });
 
         currentLocationMarker.addListener('click', () => {
@@ -189,13 +284,15 @@ export const GoogleMap: React.FC<GoogleMapProps> = ({
         });
 
         const ipLocationInfoWindow = new window.google.maps.InfoWindow({
-          content: `
-            <div style="padding: 8px; text-align: center;">
-              <h4 style="margin: 0 0 4px 0; color: #ff9800;">🌐 IP-based位置</h4>
-              <p style="margin: 0 0 4px 0; font-size: 14px; color: #333;">${ipLocation.city}, ${ipLocation.country}</p>
-              <p style="margin: 0; font-size: 12px; color: #666;">緯度: ${ipLocation.lat.toFixed(6)}<br/>経度: ${ipLocation.lng.toFixed(6)}<br/>${ipLocation.accuracy}</p>
-            </div>
-          `,
+          content: buildLocationInfoContent({
+            heading: '🌐 IP-based位置',
+            headingColor: '#ff9800',
+            lat: ipLocation.lat,
+            lng: ipLocation.lng,
+            city: ipLocation.city,
+            country: ipLocation.country,
+            accuracy: ipLocation.accuracy,
+          }),
         });
 
         ipLocationMarker.addListener('click', () => {
