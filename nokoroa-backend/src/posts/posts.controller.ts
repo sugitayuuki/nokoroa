@@ -152,12 +152,15 @@ export class PostsController {
   }
 
   @Get('search/semantic')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
   @ApiOperation({
     summary: '意味検索（ベクトル検索）',
     description:
-      '自然文クエリを Gemini で埋め込み、pgvector の cosine 類似度で投稿を検索します',
+      '自然文クエリを Gemini で埋め込み、pgvector の cosine 類似度で投稿を検索します（要ログイン: 課金 API のため）',
   })
   @ApiResponse({ status: 200, description: '検索成功' })
+  @ApiResponse({ status: 401, description: '認証エラー' })
   searchSemantic(@Query() dto: SearchPostsSemanticDto) {
     return this.postsService.searchSemantic(dto);
   }

@@ -7,7 +7,11 @@ import { SearchFilters, SearchResponse } from '../types/search';
 const API_BASE_URL = API_CONFIG.BASE_URL || 'http://localhost:4000';
 
 const fetcher = async (url: string): Promise<SearchResponse> => {
-  const response = await fetch(url);
+  const isSemantic = url.includes('/posts/search/semantic');
+  const headers: Record<string, string> = isSemantic
+    ? API_CONFIG.getAuthHeaders()
+    : {};
+  const response = await fetch(url, { headers });
   if (!response.ok) {
     throw new Error('Failed to fetch search results');
   }

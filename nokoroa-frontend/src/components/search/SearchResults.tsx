@@ -72,14 +72,16 @@ const SearchPostCard = ({ post }: { post: Post }) => {
           {typeof post.similarity === 'number' && (
             <Chip
               icon={<AutoAwesomeIcon fontSize="small" />}
-              label={`類似度 ${Math.max(1, Math.round(post.similarity * 100))}%`}
+              label={`類似度 ${Math.round(post.similarity * 100)}%`}
               size="small"
-              aria-label={`類似度 ${Math.round(post.similarity * 100)} パーセント`}
               sx={{
                 position: 'absolute',
                 top: 8,
                 right: 8,
-                bgcolor: 'rgba(255, 152, 0, 0.95)',
+                bgcolor:
+                  post.similarity >= 0.3
+                    ? 'rgba(255, 152, 0, 0.95)'
+                    : 'rgba(120, 120, 120, 0.85)',
                 color: '#fff',
                 fontWeight: 600,
               }}
@@ -235,6 +237,14 @@ export const SearchResults = ({
           検索条件を入力して投稿を検索してみてください。
         </Typography>
       </Box>
+    );
+  }
+
+  if (mode === 'semantic' && data?.aiAvailable === false) {
+    return (
+      <Alert severity="warning" sx={{ mb: 2 }}>
+        AI意味検索が一時的に利用できません。少し時間をおいて再度お試しください。
+      </Alert>
     );
   }
 

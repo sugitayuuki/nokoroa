@@ -72,40 +72,37 @@ export class EmbeddingsService {
     }
   }
 
-  async searchSimilar(query: string, limit = 5): Promise<SimilarPostHit[]> {
+  async searchSimilarStrict(
+    query: string,
+    limit = 5,
+  ): Promise<SimilarPostHit[]> {
     const trimmed = query?.trim() ?? '';
     if (!trimmed) return [];
     const text = trimmed.slice(0, MAX_TEXT_LEN);
 
-    let vector: number[];
-    try {
-      vector = await this.embed(text, 'RETRIEVAL_QUERY');
-    } catch (err) {
-      this.logger.warn(
-        `Failed to embed query: ${err instanceof Error ? err.message : 'unknown'}`,
-      );
-      return [];
-    }
-
+    const vector = await this.embed(text, 'RETRIEVAL_QUERY');
     const literal = this.vectorLiteral(vector);
+    const rows = await this.prisma.$queryRawUnsafe<
+      { postId: number; distance: number }[]
+    >(
+      `SELECT pe."postId", (pe.embedding <=> $1::vector)::float8 AS distance
+       FROM post_embedding pe
+       JOIN post p ON p.id = pe."postId"
+       WHERE p."isPublic" = true
+       ORDER BY pe.embedding <=> $1::vector
+       LIMIT $2`,
+      literal,
+      limit,
+    );
+    return rows.map((r) => ({
+      postId: Number(r.postId),
+      distance: Number(r.distance),
+    }));
+  }
 
+  async searchSimilar(query: string, limit = 5): Promise<SimilarPostHit[]> {
     try {
-      const rows = await this.prisma.$queryRawUnsafe<
-        { postId: number; distance: number }[]
-      >(
-        `SELECT pe."postId", (pe.embedding <=> $1::vector)::float8 AS distance
-         FROM post_embedding pe
-         JOIN post p ON p.id = pe."postId"
-         WHERE p."isPublic" = true
-         ORDER BY pe.embedding <=> $1::vector
-         LIMIT $2`,
-        literal,
-        limit,
-      );
-      return rows.map((r) => ({
-        postId: Number(r.postId),
-        distance: Number(r.distance),
-      }));
+      return await this.searchSimilarStrict(query, limit);
     } catch (err) {
       this.logger.warn(
         `Vector search failed: ${err instanceof Error ? err.message : 'unknown'}`,

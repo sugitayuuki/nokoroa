@@ -18,4 +18,5 @@ export interface SearchResponse {
   posts: Post[];
   total: number;
   hasMore: boolean;
+  aiAvailable?: boolean;
 }

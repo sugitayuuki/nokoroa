@@ -133,11 +133,10 @@ export const SearchForm = ({ onSearch, initialFilters }: SearchFormProps) => {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
-    // 検索履歴に追加
-    if (query.trim()) {
+    if (!isSemantic && query.trim()) {
       addKeywordToHistory(query.trim());
     }
-    if (location.trim()) {
+    if (!isSemantic && location.trim()) {
       addLocationToHistory(location.trim());
     }
 

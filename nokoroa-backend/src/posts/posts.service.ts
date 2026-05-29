@@ -5,7 +5,10 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { EmbeddingsService } from '../embeddings/embeddings.service';
+import {
+  EmbeddingsService,
+  SimilarPostHit,
+} from '../embeddings/embeddings.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreatePostDto } from './dto/create-post.dto';
 import { SearchPostsByLocationDto } from './dto/search-posts-by-location.dto';
@@ -275,9 +278,18 @@ export class PostsService {
   async searchSemantic(dto: SearchPostsSemanticDto) {
     const { q, limit = 10 } = dto;
 
-    const hits = await this.embeddingsService.searchSimilar(q, limit);
+    let hits: SimilarPostHit[];
+    try {
+      hits = await this.embeddingsService.searchSimilarStrict(q, limit);
+    } catch (err) {
+      this.logger.warn(
+        `Semantic search AI unavailable: ${err instanceof Error ? err.message : 'unknown'}`,
+      );
+      return { posts: [], total: 0, hasMore: false, aiAvailable: false };
+    }
+
     if (hits.length === 0) {
-      return { posts: [], total: 0, hasMore: false };
+      return { posts: [], total: 0, hasMore: false, aiAvailable: true };
     }
 
     const ids = hits.map((h) => h.postId);
@@ -297,6 +309,7 @@ export class PostsService {
       posts: ranked,
       total: ranked.length,
       hasMore: false,
+      aiAvailable: true,
     };
   }
 
