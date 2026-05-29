@@ -26,6 +26,11 @@ export class EmbeddingsService {
       'http://localhost:8000';
     this.internalToken =
       this.configService.get<string>('INTERNAL_AI_TOKEN') || '';
+    if (!this.internalToken) {
+      this.logger.warn(
+        'INTERNAL_AI_TOKEN is not configured; AI service will reject requests',
+      );
+    }
   }
 
   async generateForPost(

@@ -2,10 +2,11 @@ import asyncio
 from functools import lru_cache
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.config import settings
+from app.deps import verify_internal_token
 from app.services.gemini_service import EMBEDDING_DIM, GeminiService
 
 router = APIRouter()
@@ -14,19 +15,6 @@ router = APIRouter()
 @lru_cache
 def get_gemini_service() -> GeminiService:
     return GeminiService(api_key=settings.gemini_api_key)
-
-
-def verify_internal_token(
-    x_internal_token: str | None = Header(default=None),
-) -> None:
-    expected = settings.internal_api_key
-    if not expected:
-        raise HTTPException(
-            status_code=503,
-            detail="INTERNAL_API_KEY is not configured",
-        )
-    if x_internal_token != expected:
-        raise HTTPException(status_code=401, detail="invalid internal token")
 
 
 TaskType = Literal[

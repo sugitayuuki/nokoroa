@@ -17,6 +17,7 @@ services:
       - NODE_ENV=development
       - PORT=4000
       - AI_SERVICE_URL=http://ai:8000
+      - INTERNAL_AI_TOKEN=${INTERNAL_AI_TOKEN:-dev-internal-token}
     depends_on:
       - postgres
       - ai
@@ -42,6 +43,7 @@ services:
       - '8000:8000'
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - INTERNAL_AI_TOKEN=${INTERNAL_AI_TOKEN:-dev-internal-token}
 
 volumes:
   postgres_data:

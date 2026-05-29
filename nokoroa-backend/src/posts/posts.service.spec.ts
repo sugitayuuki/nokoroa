@@ -302,6 +302,57 @@ describe('PostsService', () => {
     });
   });
 
+  describe('searchSemantic', () => {
+    it('ヒットIDを類似度付きで返す（hit順を保つ）', async () => {
+      mockEmbeddingsService.searchSimilar.mockResolvedValueOnce([
+        { postId: 2, distance: 0.1 },
+        { postId: 1, distance: 0.4 },
+      ]);
+      mockPrismaService.post.findMany.mockResolvedValue([
+        { ...mockPost, id: 1 },
+        { ...mockPost, id: 2 },
+      ]);
+
+      const result = await service.searchSemantic({
+        q: '紅葉と温泉',
+        limit: 5,
+      });
+
+      expect(mockEmbeddingsService.searchSimilar).toHaveBeenCalledWith(
+        '紅葉と温泉',
+        5,
+      );
+      expect(result.posts.map((p) => p.id)).toEqual([2, 1]);
+      expect(result.posts[0].similarity).toBeCloseTo(0.9);
+      expect(result.posts[1].similarity).toBeCloseTo(0.6);
+      expect(result.total).toBe(2);
+      expect(result.hasMore).toBe(false);
+    });
+
+    it('ヒット0件なら空結果', async () => {
+      mockEmbeddingsService.searchSimilar.mockResolvedValueOnce([]);
+
+      const result = await service.searchSemantic({ q: 'なし', limit: 5 });
+
+      expect(result.posts).toEqual([]);
+      expect(result.total).toBe(0);
+      expect(mockPrismaService.post.findMany).not.toHaveBeenCalled();
+    });
+
+    it('distance が 1 を超えても similarity は 0 にクランプする', async () => {
+      mockEmbeddingsService.searchSimilar.mockResolvedValueOnce([
+        { postId: 1, distance: 1.5 },
+      ]);
+      mockPrismaService.post.findMany.mockResolvedValue([
+        { ...mockPost, id: 1 },
+      ]);
+
+      const result = await service.searchSemantic({ q: 'q', limit: 5 });
+
+      expect(result.posts[0].similarity).toBe(0);
+    });
+  });
+
   describe('getTags', () => {
     it('タグ一覧を取得できる', async () => {
       mockPrismaService.tag = {

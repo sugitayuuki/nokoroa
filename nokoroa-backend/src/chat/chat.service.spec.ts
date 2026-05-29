@@ -18,7 +18,11 @@ describe('ChatService', () => {
     searchSimilar: jest.fn(),
   };
   const mockConfig = {
-    get: jest.fn(() => 'http://test-ai:8000'),
+    get: jest.fn((key: string) => {
+      if (key === 'AI_SERVICE_URL') return 'http://test-ai:8000';
+      if (key === 'INTERNAL_AI_TOKEN') return 'test-token';
+      return undefined;
+    }),
   };
 
   beforeEach(async () => {
@@ -124,5 +128,29 @@ describe('ChatService', () => {
     await service.streamChat({ message: '札幌 ラーメン' }, makeRes());
 
     expect(mockPosts.search).toHaveBeenCalledTimes(2);
+  });
+
+  it('AI service への fetch に X-Internal-Token header を含める', async () => {
+    mockEmbeddings.searchSimilar.mockResolvedValue([]);
+    mockPosts.search.mockResolvedValue({
+      posts: [],
+      total: 0,
+      hasMore: false,
+    });
+    makeStreamFetch();
+
+    await service.streamChat({ message: 'hello' }, makeRes());
+
+    const calls = (
+      global.fetch as jest.Mock<
+        unknown,
+        [string, { headers: Record<string, string> }]
+      >
+    ).mock.calls;
+    const chatStreamCall = calls.find((c) => c[0].endsWith('/api/chat/stream'));
+    expect(chatStreamCall).toBeDefined();
+    const init = chatStreamCall[1];
+    expect(init.headers['X-Internal-Token']).toBe('test-token');
+    expect(init.headers['Content-Type']).toBe('application/json');
   });
 });

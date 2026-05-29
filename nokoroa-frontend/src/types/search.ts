@@ -1,5 +1,7 @@
 import { PostData } from './post';
 
+export type SearchMode = 'keyword' | 'semantic';
+
 export interface SearchFilters {
   q?: string;
   tags?: string[];
@@ -7,6 +9,7 @@ export interface SearchFilters {
   authorId?: number;
   limit?: number;
   offset?: number;
+  mode?: SearchMode;
 }
 
 export type Post = PostData;

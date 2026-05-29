@@ -17,6 +17,12 @@ const fetcher = async (url: string): Promise<SearchResponse> => {
 const buildSearchUrl = (filters: SearchFilters): string => {
   const searchParams = new URLSearchParams();
 
+  if (filters.mode === 'semantic') {
+    if (filters.q) searchParams.append('q', filters.q);
+    if (filters.limit) searchParams.append('limit', filters.limit.toString());
+    return `${API_BASE_URL}/posts/search/semantic?${searchParams.toString()}`;
+  }
+
   if (filters.q) searchParams.append('q', filters.q);
   if (filters.tags && filters.tags.length > 0) {
     searchParams.append('tags', filters.tags.join(','));
@@ -34,7 +40,10 @@ export const useSearchPosts = (
   filters: SearchFilters,
   shouldFetch: boolean = true,
 ) => {
-  const url = shouldFetch ? buildSearchUrl(filters) : null;
+  const isSemanticWithoutQuery =
+    filters.mode === 'semantic' && !filters.q?.trim();
+  const url =
+    shouldFetch && !isSemanticWithoutQuery ? buildSearchUrl(filters) : null;
 
   return useSWR<SearchResponse>(url, fetcher, {
     revalidateOnFocus: false,

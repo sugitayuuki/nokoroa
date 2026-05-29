@@ -11,6 +11,7 @@ import { SuggestionsRequestDto } from './dto/suggestions-request.dto';
 export class ChatService {
   private readonly logger = new Logger(ChatService.name);
   private readonly aiServiceUrl: string;
+  private readonly internalToken: string;
 
   constructor(
     private configService: ConfigService,
@@ -20,6 +21,23 @@ export class ChatService {
     this.aiServiceUrl =
       this.configService.get<string>('AI_SERVICE_URL') ||
       'http://localhost:8000';
+    this.internalToken =
+      this.configService.get<string>('INTERNAL_AI_TOKEN') || '';
+    if (!this.internalToken) {
+      this.logger.warn(
+        'INTERNAL_AI_TOKEN is not configured; AI service will reject requests',
+      );
+    }
+  }
+
+  private aiHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (this.internalToken) {
+      headers['X-Internal-Token'] = this.internalToken;
+    }
+    return headers;
   }
 
   async streamChat(dto: ChatRequestDto, res: Response): Promise<void> {
@@ -102,7 +120,7 @@ export class ChatService {
     try {
       response = await fetch(`${this.aiServiceUrl}/api/chat/stream`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.aiHeaders(),
         body: JSON.stringify({
           message: dto.message,
           history: dto.history || [],
@@ -149,7 +167,7 @@ export class ChatService {
   async getSuggestions(dto: SuggestionsRequestDto): Promise<string[]> {
     const response = await fetch(`${this.aiServiceUrl}/api/chat/suggestions`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: this.aiHeaders(),
       body: JSON.stringify({
         message: dto.message,
         ai_response: dto.ai_response,
@@ -191,7 +209,7 @@ export class ChatService {
         `${this.aiServiceUrl}/api/chat/related-keywords`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: this.aiHeaders(),
           body: JSON.stringify({
             message: dto.message,
             ai_response: dto.ai_response,

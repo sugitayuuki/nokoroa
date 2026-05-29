@@ -2,6 +2,7 @@
 
 import {
   Add as AddIcon,
+  AutoAwesome as AutoAwesomeIcon,
   Clear as ClearIcon,
   ExpandMore as ExpandMoreIcon,
   History as HistoryIcon,
@@ -23,6 +24,9 @@ import {
   ListItemText,
   Paper,
   TextField,
+  ToggleButton,
+  ToggleButtonGroup,
+  Tooltip,
   Typography,
 } from '@mui/material';
 import { useEffect, useState } from 'react';
@@ -32,7 +36,7 @@ import { useSearchSuggestions } from '@/hooks/useSearchSuggestions';
 import { useTags } from '@/hooks/useTags';
 import { getTagColor } from '@/utils/tagColors';
 
-import { SearchFilters } from '../../types/search';
+import { SearchFilters, SearchMode } from '../../types/search';
 
 interface SearchFormProps {
   onSearch: (filters: SearchFilters) => void;
@@ -47,6 +51,10 @@ export const SearchForm = ({ onSearch, initialFilters }: SearchFormProps) => {
   const [isAdvancedOpen, setIsAdvancedOpen] = useState(
     !!(initialFilters?.tags?.length || initialFilters?.location),
   );
+  const [mode, setMode] = useState<SearchMode>(
+    initialFilters?.mode ?? 'keyword',
+  );
+  const isSemantic = mode === 'semantic';
 
   // タグ候補を取得
   const { tags: availableTags } = useTags();
@@ -133,15 +141,30 @@ export const SearchForm = ({ onSearch, initialFilters }: SearchFormProps) => {
       addLocationToHistory(location.trim());
     }
 
-    const filters: SearchFilters = {
-      q: query.trim() || undefined,
-      tags: tags.length > 0 ? tags : undefined,
-      location: location.trim() || undefined,
-      limit: 10,
-      offset: 0,
-    };
+    const filters: SearchFilters = isSemantic
+      ? {
+          q: query.trim() || undefined,
+          mode: 'semantic',
+          limit: 10,
+          offset: 0,
+        }
+      : {
+          q: query.trim() || undefined,
+          tags: tags.length > 0 ? tags : undefined,
+          location: location.trim() || undefined,
+          mode: 'keyword',
+          limit: 10,
+          offset: 0,
+        };
 
     onSearch(filters);
+  };
+
+  const handleModeChange = (
+    _event: React.MouseEvent<HTMLElement>,
+    newMode: SearchMode | null,
+  ) => {
+    if (newMode) setMode(newMode);
   };
 
   const handleAddTag = (value: string) => {
@@ -167,6 +190,26 @@ export const SearchForm = ({ onSearch, initialFilters }: SearchFormProps) => {
   return (
     <Paper elevation={2} sx={{ p: 3, mb: 3 }}>
       <form onSubmit={handleSubmit}>
+        <Box sx={{ mb: 2, display: 'flex', justifyContent: 'flex-start' }}>
+          <ToggleButtonGroup
+            value={mode}
+            exclusive
+            onChange={handleModeChange}
+            size="small"
+            aria-label="検索モード"
+          >
+            <ToggleButton value="keyword" aria-label="キーワード検索">
+              <SearchIcon fontSize="small" sx={{ mr: 0.5 }} />
+              キーワード
+            </ToggleButton>
+            <Tooltip title="自然文クエリを Gemini で埋め込み、意味の近い投稿を検索します">
+              <ToggleButton value="semantic" aria-label="AI意味検索">
+                <AutoAwesomeIcon fontSize="small" sx={{ mr: 0.5 }} />
+                AI意味検索
+              </ToggleButton>
+            </Tooltip>
+          </ToggleButtonGroup>
+        </Box>
         <Box sx={{ mb: 3 }}>
           <Autocomplete
             freeSolo
@@ -220,18 +263,22 @@ export const SearchForm = ({ onSearch, initialFilters }: SearchFormProps) => {
               <TextField
                 {...params}
                 fullWidth
-                label="キーワード検索"
-                placeholder="タイトル、コンテンツ、著者名で検索..."
+                label={isSemantic ? 'AI意味検索' : 'キーワード検索'}
+                placeholder={
+                  isSemantic
+                    ? '「紅葉と温泉が楽しめる秋の旅行」のように自然文でどうぞ'
+                    : 'タイトル、コンテンツ、著者名で検索...'
+                }
                 InputProps={{
                   ...params.InputProps,
                   startAdornment: (
                     <InputAdornment position="start">
-                      <SearchIcon />
+                      {isSemantic ? <AutoAwesomeIcon /> : <SearchIcon />}
                     </InputAdornment>
                   ),
                   endAdornment: (
                     <>
-                      {keywordLoading && (
+                      {keywordLoading && !isSemantic && (
                         <CircularProgress color="inherit" size={20} />
                       )}
                       {params.InputProps.endAdornment}
@@ -240,13 +287,14 @@ export const SearchForm = ({ onSearch, initialFilters }: SearchFormProps) => {
                 }}
               />
             )}
-            loading={keywordLoading}
+            loading={keywordLoading && !isSemantic}
           />
         </Box>
 
         <Accordion
-          expanded={isAdvancedOpen}
-          onChange={() => setIsAdvancedOpen(!isAdvancedOpen)}
+          expanded={!isSemantic && isAdvancedOpen}
+          onChange={() => !isSemantic && setIsAdvancedOpen(!isAdvancedOpen)}
+          disabled={isSemantic}
         >
           <AccordionSummary expandIcon={<ExpandMoreIcon />}>
             <Typography>詳細検索</Typography>

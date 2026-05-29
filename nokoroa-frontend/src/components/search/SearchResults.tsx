@@ -1,5 +1,6 @@
 'use client';
 
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import LocationOnIcon from '@mui/icons-material/LocationOn';
 import {
   Alert,
@@ -60,12 +61,29 @@ const SearchPostCard = ({ post }: { post: Post }) => {
           },
         }}
       >
-        <CardMedia
-          component="img"
-          height="280"
-          image={post.imageUrl || '/top.jpg'}
-          alt={post.title}
-        />
+        <Box sx={{ position: 'relative' }}>
+          <CardMedia
+            component="img"
+            height="280"
+            image={post.imageUrl || '/top.jpg'}
+            alt={post.title}
+          />
+          {typeof post.similarity === 'number' && (
+            <Chip
+              icon={<AutoAwesomeIcon fontSize="small" />}
+              label={`類似度 ${Math.round(post.similarity * 100)}%`}
+              size="small"
+              sx={{
+                position: 'absolute',
+                top: 8,
+                right: 8,
+                bgcolor: 'rgba(255, 152, 0, 0.95)',
+                color: '#fff',
+                fontWeight: 600,
+              }}
+            />
+          )}
+        </Box>
         <CardContent sx={{ flexGrow: 1, bgcolor: 'background.paper' }}>
           <Stack spacing={2}>
             <Box>
