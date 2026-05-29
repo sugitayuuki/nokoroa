@@ -282,7 +282,7 @@ export class PostsService {
     try {
       hits = await this.embeddingsService.searchSimilarStrict(q, limit);
     } catch (err) {
-      this.logger.warn(
+      this.logger.error(
         `Semantic search AI unavailable: ${err instanceof Error ? err.message : 'unknown'}`,
       );
       return { posts: [], total: 0, hasMore: false, aiAvailable: false };

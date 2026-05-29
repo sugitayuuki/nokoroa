@@ -130,6 +130,7 @@ async def get_suggestions(
         )
         return SuggestionsResponse(suggestions=result)
     except Exception:
+        logger.exception("suggestions generation failed")
         return SuggestionsResponse(suggestions=[])
 
 
@@ -145,4 +146,5 @@ async def get_related_keywords(
         )
         return RelatedKeywordsResponse(keywords=result)
     except Exception:
+        logger.exception("related keywords extraction failed")
         return RelatedKeywordsResponse(keywords=None)

@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from functools import lru_cache
 from typing import Literal
 
@@ -8,6 +9,8 @@ from pydantic import BaseModel, Field
 from app.config import settings
 from app.deps import verify_internal_token
 from app.services.gemini_service import EMBEDDING_DIM, GeminiService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -47,6 +50,7 @@ async def create_embedding(
             gemini.embed, request.text, request.task_type
         )
     except Exception:
+        logger.exception("embedding failed")
         raise HTTPException(status_code=502, detail="embedding failed")
 
     if len(vector) != EMBEDDING_DIM:

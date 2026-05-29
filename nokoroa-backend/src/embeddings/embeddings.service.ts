@@ -46,7 +46,7 @@ export class EmbeddingsService {
     try {
       vector = await this.embed(text, 'RETRIEVAL_DOCUMENT');
     } catch (err) {
-      this.logger.warn(
+      this.logger.error(
         `Failed to embed post ${postId}: ${err instanceof Error ? err.message : 'unknown'}`,
       );
       return;
@@ -66,7 +66,7 @@ export class EmbeddingsService {
         literal,
       );
     } catch (err) {
-      this.logger.warn(
+      this.logger.error(
         `Failed to upsert embedding for post ${postId}: ${err instanceof Error ? err.message : 'unknown'}`,
       );
     }
@@ -104,7 +104,7 @@ export class EmbeddingsService {
     try {
       return await this.searchSimilarStrict(query, limit);
     } catch (err) {
-      this.logger.warn(
+      this.logger.error(
         `Vector search failed: ${err instanceof Error ? err.message : 'unknown'}`,
       );
       return [];
