@@ -26,6 +26,7 @@ import {
   Typography,
 } from '@mui/material';
 import { useCallback, useEffect, useState } from 'react';
+import { toast } from 'react-toastify';
 
 import { API_CONFIG } from '@/lib/apiConfig';
 import { formatDistanceToNow } from '@/utils/dateFormat';
@@ -82,8 +83,8 @@ export default function MapPage() {
       setPosts(data.posts || []);
       return data.posts || [];
     } catch {
-      // エラーが発生した場合の処理
       setPosts([]);
+      toast.error('投稿の取得に失敗しました。通信状況をご確認ください');
       return [];
     }
   };
@@ -100,10 +101,12 @@ export default function MapPage() {
 
       const data = await response.json();
 
-      if (data.latitude && data.longitude) {
+      const lat = parseFloat(data.latitude);
+      const lng = parseFloat(data.longitude);
+      if (Number.isFinite(lat) && Number.isFinite(lng)) {
         const location = {
-          lat: parseFloat(data.latitude),
-          lng: parseFloat(data.longitude),
+          lat,
+          lng,
           city: data.city,
           country: data.country_name,
           accuracy: 'IP-based (約10-50km)',
@@ -112,8 +115,8 @@ export default function MapPage() {
         setIpLocation(location);
         return location;
       }
+      return null;
     } catch {
-      // IP-based位置情報の取得に失敗
       return null;
     }
   };
