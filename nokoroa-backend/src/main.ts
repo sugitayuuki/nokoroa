@@ -3,11 +3,16 @@ import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import helmet from 'helmet';
 
 import { AppModule } from './app.module';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  const isProduction = process.env.NODE_ENV === 'production';
+
+  // セキュリティヘッダ。他のミドルウェアより先に適用する。
+  app.use(helmet());
   app.setGlobalPrefix('api');
 
   const config = new DocumentBuilder()
@@ -31,8 +36,12 @@ async function bootstrap() {
     .addTag('favorites', 'ブックマーク関連')
     .addTag('follows', 'フォロー関連')
     .build();
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api/docs', app, document);
+  // API仕様書は全エンドポイントとDTOを列挙するため本番では公開しない。
+  if (!isProduction) {
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('api/docs', app, document);
+  }
+
   app.useGlobalPipes(
     new ValidationPipe({
       transform: true,
@@ -47,8 +56,14 @@ async function bootstrap() {
   });
 
   // CORSの設定
+  // 本番でFRONTEND_URLが未設定だとlocalhostへフォールバックしCORSが実質無効に
+  // なるため、設定漏れは起動時に失敗させる。
+  const frontendUrl = process.env.FRONTEND_URL;
+  if (isProduction && !frontendUrl) {
+    throw new Error('FRONTEND_URL is not set.');
+  }
   app.enableCors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+    origin: frontendUrl || 'http://localhost:3000',
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     credentials: true,
   });

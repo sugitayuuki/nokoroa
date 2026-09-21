@@ -11,13 +11,13 @@ export class ChangePasswordDto {
   currentPassword: string;
 
   @ApiProperty({
-    description: '新しいパスワード（6文字以上）',
+    description: '新しいパスワード（8文字以上）',
     example: 'newPassword123',
-    minLength: 6,
+    minLength: 8,
   })
   @IsNotEmpty()
   @IsString()
-  @MinLength(6, { message: 'パスワードは6文字以上である必要があります' })
+  @MinLength(8, { message: 'パスワードは8文字以上である必要があります' })
   newPassword: string;
 
   @ApiProperty({

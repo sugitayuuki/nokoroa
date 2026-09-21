@@ -7,8 +7,13 @@ export class PrismaService
   implements OnModuleInit, OnModuleDestroy
 {
   constructor() {
+    // 本番でqueryログを出すと、WHERE句の値(メールアドレス等)がそのまま
+    // ログ基盤へ流れるため開発時のみ有効にする。
     super({
-      log: ['query', 'info', 'warn', 'error'],
+      log:
+        process.env.NODE_ENV === 'production'
+          ? ['warn', 'error']
+          : ['query', 'info', 'warn', 'error'],
     });
   }
 

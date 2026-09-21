@@ -3,11 +3,12 @@ import {
   NotFoundException,
   ConflictException,
 } from '@nestjs/common';
+import { publicAuthorSelect } from '../common/public-author.select';
 import { PrismaService } from '../prisma/prisma.service';
 
 const postInclude = {
   author: {
-    select: { id: true, name: true, email: true, avatar: true },
+    select: publicAuthorSelect,
   },
   location: true,
   postTags: {
@@ -33,7 +34,6 @@ interface PostWithRelations {
   author: {
     id: number;
     name: string;
-    email: string;
     avatar: string | null;
   };
   location: {

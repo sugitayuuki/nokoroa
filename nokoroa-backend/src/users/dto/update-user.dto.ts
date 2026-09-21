@@ -21,13 +21,13 @@ export class UpdateUserDto {
   email?: string;
 
   @ApiPropertyOptional({
-    description: 'パスワード（6文字以上）',
+    description: 'パスワード（8文字以上）',
     example: 'newpassword123',
-    minLength: 6,
+    minLength: 8,
   })
   @IsOptional()
   @IsString()
-  @MinLength(6, { message: 'パスワードは6文字以上である必要があります' })
+  @MinLength(8, { message: 'パスワードは8文字以上である必要があります' })
   password?: string;
 
   @ApiPropertyOptional({

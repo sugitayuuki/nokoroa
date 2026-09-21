@@ -35,10 +35,14 @@ export class UsersService {
   }
 
   async findById(id: number, currentUserId?: number) {
+    const isOwner = currentUserId === id;
+
     const user = await this.prisma.user.findUnique({
       where: { id },
       include: {
         posts: {
+          // 非公開投稿は本人にのみ返す
+          ...(isOwner ? {} : { where: { isPublic: true } }),
           orderBy: { createdAt: 'desc' },
           take: 10,
         },
@@ -69,13 +73,23 @@ export class UsersService {
       isFollowing = !!follow;
     }
 
-    const { password: _password, ...userWithoutPassword } = user;
+    // 除外リスト方式(passwordだけ外してspread)だと、schemaに列が増えるたびに
+    // 自動で公開されてしまう。返すフィールドを明示する許可リスト方式にする。
     return {
-      ...userWithoutPassword,
+      id: user.id,
+      name: user.name,
+      bio: user.bio,
+      avatar: user.avatar,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+      posts: user.posts,
+      _count: user._count,
+      // メールアドレスは本人にのみ返す
+      ...(isOwner ? { email: user.email } : {}),
       isFollowing,
-      followersCount: userWithoutPassword._count.followers,
-      followingCount: userWithoutPassword._count.following,
-      postsCount: userWithoutPassword._count.posts,
+      followersCount: user._count.followers,
+      followingCount: user._count.following,
+      postsCount: user._count.posts,
     };
   }
 

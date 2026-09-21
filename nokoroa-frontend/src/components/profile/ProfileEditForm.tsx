@@ -34,13 +34,13 @@ const schema = z
   .refine(
     (data) => {
       if (data.password && data.password.length > 0) {
-        return data.password.length >= 6;
+        return data.password.length >= 8;
       }
       return true;
     },
     {
       path: ['password'],
-      message: 'パスワードは6文字以上入力してください',
+      message: 'パスワードは8文字以上入力してください',
     },
   )
   .refine(

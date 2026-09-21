@@ -5,12 +5,26 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { publicAuthorSelect } from '../common/public-author.select';
 import { EmbeddingsService } from '../embeddings/embeddings.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreatePostDto } from './dto/create-post.dto';
 import { SearchPostsByLocationDto } from './dto/search-posts-by-location.dto';
 import { SearchPostsDto } from './dto/search-posts.dto';
 import { UpdatePostDto } from './dto/update-post.dto';
+
+const MAX_PAGE_SIZE = 50;
+
+/** 数値でない値・範囲外の値を安全な既定値に丸める */
+function clampInt(
+  value: number,
+  min: number,
+  max: number,
+  fallback: number,
+): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(Math.max(Math.trunc(value), min), max);
+}
 
 function slugify(text: string): string {
   return text
@@ -20,11 +34,9 @@ function slugify(text: string): string {
     .replace(/^-+|-+$/g, '');
 }
 
-// 投稿は未認証でも閲覧できるため、投稿者の公開情報のみを select する。
-// email は個人情報であり投稿の表示に不要なので含めない。
 const postInclude = {
   author: {
-    select: { id: true, name: true, avatar: true },
+    select: publicAuthorSelect,
   },
   location: true,
   postTags: {
@@ -204,13 +216,17 @@ export class PostsService {
   }
 
   async findAll(limit: number = 10, offset: number = 0) {
+    // コントローラから渡る値は生の parseInt なので、NaN や過大値をここで正規化する
+    const take = clampInt(limit, 1, MAX_PAGE_SIZE, 10);
+    const skip = clampInt(offset, 0, Number.MAX_SAFE_INTEGER, 0);
+
     const [posts, total] = await Promise.all([
       this.prisma.post.findMany({
         where: { isPublic: true },
         include: postInclude,
         orderBy: { createdAt: 'desc' },
-        skip: offset,
-        take: limit,
+        skip,
+        take,
       }),
       this.prisma.post.count({ where: { isPublic: true } }),
     ]);
@@ -218,7 +234,7 @@ export class PostsService {
     return {
       posts: (posts as PostWithRelations[]).map(formatPost),
       total,
-      hasMore: offset + limit < total,
+      hasMore: skip + take < total,
     };
   }
 

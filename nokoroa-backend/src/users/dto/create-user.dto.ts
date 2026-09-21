@@ -10,12 +10,12 @@ export class CreateUserDto {
   email: string;
 
   @ApiProperty({
-    description: 'パスワード（6文字以上）',
+    description: 'パスワード（8文字以上）',
     example: 'password123',
-    minLength: 6,
+    minLength: 8,
   })
   @IsString()
-  @MinLength(6)
+  @MinLength(8)
   password: string;
 
   @ApiProperty({

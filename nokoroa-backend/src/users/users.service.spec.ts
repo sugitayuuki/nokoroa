@@ -97,14 +97,61 @@ describe('UsersService', () => {
     it('IDでユーザーを取得できる', async () => {
       mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
 
-      const result = await service.findById(1);
+      const result = await service.findById(1, 1);
 
       expect(result.id).toBe(1);
-      expect(result.email).toBe('test@example.com');
       expect(result.followersCount).toBe(10);
       expect(result.followingCount).toBe(5);
       expect(result.postsCount).toBe(3);
       expect(result).not.toHaveProperty('password');
+    });
+
+    it('本人が取得した場合はメールアドレスを含む', async () => {
+      mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
+
+      const result = await service.findById(1, 1);
+
+      expect(result.email).toBe('test@example.com');
+    });
+
+    it('他人・未認証が取得した場合はメールアドレスを含まない', async () => {
+      mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
+
+      const asOther = await service.findById(1, 999);
+      const asAnonymous = await service.findById(1);
+
+      expect(asOther).not.toHaveProperty('email');
+      expect(asAnonymous).not.toHaveProperty('email');
+    });
+
+    it('他人・未認証には公開投稿のみをselectする', async () => {
+      mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
+
+      await service.findById(1, 999);
+
+      const [args] = (
+        mockPrismaService.user.findUnique as jest.Mock<
+          unknown,
+          [{ include: { posts: { where?: { isPublic?: boolean } } } }]
+        >
+      ).mock.calls[0];
+
+      expect(args.include.posts.where).toEqual({ isPublic: true });
+    });
+
+    it('本人には非公開投稿も含める', async () => {
+      mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
+
+      await service.findById(1, 1);
+
+      const [args] = (
+        mockPrismaService.user.findUnique as jest.Mock<
+          unknown,
+          [{ include: { posts: { where?: { isPublic?: boolean } } } }]
+        >
+      ).mock.calls[0];
+
+      expect(args.include.posts.where).toBeUndefined();
     });
 
     it('存在しないユーザーIDでNotFoundExceptionを投げる', async () => {

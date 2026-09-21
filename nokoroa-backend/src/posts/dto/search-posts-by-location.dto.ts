@@ -1,6 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsOptional, IsNumber, IsString } from 'class-validator';
+import { IsOptional, IsNumber, IsString, Max, Min } from 'class-validator';
 
 export class SearchPostsByLocationDto {
   @ApiPropertyOptional({
@@ -27,6 +27,8 @@ export class SearchPostsByLocationDto {
   })
   @IsOptional()
   @IsNumber()
+  @Min(0)
+  @Max(1000)
   @Transform(({ value }) => parseFloat(value as string))
   radius?: number;
 
@@ -36,6 +38,8 @@ export class SearchPostsByLocationDto {
   })
   @IsOptional()
   @IsNumber()
+  @Min(1)
+  @Max(50)
   @Transform(({ value }) => parseInt(value as string))
   limit?: number;
 
@@ -45,6 +49,7 @@ export class SearchPostsByLocationDto {
   })
   @IsOptional()
   @IsNumber()
+  @Min(0)
   @Transform(({ value }) => parseInt(value as string))
   offset?: number;
 
