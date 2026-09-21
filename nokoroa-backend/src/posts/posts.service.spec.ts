@@ -47,7 +47,6 @@ describe('PostsService', () => {
     author: {
       id: 1,
       name: 'Test User',
-      email: 'test@example.com',
       avatar: null,
     },
     location: {
@@ -71,6 +70,7 @@ describe('PostsService', () => {
 
   const mockEmbeddingsService = {
     generateForPost: jest.fn().mockResolvedValue(undefined),
+    deleteForPost: jest.fn().mockResolvedValue(undefined),
     searchSimilar: jest.fn().mockResolvedValue([]),
   };
 
@@ -133,6 +133,48 @@ describe('PostsService', () => {
       expect(result.title).toBe('Test Post');
       expect(result.location).toBeNull();
     });
+
+    it('公開投稿は埋め込みを生成する', async () => {
+      mockPrismaService.post.create.mockResolvedValue({
+        ...mockPost,
+        locationId: null,
+        location: null,
+      });
+
+      await service.create({
+        title: 'Test Post',
+        content: 'Test content',
+        imageUrl: 'https://example.com/image.jpg',
+        authorId: 1,
+      });
+
+      expect(mockEmbeddingsService.generateForPost).toHaveBeenCalledWith(
+        1,
+        'Test Post',
+        'Test content',
+      );
+      expect(mockEmbeddingsService.deleteForPost).not.toHaveBeenCalled();
+    });
+
+    it('非公開投稿は本文を外部AIへ送らず既存の埋め込みを削除する', async () => {
+      mockPrismaService.post.create.mockResolvedValue({
+        ...mockPost,
+        isPublic: false,
+        locationId: null,
+        location: null,
+      });
+
+      await service.create({
+        title: 'Test Post',
+        content: 'Test content',
+        imageUrl: 'https://example.com/image.jpg',
+        authorId: 1,
+        isPublic: false,
+      });
+
+      expect(mockEmbeddingsService.generateForPost).not.toHaveBeenCalled();
+      expect(mockEmbeddingsService.deleteForPost).toHaveBeenCalledWith(1);
+    });
   });
 
   describe('findAll', () => {
@@ -173,6 +215,60 @@ describe('PostsService', () => {
       mockPrismaService.post.findUnique.mockResolvedValue(null);
 
       await expect(service.findOne(999)).rejects.toThrow(NotFoundException);
+    });
+
+    it('非公開投稿は未認証ユーザーに対してNotFoundExceptionを投げる', async () => {
+      mockPrismaService.post.findUnique.mockResolvedValue({
+        ...mockPost,
+        isPublic: false,
+      });
+      mockPrismaService.bookmark.count.mockResolvedValue(0);
+
+      await expect(service.findOne(1)).rejects.toThrow(NotFoundException);
+    });
+
+    it('非公開投稿は他人に対してNotFoundExceptionを投げる', async () => {
+      mockPrismaService.post.findUnique.mockResolvedValue({
+        ...mockPost,
+        isPublic: false,
+        authorId: 1,
+      });
+      mockPrismaService.bookmark.count.mockResolvedValue(0);
+
+      await expect(service.findOne(1, 999)).rejects.toThrow(NotFoundException);
+    });
+
+    it('非公開投稿を投稿者本人は取得できる', async () => {
+      mockPrismaService.post.findUnique.mockResolvedValue({
+        ...mockPost,
+        isPublic: false,
+        authorId: 1,
+      });
+      mockPrismaService.bookmark.count.mockResolvedValue(0);
+
+      const result = await service.findOne(1, 1);
+
+      expect(result.id).toBe(1);
+    });
+
+    it('投稿者のメールアドレスをselectしない', async () => {
+      mockPrismaService.post.findUnique.mockResolvedValue(mockPost);
+      mockPrismaService.bookmark.count.mockResolvedValue(0);
+
+      await service.findOne(1);
+
+      const [args] = (
+        mockPrismaService.post.findUnique as jest.Mock<
+          unknown,
+          [{ include: { author: { select: Record<string, boolean> } } }]
+        >
+      ).mock.calls[0];
+
+      expect(args.include.author.select).toEqual({
+        id: true,
+        name: true,
+        avatar: true,
+      });
     });
   });
 

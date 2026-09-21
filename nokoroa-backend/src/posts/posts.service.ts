@@ -20,9 +20,11 @@ function slugify(text: string): string {
     .replace(/^-+|-+$/g, '');
 }
 
+// 投稿は未認証でも閲覧できるため、投稿者の公開情報のみを select する。
+// email は個人情報であり投稿の表示に不要なので含めない。
 const postInclude = {
   author: {
-    select: { id: true, name: true, email: true, avatar: true },
+    select: { id: true, name: true, avatar: true },
   },
   location: true,
   postTags: {
@@ -45,7 +47,6 @@ interface PostWithRelations {
   author: {
     id: number;
     name: string;
-    email: string;
     avatar: string | null;
   };
   location: {
@@ -89,14 +90,30 @@ export class PostsService {
     private embeddingsService: EmbeddingsService,
   ) {}
 
-  private fireEmbedding(postId: number, title: string, content: string): void {
-    this.embeddingsService
-      .generateForPost(postId, title, content)
-      .catch((err: unknown) => {
-        this.logger.error(
-          `embedding generation failed for post ${postId}: ${err instanceof Error ? err.message : 'unknown'}`,
-        );
-      });
+  /**
+   * 投稿の埋め込みを非同期で同期させる。
+   * 非公開投稿は外部AIへ本文を送らず、既存の埋め込みも削除する
+   * (post_embedding は可視性を持たないため、行を残さないことで守る)。
+   */
+  private syncEmbedding(post: {
+    id: number;
+    title: string;
+    content: string;
+    isPublic: boolean;
+  }): void {
+    const task = post.isPublic
+      ? this.embeddingsService.generateForPost(
+          post.id,
+          post.title,
+          post.content,
+        )
+      : this.embeddingsService.deleteForPost(post.id);
+
+    task.catch((err: unknown) => {
+      this.logger.error(
+        `embedding sync failed for post ${post.id}: ${err instanceof Error ? err.message : 'unknown'}`,
+      );
+    });
   }
 
   private async getOrCreateLocation(
@@ -181,7 +198,7 @@ export class PostsService {
       include: postInclude,
     });
 
-    this.fireEmbedding(post.id, post.title, post.content);
+    this.syncEmbedding(post);
 
     return formatPost(post as PostWithRelations);
   }
@@ -271,7 +288,7 @@ export class PostsService {
     return (posts as PostWithRelations[]).map(formatPost);
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, requesterId?: number) {
     const [post, favoritesCount] = await Promise.all([
       this.prisma.post.findUnique({
         where: { id },
@@ -281,6 +298,12 @@ export class PostsService {
     ]);
 
     if (!post) {
+      throw new NotFoundException(`Post with ID ${id} not found`);
+    }
+
+    // 非公開投稿は投稿者本人のみ閲覧できる。
+    // 存在自体を隠すため403ではなく404を返す。
+    if (!post.isPublic && post.authorId !== requesterId) {
       throw new NotFoundException(`Post with ID ${id} not found`);
     }
 
@@ -351,7 +374,7 @@ export class PostsService {
       this.prisma.bookmark.count({ where: { postId: id } }),
     ]);
 
-    this.fireEmbedding(updatedPost.id, updatedPost.title, updatedPost.content);
+    this.syncEmbedding(updatedPost);
 
     return {
       ...formatPost(updatedPost as PostWithRelations),
@@ -414,7 +437,7 @@ export class PostsService {
         SELECT
           p.id, p.title, p.content, p."imageUrl", p."isPublic",
           p."createdAt", p."updatedAt", p."authorId", p."locationId",
-          u.id as "author_id", u.name as "author_name", u.email as "author_email", u.avatar as "author_avatar",
+          u.id as "author_id", u.name as "author_name", u.avatar as "author_avatar",
           l.name as "location_name", l.prefecture, l.latitude, l.longitude,
           (6371 * acos(
             cos(radians(${centerLat})) * cos(radians(l.latitude)) *
@@ -492,7 +515,6 @@ export class PostsService {
         locationId: number | null;
         author_id: number;
         author_name: string;
-        author_email: string;
         author_avatar: string | null;
         location_name: string | null;
         prefecture: string | null;
@@ -518,7 +540,6 @@ export class PostsService {
         author: {
           id: post.author_id,
           name: post.author_name,
-          email: post.author_email,
           avatar: post.author_avatar,
         },
         distance: post.distance,
@@ -537,7 +558,7 @@ export class PostsService {
       SELECT
         p.id, p.title, p.content, p."imageUrl", p."isPublic",
         p."createdAt", p."updatedAt", p."authorId", p."locationId",
-        u.id as "author_id", u.name as "author_name", u.email as "author_email", u.avatar as "author_avatar",
+        u.id as "author_id", u.name as "author_name", u.avatar as "author_avatar",
         l.name as "location_name", l.prefecture, l.latitude, l.longitude
       FROM post p
       JOIN "user" u ON p."authorId" = u.id
@@ -600,7 +621,6 @@ export class PostsService {
       locationId: number | null;
       author_id: number;
       author_name: string;
-      author_email: string;
       author_avatar: string | null;
       location_name: string | null;
       prefecture: string | null;
@@ -625,7 +645,6 @@ export class PostsService {
       author: {
         id: post.author_id,
         name: post.author_name,
-        email: post.author_email,
         avatar: post.author_avatar,
       },
     }));

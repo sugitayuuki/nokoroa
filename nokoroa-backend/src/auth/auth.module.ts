@@ -4,6 +4,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { getJwtSecret } from './jwt-secret';
 import { JwtStrategy } from './jwt.strategy';
 import { GoogleStrategy } from './strategies/google.strategy';
 import { PrismaService } from '../prisma/prisma.service';
@@ -13,7 +14,7 @@ import { PrismaService } from '../prisma/prisma.service';
     ConfigModule,
     PassportModule,
     JwtModule.register({
-      secret: process.env.JWT_SECRET || 'your-secret-key',
+      secret: getJwtSecret(),
       signOptions: { expiresIn: '1d' },
     }),
   ],

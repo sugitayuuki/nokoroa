@@ -7,6 +7,12 @@ import { ChatRequestDto } from './dto/chat-request.dto';
 import { RelatedPostsRequestDto } from './dto/related-posts-request.dto';
 import { SuggestionsRequestDto } from './dto/suggestions-request.dto';
 
+const AI_REQUEST_TIMEOUT_MS = 10_000;
+const AI_STREAM_TIMEOUT_MS = 60_000;
+// 検索ヒット0件時のキーワード分割フォールバックで走査する最大単語数。
+// 上限が無いと1リクエストで単語数ぶんのDB検索が直列実行される。
+const MAX_FALLBACK_KEYWORDS = 5;
+
 @Injectable()
 export class ChatService {
   private readonly logger = new Logger(ChatService.name);
@@ -56,9 +62,11 @@ export class ChatService {
       }
 
       if (posts.length === 0) {
-        const words = dto.message
+        const allWords = dto.message
           .split(/[\s\u3000,、。のはがをでにへともより]+/)
           .filter((w) => w.length >= 2);
+        // 重複を除いたうえで上限まで。入力語数に比例してDB検索が増えるのを防ぐ。
+        const words = [...new Set(allWords)].slice(0, MAX_FALLBACK_KEYWORDS);
         const seen = new Set<number>();
         for (const word of words) {
           const wordResult = await this.postsService.search({
@@ -108,7 +116,7 @@ export class ChatService {
           history: dto.history || [],
           context_posts: contextPosts,
         }),
-        signal: AbortSignal.timeout(60_000),
+        signal: AbortSignal.timeout(AI_STREAM_TIMEOUT_MS),
       });
     } catch (err) {
       this.logger.error(
@@ -147,21 +155,32 @@ export class ChatService {
   }
 
   async getSuggestions(dto: SuggestionsRequestDto): Promise<string[]> {
-    const response = await fetch(`${this.aiServiceUrl}/api/chat/suggestions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        message: dto.message,
-        ai_response: dto.ai_response,
-      }),
-    });
+    try {
+      const response = await fetch(
+        `${this.aiServiceUrl}/api/chat/suggestions`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: dto.message,
+            ai_response: dto.ai_response,
+          }),
+          signal: AbortSignal.timeout(AI_REQUEST_TIMEOUT_MS),
+        },
+      );
 
-    if (!response.ok) {
+      if (!response.ok) {
+        return [];
+      }
+
+      const data = (await response.json()) as { suggestions?: string[] };
+      return data.suggestions ?? [];
+    } catch (error) {
+      this.logger.warn(
+        `Failed to get suggestions: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
       return [];
     }
-
-    const data = (await response.json()) as { suggestions?: string[] };
-    return data.suggestions ?? [];
   }
 
   private async searchByVector(
@@ -196,6 +215,7 @@ export class ChatService {
             message: dto.message,
             ai_response: dto.ai_response,
           }),
+          signal: AbortSignal.timeout(AI_REQUEST_TIMEOUT_MS),
         },
       );
 

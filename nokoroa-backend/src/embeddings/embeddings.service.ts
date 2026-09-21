@@ -10,6 +10,7 @@ export interface SimilarPostHit {
 export const EMBEDDING_DIM = 768;
 const EMBED_TIMEOUT_MS = 10_000;
 const MAX_TEXT_LEN = 8000;
+const MAX_LIMIT = 50;
 
 @Injectable()
 export class EmbeddingsService {
@@ -67,10 +68,29 @@ export class EmbeddingsService {
     }
   }
 
+  /**
+   * 投稿の埋め込みを削除する。非公開化された投稿の本文を残さないために使う。
+   * 対象が存在しない場合も正常終了する。
+   */
+  async deleteForPost(postId: number): Promise<void> {
+    try {
+      await this.prisma.$executeRawUnsafe(
+        `DELETE FROM post_embedding WHERE "postId" = $1`,
+        postId,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Failed to delete embedding for post ${postId}: ${err instanceof Error ? err.message : 'unknown'}`,
+      );
+    }
+  }
+
   async searchSimilar(query: string, limit = 5): Promise<SimilarPostHit[]> {
     const trimmed = query?.trim() ?? '';
     if (!trimmed) return [];
     const text = trimmed.slice(0, MAX_TEXT_LEN);
+    // 呼び出し側の値をそのままLIMITに渡さない(全件走査の踏み台にしない)
+    const safeLimit = Math.min(Math.max(Math.trunc(limit) || 1, 1), MAX_LIMIT);
 
     let vector: number[];
     try {
@@ -95,7 +115,7 @@ export class EmbeddingsService {
          ORDER BY pe.embedding <=> $1::vector
          LIMIT $2`,
         literal,
-        limit,
+        safeLimit,
       );
       return rows.map((r) => ({
         postId: Number(r.postId),

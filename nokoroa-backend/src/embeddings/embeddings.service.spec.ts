@@ -114,5 +114,44 @@ describe('EmbeddingsService', () => {
       const hits = await service.searchSimilar('test', 5);
       expect(hits).toEqual([]);
     });
+
+    it('過大なlimitは上限にクランプされる', async () => {
+      mockPrisma.$queryRawUnsafe.mockResolvedValue([]);
+
+      await service.searchSimilar('東京', 1_000_000);
+
+      const calls = (
+        mockPrisma.$queryRawUnsafe as jest.Mock<unknown, [string, ...unknown[]]>
+      ).mock.calls;
+      expect(calls[0][2]).toBe(50);
+    });
+
+    it('不正なlimitでも1以上の整数になる', async () => {
+      mockPrisma.$queryRawUnsafe.mockResolvedValue([]);
+
+      await service.searchSimilar('東京', -3);
+
+      const calls = (
+        mockPrisma.$queryRawUnsafe as jest.Mock<unknown, [string, ...unknown[]]>
+      ).mock.calls;
+      expect(calls[0][2]).toBe(1);
+    });
+  });
+
+  describe('deleteForPost', () => {
+    it('対象postIdの埋め込みを削除する', async () => {
+      mockPrisma.$executeRawUnsafe.mockResolvedValue(1);
+
+      await service.deleteForPost(42);
+
+      const calls = (
+        mockPrisma.$executeRawUnsafe as jest.Mock<
+          unknown,
+          [string, ...unknown[]]
+        >
+      ).mock.calls;
+      expect(calls[0][0]).toContain('DELETE FROM post_embedding');
+      expect(calls[0][1]).toBe(42);
+    });
   });
 });

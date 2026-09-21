@@ -6,6 +6,8 @@ import {
   IsBoolean,
   IsNumber,
   IsNotEmpty,
+  MaxLength,
+  ArrayMaxSize,
 } from 'class-validator';
 
 export class CreatePostDto {
@@ -15,6 +17,7 @@ export class CreatePostDto {
   })
   @IsString()
   @IsNotEmpty()
+  @MaxLength(200)
   title: string;
 
   @ApiProperty({
@@ -23,6 +26,7 @@ export class CreatePostDto {
   })
   @IsString()
   @IsNotEmpty()
+  @MaxLength(10000)
   content: string;
 
   @ApiProperty({
@@ -72,7 +76,9 @@ export class CreatePostDto {
   })
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(20)
   @IsString({ each: true })
+  @MaxLength(50, { each: true })
   tags?: string[];
 
   @ApiPropertyOptional({
