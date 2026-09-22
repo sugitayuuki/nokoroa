@@ -15,6 +15,50 @@ declare global {
   }
 }
 
+/**
+ * InfoWindow の中身を DOM として組み立てる。
+ *
+ * content に HTML 文字列を渡すと、投稿のタイトル・本文・画像URL(いずれも
+ * ユーザーの自由入力)がそのまま HTML として解釈され XSS が成立する。
+ * textContent / setAttribute 経由で組むことで、値は常にデータとして扱われる。
+ */
+function buildInfoWindowContent(post: PostData): HTMLElement {
+  const container = document.createElement('div');
+  container.style.maxWidth = '250px';
+  container.style.padding = '8px';
+
+  const title = document.createElement('h3');
+  title.style.cssText = 'margin: 0 0 8px 0; font-size: 16px; color: #333;';
+  title.textContent = post.title;
+  container.appendChild(title);
+
+  // javascript: や data: を踏ませないよう、http(s) の画像URLだけを許可する
+  if (post.imageUrl && /^https?:\/\//i.test(post.imageUrl)) {
+    const image = document.createElement('img');
+    image.src = post.imageUrl;
+    image.alt = post.title;
+    image.style.cssText =
+      'width: 100%; height: 120px; object-fit: cover; border-radius: 4px; margin-bottom: 8px;';
+    container.appendChild(image);
+  }
+
+  const body = document.createElement('p');
+  body.style.cssText =
+    'margin: 0 0 8px 0; font-size: 14px; color: #666; line-height: 1.4;';
+  body.textContent =
+    post.content.length > 100
+      ? `${post.content.substring(0, 100)}...`
+      : post.content;
+  container.appendChild(body);
+
+  const location = document.createElement('p');
+  location.style.cssText = 'margin: 0; font-size: 12px; color: #999;';
+  location.textContent = post.location || '';
+  container.appendChild(location);
+
+  return container;
+}
+
 interface GoogleMapProps {
   posts: PostData[];
   center?: { lat: number; lng: number };
@@ -104,14 +148,7 @@ export const GoogleMap: React.FC<GoogleMapProps> = ({
           });
 
           const infoWindow = new window.google.maps.InfoWindow({
-            content: `
-              <div style="max-width: 250px; padding: 8px;">
-                <h3 style="margin: 0 0 8px 0; font-size: 16px; color: #333;">${post.title}</h3>
-                ${post.imageUrl ? `<img src="${post.imageUrl}" alt="${post.title}" style="width: 100%; height: 120px; object-fit: cover; border-radius: 4px; margin-bottom: 8px;" />` : ''}
-                <p style="margin: 0 0 8px 0; font-size: 14px; color: #666; line-height: 1.4;">${post.content.substring(0, 100)}${post.content.length > 100 ? '...' : ''}</p>
-                <p style="margin: 0; font-size: 12px; color: #999;">${post.location || ''}</p>
-              </div>
-            `,
+            content: buildInfoWindowContent(post),
           });
 
           marker.addListener('click', () => {

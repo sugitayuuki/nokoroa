@@ -3,6 +3,7 @@ import {
   Post,
   Delete,
   Get,
+  DefaultValuePipe,
   Param,
   ParseIntPipe,
   Query,
@@ -83,8 +84,10 @@ export class FavoritesController {
   @ApiResponse({ status: 401, description: '認証エラー' })
   async getUserFavorites(
     @Request() req: { user: { userId: number } },
-    @Query('limit', ParseIntPipe) limit: number = 10,
-    @Query('offset', ParseIntPipe) offset: number = 0,
+    // ParseIntPipe は undefined で例外を投げるため DefaultValuePipe を先に置く。
+    // これが無いとクエリ省略時に常に400になる。
+    @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
+    @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number,
   ) {
     return this.favoritesService.getUserFavorites(
       req.user.userId,

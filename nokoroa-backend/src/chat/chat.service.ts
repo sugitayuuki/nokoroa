@@ -17,6 +17,7 @@ const MAX_FALLBACK_KEYWORDS = 5;
 export class ChatService {
   private readonly logger = new Logger(ChatService.name);
   private readonly aiServiceUrl: string;
+  private readonly internalToken: string;
 
   constructor(
     private configService: ConfigService,
@@ -26,6 +27,16 @@ export class ChatService {
     this.aiServiceUrl =
       this.configService.get<string>('AI_SERVICE_URL') ||
       'http://localhost:8000';
+    this.internalToken =
+      this.configService.get<string>('INTERNAL_AI_TOKEN') || '';
+  }
+
+  /** AIサービスは内部呼び出しのみを受け付けるため、全リクエストに内部トークンを付ける */
+  private aiHeaders(): Record<string, string> {
+    return {
+      'Content-Type': 'application/json',
+      'X-Internal-Token': this.internalToken,
+    };
   }
 
   async streamChat(dto: ChatRequestDto, res: Response): Promise<void> {
@@ -110,7 +121,7 @@ export class ChatService {
     try {
       response = await fetch(`${this.aiServiceUrl}/api/chat/stream`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.aiHeaders(),
         body: JSON.stringify({
           message: dto.message,
           history: dto.history || [],
@@ -160,7 +171,7 @@ export class ChatService {
         `${this.aiServiceUrl}/api/chat/suggestions`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: this.aiHeaders(),
           body: JSON.stringify({
             message: dto.message,
             ai_response: dto.ai_response,
@@ -210,7 +221,7 @@ export class ChatService {
         `${this.aiServiceUrl}/api/chat/related-keywords`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: this.aiHeaders(),
           body: JSON.stringify({
             message: dto.message,
             ai_response: dto.ai_response,
