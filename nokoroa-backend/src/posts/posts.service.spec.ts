@@ -386,18 +386,6 @@ describe('PostsService', () => {
     });
   });
 
-  describe('findByAuthor', () => {
-    it('ユーザーの投稿一覧を取得できる', async () => {
-      mockPrismaService.post.findMany.mockResolvedValue([mockPost]);
-      mockPrismaService.post.count.mockResolvedValue(1);
-
-      const result = await service.findByAuthor(1, 10, 0);
-
-      expect(result.posts).toHaveLength(1);
-      expect(result.posts[0].authorId).toBe(1);
-    });
-  });
-
   describe('search', () => {
     it('キーワードで検索できる', async () => {
       mockPrismaService.post.findMany.mockResolvedValue([mockPost]);

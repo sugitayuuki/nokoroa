@@ -11,7 +11,6 @@ export const API_CONFIG = {
     // 投稿関連
     posts: '/posts',
     postById: (id: string) => `/posts/${id}`,
-    userPosts: (userId: string) => `/users/${userId}/posts`,
 
     // ユーザー関連
     users: '/users',

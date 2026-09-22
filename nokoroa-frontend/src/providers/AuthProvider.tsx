@@ -97,6 +97,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return false;
       }
 
+      // トークン失効などで logout を経ずにユーザーが切り替わる場合があるため、
+      // ログイン時にも前のユーザーのキャッシュを破棄する。
+      void mutate(() => true, undefined, { revalidate: false });
+
       localStorage.setItem('jwt', token);
 
       // ログイン後、プロフィールAPIを呼び出してユーザー情報を取得

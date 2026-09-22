@@ -114,6 +114,8 @@ git clone https://github.com/sugitayuuki/nokoroa.git
 cd nokoroa
 
 # 1. バックエンド + DB + AI サービスの環境変数を用意
+#    .env.example には NODE_ENV=development が入っています。
+#    未設定だと本番相当とみなされ FRONTEND_URL / AWS_BUCKET_NAME が必須になります。
 cd nokoroa-backend
 cp .env.example .env
 export JWT_SECRET=$(openssl rand -base64 32)   # 32文字未満だと起動しません

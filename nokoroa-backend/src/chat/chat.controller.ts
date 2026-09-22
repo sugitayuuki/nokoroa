@@ -9,8 +9,10 @@ import { RelatedPostsRequestDto } from './dto/related-posts-request.dto';
 import { SuggestionsRequestDto } from './dto/suggestions-request.dto';
 
 // 外部AI(Gemini)への従量課金が発生する経路のため、既定より厳しく制限する。
-// JwtAuthGuard の後に UserThrottlerGuard を置くことで、IPではなく
-// ユーザー単位で数える(同一IPの別ユーザーが枠を食い合わない / 複数IPでも回避できない)。
+// JwtAuthGuard の後に UserThrottlerGuard を置くことでユーザー単位でも数え、
+// 1アカウントが複数IPを使っても回避できないようにする。
+// なおグローバルのIP単位制限も併走するため、実効上限は
+// min(20/分・IP, 20/分・ユーザー) になる。
 @Controller('chat')
 @UseGuards(JwtAuthGuard, UserThrottlerGuard)
 @Throttle({ default: { ttl: 60_000, limit: 20 } })
