@@ -43,6 +43,11 @@ const MotionBox = motion.create(Box);
 
 const SUGGESTIONS = ['京都 2泊3日', '沖縄 おすすめ', '温泉旅行', '週末旅行'];
 const MAX_MESSAGES = 100;
+// サーバー側 ChatRequestDto の上限と揃える
+const MAX_HISTORY_SENT = 20;
+const MAX_HISTORY_CONTENT_LENGTH = 8000;
+// 送信メッセージ本文の上限（ChatRequestDto.message と同じ）
+const MAX_INPUT_LENGTH = 2000;
 
 function TypingIndicator() {
   return (
@@ -183,9 +188,11 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
     setTimeout(scrollToBottom, 100);
 
     try {
-      const history = messages.map((msg) => ({
+      // サーバー側の上限(履歴20件 / 1メッセージ8000文字)に合わせて送信分を絞る。
+      // 全件送ると会話が伸びるほど入力トークンが増え、上限超過で400になる。
+      const history = messages.slice(-MAX_HISTORY_SENT).map((msg) => ({
         role: msg.role === 'assistant' ? 'model' : 'user',
-        content: msg.content,
+        content: msg.content.slice(0, MAX_HISTORY_CONTENT_LENGTH),
       }));
 
       const token = localStorage.getItem('jwt');
@@ -650,6 +657,7 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
                 disabled={isLoading}
                 multiline
                 maxRows={3}
+                slotProps={{ htmlInput: { maxLength: MAX_INPUT_LENGTH } }}
                 sx={{
                   '& .MuiOutlinedInput-root': {
                     borderRadius: 2,

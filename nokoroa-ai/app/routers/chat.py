@@ -18,6 +18,8 @@ gemini_service = GeminiService(api_key=settings.gemini_api_key)
 
 MAX_MESSAGE_LENGTH = 2000
 MAX_HISTORY_ITEMS = 20
+# 履歴にはAIの応答も積まれるため、ユーザー入力より緩い上限にする
+MAX_HISTORY_CONTENT_LENGTH = 8000
 
 
 def _sse_event(payload: str) -> str:
@@ -34,7 +36,7 @@ class Message(BaseModel):
     # クライアントが任意のroleを送れると、AIの過去発言を捏造して
     # システム指示を上書きできてしまうため、値を限定する
     role: Literal["user", "model"]
-    content: str = Field(..., max_length=MAX_MESSAGE_LENGTH)
+    content: str = Field(..., max_length=MAX_HISTORY_CONTENT_LENGTH)
 
 
 class ContextPost(BaseModel):

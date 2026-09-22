@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { AuthController } from './auth.controller';
@@ -11,11 +10,14 @@ import { PrismaService } from '../prisma/prisma.service';
 
 @Module({
   imports: [
-    ConfigModule,
     PassportModule,
-    JwtModule.register({
-      secret: getJwtSecret(),
-      signOptions: { expiresIn: '1d' },
+    // register() だとモジュール読み込み時に評価され、.env を読む前に
+    // 鍵の検証が走ってしまう。アプリ初期化時に解決させる。
+    JwtModule.registerAsync({
+      useFactory: () => ({
+        secret: getJwtSecret(),
+        signOptions: { expiresIn: '1d' },
+      }),
     }),
   ],
   providers: [AuthService, JwtStrategy, GoogleStrategy, PrismaService],

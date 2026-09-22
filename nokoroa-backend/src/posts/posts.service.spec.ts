@@ -286,6 +286,39 @@ describe('PostsService', () => {
       expect(result.title).toBe('Updated Title');
     });
 
+    it('isPublicを送らない部分更新では公開投稿の埋め込みを消さない', async () => {
+      mockPrismaService.post.findUnique.mockResolvedValue({ authorId: 1 });
+      // isPublic を含まない更新でも、DBの確定値(isPublic: true)が返る
+      mockPrismaService.post.update.mockResolvedValue({
+        ...mockPost,
+        title: 'Updated Title',
+      });
+      mockPrismaService.bookmark.count.mockResolvedValue(0);
+
+      await service.update(1, { title: 'Updated Title' }, 1);
+
+      expect(mockEmbeddingsService.generateForPost).toHaveBeenCalledWith(
+        1,
+        'Updated Title',
+        'Test content',
+      );
+      expect(mockEmbeddingsService.deleteForPost).not.toHaveBeenCalled();
+    });
+
+    it('非公開化した更新では埋め込みを削除する', async () => {
+      mockPrismaService.post.findUnique.mockResolvedValue({ authorId: 1 });
+      mockPrismaService.post.update.mockResolvedValue({
+        ...mockPost,
+        isPublic: false,
+      });
+      mockPrismaService.bookmark.count.mockResolvedValue(0);
+
+      await service.update(1, { isPublic: false }, 1);
+
+      expect(mockEmbeddingsService.generateForPost).not.toHaveBeenCalled();
+      expect(mockEmbeddingsService.deleteForPost).toHaveBeenCalledWith(1);
+    });
+
     it('存在しない投稿の更新でNotFoundExceptionを投げる', async () => {
       mockPrismaService.post.findUnique.mockResolvedValue(null);
 

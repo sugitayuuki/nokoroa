@@ -12,6 +12,9 @@ import {
 // DTOの時点で上限を設ける。
 const MAX_MESSAGE_LENGTH = 2000;
 const MAX_HISTORY_ITEMS = 20;
+// 履歴にはAIの応答も積まれる。max_output_tokens=2048 の生成文は
+// 日本語で2000文字を超えうるため、ユーザー入力より緩い上限にする。
+const MAX_HISTORY_CONTENT_LENGTH = 8000;
 
 class MessageDto {
   @IsString()
@@ -19,7 +22,7 @@ class MessageDto {
   role: string;
 
   @IsString()
-  @MaxLength(MAX_MESSAGE_LENGTH)
+  @MaxLength(MAX_HISTORY_CONTENT_LENGTH)
   content: string;
 }
 
