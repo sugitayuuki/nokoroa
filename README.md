@@ -142,6 +142,16 @@ npm run dev
 
 既存の投稿に埋め込みを作るには `npm run backfill:embeddings`（`nokoroa-backend` 配下）を実行します。
 
+### 運用上の注意
+
+- **埋め込みモデル（`EMBEDDING_MODEL`）を変更した場合は、必ず全件の再埋め込みが必要です。**
+  モデルごとにベクトル空間が異なるため、新旧のベクトルが混在すると類似度検索の結果が壊れます。
+  ```bash
+  cd nokoroa-backend && npm run backfill:embeddings -- --all
+  ```
+- スキーマ変更を含むデプロイでは、アプリの入れ替え前に `npx prisma migrate deploy` を実行してください（現状、デプロイワークフローには含まれていません）。
+- 非公開投稿の埋め込みを過去分まで削除するには `npm run purge:private-embeddings`（`-- --dry-run` で件数確認）。
+
 ## 使用技術一覧
 
 **バックエンド**: Node.js 22 / NestJS 11 / TypeScript 5 / Prisma 6 / PostgreSQL

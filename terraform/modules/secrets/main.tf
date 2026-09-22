@@ -1,4 +1,7 @@
 # Random Passwords
+# 注意: backend の src/auth/jwt-secret.ts が 32 文字以上を必須としているため、
+# この length を 32 未満にすると本番が起動しなくなる。
+# また length を変更すると鍵が再生成され、既存セッションは全て無効になる。
 resource "random_password" "jwt_secret" {
   length  = 32
   special = false

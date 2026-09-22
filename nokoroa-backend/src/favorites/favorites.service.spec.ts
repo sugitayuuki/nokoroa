@@ -142,13 +142,16 @@ describe('FavoritesService', () => {
       expect(result.total).toBe(0);
     });
 
-    it('非公開化された投稿は一覧にも件数にも含めない', async () => {
+    it('他人の非公開投稿は除外し、自分の非公開投稿は残す', async () => {
       mockPrismaService.bookmark.findMany.mockResolvedValue([]);
       mockPrismaService.bookmark.count.mockResolvedValue(0);
 
       await service.getUserFavorites(1, 10, 0);
 
-      const expectedWhere = { userId: 1, post: { isPublic: true } };
+      const expectedWhere = {
+        userId: 1,
+        post: { OR: [{ isPublic: true }, { authorId: 1 }] },
+      };
 
       const [findArgs] = (
         mockPrismaService.bookmark.findMany as jest.Mock<

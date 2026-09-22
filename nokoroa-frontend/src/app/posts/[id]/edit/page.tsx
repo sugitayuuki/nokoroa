@@ -237,7 +237,7 @@ export default function EditPostPage() {
                 fullWidth
                 required
                 disabled={submitting}
-                inputProps={{ maxLength: 100 }}
+                inputProps={{ maxLength: 200 }}
                 helperText={`${formData.title.length}/100`}
               />
 
@@ -250,7 +250,7 @@ export default function EditPostPage() {
                 multiline
                 rows={10}
                 disabled={submitting}
-                inputProps={{ maxLength: 5000 }}
+                inputProps={{ maxLength: 10000 }}
                 helperText={`${formData.content.length}/5000`}
               />
 
