@@ -108,6 +108,43 @@ describe('ChatService', () => {
     expect(sent.history[sent.history.length - 1].content).toHaveLength(8000);
   });
 
+  it('履歴が無い場合は空配列を送る', async () => {
+    mockEmbeddings.searchSimilar.mockResolvedValue([]);
+    mockPosts.search.mockResolvedValue({ posts: [], total: 0, hasMore: false });
+    makeStreamFetch();
+
+    await service.streamChat({ message: 'test' }, makeRes());
+
+    const streamCall = (
+      global.fetch as jest.Mock<unknown, [string, { body: string }]>
+    ).mock.calls.find(([url]) => url.includes('/api/chat/stream'));
+    const sent = JSON.parse(streamCall[1].body) as { history: unknown[] };
+
+    expect(sent.history).toEqual([]);
+  });
+
+  it('短い履歴はそのまま送る(不要な切り詰めをしない)', async () => {
+    mockEmbeddings.searchSimilar.mockResolvedValue([]);
+    mockPosts.search.mockResolvedValue({ posts: [], total: 0, hasMore: false });
+    makeStreamFetch();
+
+    const history = [
+      { role: 'user', content: 'こんにちは' },
+      { role: 'model', content: 'こんにちは。ご旅行のご相談ですか？' },
+    ];
+
+    await service.streamChat({ message: 'test', history }, makeRes());
+
+    const streamCall = (
+      global.fetch as jest.Mock<unknown, [string, { body: string }]>
+    ).mock.calls.find(([url]) => url.includes('/api/chat/stream'));
+    const sent = JSON.parse(streamCall[1].body) as {
+      history: { role: string; content: string }[];
+    };
+
+    expect(sent.history).toEqual(history);
+  });
+
   it('ベクトル検索ヒット0件ならキーワード検索を呼ぶ', async () => {
     mockEmbeddings.searchSimilar.mockResolvedValue([]);
     mockPosts.search.mockResolvedValue({
