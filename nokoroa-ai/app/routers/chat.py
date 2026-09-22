@@ -6,7 +6,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.config import settings
-from app.security import verify_internal_token
+from app.deps import verify_internal_token
 from app.services.gemini_service import GeminiService
 
 logger = logging.getLogger(__name__)
@@ -58,7 +58,10 @@ class ChatResponse(BaseModel):
 
 
 @router.post("/", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(
+    request: ChatRequest,
+    _: None = Depends(verify_internal_token),
+):
     try:
         history = None
         if request.history:
@@ -79,7 +82,10 @@ async def chat(request: ChatRequest):
 
 
 @router.post("/stream")
-async def chat_stream(request: ChatRequest):
+async def chat_stream(
+    request: ChatRequest,
+    _: None = Depends(verify_internal_token),
+):
     def generate():
         try:
             history = None
@@ -133,7 +139,10 @@ class RelatedKeywordsResponse(BaseModel):
 
 
 @router.post("/suggestions", response_model=SuggestionsResponse)
-async def get_suggestions(request: SuggestionsRequest):
+async def get_suggestions(
+    request: SuggestionsRequest,
+    _: None = Depends(verify_internal_token),
+):
     try:
         result = gemini_service.generate_suggestions(
             user_message=request.message,
@@ -141,11 +150,15 @@ async def get_suggestions(request: SuggestionsRequest):
         )
         return SuggestionsResponse(suggestions=result)
     except Exception:
+        logger.exception("suggestions generation failed")
         return SuggestionsResponse(suggestions=[])
 
 
 @router.post("/related-keywords", response_model=RelatedKeywordsResponse)
-async def get_related_keywords(request: RelatedKeywordsRequest):
+async def get_related_keywords(
+    request: RelatedKeywordsRequest,
+    _: None = Depends(verify_internal_token),
+):
     try:
         result = gemini_service.extract_search_keywords(
             user_message=request.message,
@@ -153,4 +166,5 @@ async def get_related_keywords(request: RelatedKeywordsRequest):
         )
         return RelatedKeywordsResponse(keywords=result)
     except Exception:
+        logger.exception("related keywords extraction failed")
         return RelatedKeywordsResponse(keywords=None)

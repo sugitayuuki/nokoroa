@@ -8,12 +8,15 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import { PostData } from '../../types/post';
 
-declare global {
-  interface Window {
-    google: typeof google;
-    initMap: () => void;
+const isSafeImageUrl = (url: string | null | undefined): url is string => {
+  if (!url) return false;
+  try {
+    const u = new URL(url, window.location.href);
+    return u.protocol === 'http:' || u.protocol === 'https:';
+  } catch {
+    return false;
   }
-}
+};
 
 /**
  * InfoWindow の中身を DOM として組み立てる。
@@ -22,74 +25,103 @@ declare global {
  * ユーザーの自由入力)がそのまま HTML として解釈され XSS が成立する。
  * textContent / setAttribute 経由で組むことで、値は常にデータとして扱われる。
  */
-function buildInfoWindowContent(post: PostData): HTMLElement {
-  const container = document.createElement('div');
-  container.style.maxWidth = '250px';
-  container.style.padding = '8px';
+const buildPostInfoContent = (post: PostData): HTMLElement => {
+  const root = document.createElement('div');
+  root.style.maxWidth = '250px';
+  root.style.padding = '8px';
 
   const title = document.createElement('h3');
-  title.style.cssText = 'margin: 0 0 8px 0; font-size: 16px; color: #333;';
   title.textContent = post.title;
-  container.appendChild(title);
+  title.style.margin = '0 0 8px 0';
+  title.style.fontSize = '16px';
+  title.style.color = '#333';
+  root.appendChild(title);
 
-  // javascript: や data: を踏ませないよう、http(s) の画像URLだけを許可する
-  if (post.imageUrl && /^https?:\/\//i.test(post.imageUrl)) {
-    const image = document.createElement('img');
-    image.src = post.imageUrl;
-    image.alt = post.title;
-    image.style.cssText =
-      'width: 100%; height: 120px; object-fit: cover; border-radius: 4px; margin-bottom: 8px;';
-    container.appendChild(image);
+  if (isSafeImageUrl(post.imageUrl)) {
+    const img = document.createElement('img');
+    img.src = post.imageUrl as string;
+    img.alt = post.title;
+    img.style.width = '100%';
+    img.style.height = '120px';
+    img.style.objectFit = 'cover';
+    img.style.borderRadius = '4px';
+    img.style.marginBottom = '8px';
+    root.appendChild(img);
   }
 
-  const body = document.createElement('p');
-  body.style.cssText =
-    'margin: 0 0 8px 0; font-size: 14px; color: #666; line-height: 1.4;';
-  body.textContent =
+  const snippet =
     post.content.length > 100
       ? `${post.content.substring(0, 100)}...`
       : post.content;
-  container.appendChild(body);
+  const body = document.createElement('p');
+  body.textContent = snippet;
+  body.style.margin = '0 0 8px 0';
+  body.style.fontSize = '14px';
+  body.style.color = '#666';
+  body.style.lineHeight = '1.4';
+  root.appendChild(body);
 
-  const location = document.createElement('p');
-  location.style.cssText = 'margin: 0; font-size: 12px; color: #999;';
-  location.textContent = post.location || '';
-  container.appendChild(location);
+  if (post.location) {
+    const loc = document.createElement('p');
+    loc.textContent = post.location;
+    loc.style.margin = '0';
+    loc.style.fontSize = '12px';
+    loc.style.color = '#999';
+    root.appendChild(loc);
+  }
 
-  return container;
-}
+  return root;
+};
 
-/** IP 由来の位置情報ウィンドウ。外部APIの文字列を HTML として解釈させない。 */
-function buildIpLocationContent(ipLocation: {
+const buildLocationInfoContent = (params: {
+  heading: string;
+  headingColor: string;
   lat: number;
   lng: number;
   city?: string;
   country?: string;
   accuracy?: string;
-}): HTMLElement {
-  const container = document.createElement('div');
-  container.style.cssText = 'padding: 8px; text-align: center;';
+}): HTMLElement => {
+  const root = document.createElement('div');
+  root.style.padding = '8px';
+  root.style.textAlign = 'center';
 
-  const heading = document.createElement('h4');
-  heading.style.cssText = 'margin: 0 0 4px 0; color: #ff9800;';
-  heading.textContent = '🌐 IP-based位置';
-  container.appendChild(heading);
+  const h = document.createElement('h4');
+  h.textContent = params.heading;
+  h.style.margin = '0 0 4px 0';
+  h.style.color = params.headingColor;
+  root.appendChild(h);
 
-  const place = document.createElement('p');
-  place.style.cssText = 'margin: 0 0 4px 0; font-size: 14px; color: #333;';
-  place.textContent = [ipLocation.city, ipLocation.country]
-    .filter(Boolean)
-    .join(', ');
-  container.appendChild(place);
+  if (params.city || params.country) {
+    const loc = document.createElement('p');
+    loc.textContent = [params.city, params.country].filter(Boolean).join(', ');
+    loc.style.margin = '0 0 4px 0';
+    loc.style.fontSize = '14px';
+    loc.style.color = '#333';
+    root.appendChild(loc);
+  }
 
   const coords = document.createElement('p');
-  coords.style.cssText = 'margin: 0; font-size: 12px; color: #666;';
-  coords.textContent = `緯度: ${ipLocation.lat.toFixed(6)} / 経度: ${ipLocation.lng.toFixed(6)}${
-    ipLocation.accuracy ? ` / ${ipLocation.accuracy}` : ''
-  }`;
-  container.appendChild(coords);
+  coords.style.margin = '0';
+  coords.style.fontSize = '12px';
+  coords.style.color = '#666';
+  coords.appendChild(document.createTextNode(`緯度: ${params.lat.toFixed(6)}`));
+  coords.appendChild(document.createElement('br'));
+  coords.appendChild(document.createTextNode(`経度: ${params.lng.toFixed(6)}`));
+  if (params.accuracy) {
+    coords.appendChild(document.createElement('br'));
+    coords.appendChild(document.createTextNode(params.accuracy));
+  }
+  root.appendChild(coords);
 
-  return container;
+  return root;
+};
+
+declare global {
+  interface Window {
+    google: typeof google;
+    initMap: () => void;
+  }
 }
 
 interface GoogleMapProps {
@@ -181,7 +213,7 @@ export const GoogleMap: React.FC<GoogleMapProps> = ({
           });
 
           const infoWindow = new window.google.maps.InfoWindow({
-            content: buildInfoWindowContent(post),
+            content: buildPostInfoContent(post),
           });
 
           marker.addListener('click', () => {
@@ -212,12 +244,12 @@ export const GoogleMap: React.FC<GoogleMapProps> = ({
         });
 
         const currentLocationInfoWindow = new window.google.maps.InfoWindow({
-          content: `
-            <div style="padding: 8px; text-align: center;">
-              <h4 style="margin: 0 0 4px 0; color: #2196f3;">📍 現在位置</h4>
-              <p style="margin: 0; font-size: 12px; color: #666;">緯度: ${userLocation.lat.toFixed(6)}<br/>経度: ${userLocation.lng.toFixed(6)}</p>
-            </div>
-          `,
+          content: buildLocationInfoContent({
+            heading: '📍 現在位置',
+            headingColor: '#2196f3',
+            lat: userLocation.lat,
+            lng: userLocation.lng,
+          }),
         });
 
         currentLocationMarker.addListener('click', () => {
@@ -261,7 +293,15 @@ export const GoogleMap: React.FC<GoogleMapProps> = ({
         // city / country / accuracy は外部API(ipapi.co)の応答なので、
         // 投稿本文と同様に HTML 文字列へ埋め込まず DOM として組み立てる
         const ipLocationInfoWindow = new window.google.maps.InfoWindow({
-          content: buildIpLocationContent(ipLocation),
+          content: buildLocationInfoContent({
+            heading: '🌐 IP-based位置',
+            headingColor: '#ff9800',
+            lat: ipLocation.lat,
+            lng: ipLocation.lng,
+            city: ipLocation.city,
+            country: ipLocation.country,
+            accuracy: ipLocation.accuracy,
+          }),
         });
 
         ipLocationMarker.addListener('click', () => {

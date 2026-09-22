@@ -45,6 +45,7 @@ export interface PostData {
   updatedAt: string;
   author: PostAuthor;
   distance?: number; // 地理的検索時の距離
+  similarity?: number; // 意味検索時のコサイン類似度（0-1）
   _count?: PostCount;
   // 互換性のため一時的に残す
   favoritesCount?: number;

@@ -24,6 +24,7 @@ export default function SearchPage() {
     if (tagParam) {
       const initialFilters: SearchFilters = {
         tags: [tagParam],
+        mode: 'keyword',
         limit: 10,
         offset: 0,
       };
@@ -90,6 +91,7 @@ export default function SearchPage() {
         hasMore={hasMore}
         isLoadingMore={isLoadingMore}
         onLoadMore={handleLoadMore}
+        mode={filters.mode}
       />
     </Container>
   );

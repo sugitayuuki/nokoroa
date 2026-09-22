@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     gemini_api_key: str
     cors_origins: str = "http://localhost:3000,http://localhost:4000"
-    internal_api_key: str = ""
+    internal_ai_token: str = ""
 
     # Geminiのモデルは定期的にshutdownされるため、コードへ固定せず差し替え可能にする。
     # 既定値の失効状況は https://ai.google.dev/gemini-api/docs/deprecations を参照。

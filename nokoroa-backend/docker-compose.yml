@@ -19,7 +19,7 @@ services:
       - NODE_ENV=development
       - PORT=4000
       - AI_SERVICE_URL=http://ai:8000
-      # AIサービスとの内部通信用トークン。ai サービスの INTERNAL_API_KEY と一致させる。
+      # AIサービスとの内部通信用トークン。ai サービス側と同じ値を使う。
       # 既定値を置かない（リポジトリ上の固定値で内部APIが開くため）。
       # 生成例: export INTERNAL_AI_TOKEN=$(openssl rand -hex 16)
       - INTERNAL_AI_TOKEN=${INTERNAL_AI_TOKEN:?INTERNAL_AI_TOKEN is required}
@@ -50,8 +50,8 @@ services:
       - '8000:8000'
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
-      # backend の INTERNAL_AI_TOKEN と一致させる。未設定だと全リクエストが503になる。
-      - INTERNAL_API_KEY=${INTERNAL_AI_TOKEN:?INTERNAL_AI_TOKEN is required}
+      # backend と同じ値にする。未設定だと全リクエストが503になる。
+      - INTERNAL_AI_TOKEN=${INTERNAL_AI_TOKEN:?INTERNAL_AI_TOKEN is required}
 
 volumes:
   postgres_data:

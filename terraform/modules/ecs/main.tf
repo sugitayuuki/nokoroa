@@ -231,7 +231,7 @@ resource "aws_ecs_task_definition" "backend" {
           valueFrom = var.gemini_api_key_secret_arn
         },
         {
-          name      = "INTERNAL_API_KEY"
+          name      = "INTERNAL_AI_TOKEN"
           valueFrom = var.internal_api_key_secret_arn
         }
       ]

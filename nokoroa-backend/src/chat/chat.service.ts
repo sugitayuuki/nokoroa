@@ -49,6 +49,11 @@ export class ChatService {
       'http://localhost:8000';
     this.internalToken =
       this.configService.get<string>('INTERNAL_AI_TOKEN') || '';
+    if (!this.internalToken) {
+      this.logger.warn(
+        'INTERNAL_AI_TOKEN is not configured; AI service will reject requests',
+      );
+    }
   }
 
   /**
@@ -162,7 +167,7 @@ export class ChatService {
         }));
       }
     } catch (error) {
-      this.logger.warn(
+      this.logger.error(
         `Failed to search related posts: ${error instanceof Error ? error.message : 'Unknown error'}`,
       );
     }
@@ -281,6 +286,9 @@ export class ChatService {
       );
 
       if (!keywordsRes.ok) {
+        this.logger.warn(
+          `AI related-keywords responded ${keywordsRes.status}; returning empty posts`,
+        );
         return { posts: [] };
       }
 
@@ -290,6 +298,9 @@ export class ChatService {
       const keywords = keywordsData.keywords;
 
       if (!keywords) {
+        this.logger.warn(
+          'AI related-keywords returned null; returning empty posts',
+        );
         return { posts: [] };
       }
 
@@ -313,7 +324,7 @@ export class ChatService {
 
       return { posts: fallbackResult.posts };
     } catch (error) {
-      this.logger.warn(
+      this.logger.error(
         `Failed to get related posts: ${error instanceof Error ? error.message : 'Unknown error'}`,
       );
       return { posts: [] };

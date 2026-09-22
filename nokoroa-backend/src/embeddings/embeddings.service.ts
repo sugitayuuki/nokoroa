@@ -34,6 +34,11 @@ export class EmbeddingsService {
       'http://localhost:8000';
     this.internalToken =
       this.configService.get<string>('INTERNAL_AI_TOKEN') || '';
+    if (!this.internalToken) {
+      this.logger.warn(
+        'INTERNAL_AI_TOKEN is not configured; AI service will reject requests',
+      );
+    }
   }
 
   async generateForPost(
@@ -49,7 +54,7 @@ export class EmbeddingsService {
     try {
       vector = await this.embed(text, 'RETRIEVAL_DOCUMENT');
     } catch (err) {
-      this.logger.warn(
+      this.logger.error(
         `Failed to embed post ${postId}: ${err instanceof Error ? err.message : 'unknown'}`,
       );
       return;
@@ -66,7 +71,7 @@ export class EmbeddingsService {
           "updatedAt" = NOW()
       `;
     } catch (err) {
-      this.logger.warn(
+      this.logger.error(
         `Failed to upsert embedding for post ${postId}: ${err instanceof Error ? err.message : 'unknown'}`,
       );
     }
@@ -87,59 +92,63 @@ export class EmbeddingsService {
     }
   }
 
-  async searchSimilar(query: string, limit = 5): Promise<SimilarPostHit[]> {
+  /**
+   * ベクトル検索。失敗時は例外を投げる。
+   * 呼び出し側にエラーを見せたい経路(意味検索UI)はこちらを使う。
+   */
+  async searchSimilarStrict(
+    query: string,
+    limit = 5,
+  ): Promise<SimilarPostHit[]> {
     const trimmed = query?.trim() ?? '';
     if (!trimmed) return [];
     const text = trimmed.slice(0, MAX_TEXT_LEN);
     // 呼び出し側の値をそのままLIMITに渡さない(全件走査の踏み台にしない)
     const safeLimit = Math.min(Math.max(Math.trunc(limit) || 1, 1), MAX_LIMIT);
 
-    let vector: number[];
-    try {
-      vector = await this.embed(text, 'RETRIEVAL_QUERY');
-    } catch (err) {
-      this.logger.warn(
-        `Failed to embed query: ${err instanceof Error ? err.message : 'unknown'}`,
-      );
-      return [];
-    }
-
+    const vector = await this.embed(text, 'RETRIEVAL_QUERY');
     const literal = this.vectorLiteral(vector);
+    const rows = await this.prisma.$queryRaw<
+      { postId: number; distance: number }[]
+    >`
+      SELECT pe."postId", (pe.embedding <=> ${literal}::vector)::float8 AS distance
+      FROM post_embedding pe
+      JOIN post p ON p.id = pe."postId"
+      WHERE p."isPublic" = true
+      ORDER BY pe.embedding <=> ${literal}::vector
+      LIMIT ${safeLimit}
+    `;
+    return rows.map((r) => ({
+      postId: Number(r.postId),
+      distance: Number(r.distance),
+    }));
+  }
 
+  async searchSimilar(query: string, limit = 5): Promise<SimilarPostHit[]> {
     try {
-      const rows = await this.prisma.$queryRaw<
-        { postId: number; distance: number }[]
-      >`
-        SELECT pe."postId", (pe.embedding <=> ${literal}::vector)::float8 AS distance
-        FROM post_embedding pe
-        JOIN post p ON p.id = pe."postId"
-        WHERE p."isPublic" = true
-        ORDER BY pe.embedding <=> ${literal}::vector
-        LIMIT ${safeLimit}
-      `;
-      return rows.map((r) => ({
-        postId: Number(r.postId),
-        distance: Number(r.distance),
-      }));
+      return await this.searchSimilarStrict(query, limit);
     } catch (err) {
-      this.logger.warn(
+      this.logger.error(
         `Vector search failed: ${err instanceof Error ? err.message : 'unknown'}`,
       );
       return [];
     }
   }
 
-  private async embed(text: string, taskType: string): Promise<number[]> {
+  private aiHeaders(): Record<string, string> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     };
     if (this.internalToken) {
       headers['X-Internal-Token'] = this.internalToken;
     }
+    return headers;
+  }
 
+  private async embed(text: string, taskType: string): Promise<number[]> {
     const res = await fetch(`${this.aiServiceUrl}/api/embeddings/`, {
       method: 'POST',
-      headers,
+      headers: this.aiHeaders(),
       body: JSON.stringify({ text, task_type: taskType }),
       signal: AbortSignal.timeout(EMBED_TIMEOUT_MS),
     });
