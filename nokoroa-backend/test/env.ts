@@ -13,3 +13,36 @@ process.env.GOOGLE_CLIENT_SECRET =
 process.env.GOOGLE_CALLBACK_URL =
   process.env.GOOGLE_CALLBACK_URL ??
   'http://localhost:4000/auth/google/callback';
+
+// e2e は cleanupDatabase() で全テーブルを deleteMany する。PrismaClient は
+// DATABASE_URL 未指定なら .env を自動で読むため、開発用 DB が繋がっていると
+// 開発データを消してしまう。接続先がテスト用であることを起動前に確認する。
+assertTestDatabase();
+
+function assertTestDatabase(): void {
+  if (process.env.E2E_ALLOW_UNSAFE_DB === '1') return;
+
+  const url = process.env.DATABASE_URL;
+  if (!url) {
+    throw new Error(
+      'e2e: DATABASE_URL が未設定です。テスト用 DB を明示してください。\n' +
+        '例: DATABASE_URL="postgresql://postgres:postgres@localhost:5432/nokoroa_test" npm run test:e2e',
+    );
+  }
+
+  // パス先頭の "/" を除いた最初のセグメントがデータベース名。
+  let database: string;
+  try {
+    database = new URL(url).pathname.replace(/^\//, '').split('/')[0];
+  } catch {
+    throw new Error('e2e: DATABASE_URL を URL として解釈できません。');
+  }
+
+  if (!/test/i.test(database)) {
+    throw new Error(
+      `e2e: 接続先 "${database}" がテスト用 DB に見えません（名前に "test" を含みません）。\n` +
+        'e2e は全テーブルを削除するため中断しました。テスト用 DB を指定してください。\n' +
+        '意図的に実行する場合のみ E2E_ALLOW_UNSAFE_DB=1 を付けてください。',
+    );
+  }
+}
