@@ -9,7 +9,10 @@
 ![Nokoroa Screenshot](https://github.com/sugitayuuki/nokoroa/releases/download/assets/screencapture-localhost-3000-2025-11-26-02_41_56.png)
 
 
-AIチャット機能を作成中
+### AIチャット（RAG）
+
+投稿本文を Gemini で埋め込み、pgvector に保存。質問に近い投稿をベクトル検索で取り出し、
+文脈として Gemini に渡して SSE でストリーミング応答します。
 
 ![Image](https://github.com/user-attachments/assets/caa08bd7-da73-4388-b8d2-4e2108cda0a7)
 
@@ -96,9 +99,52 @@ Instagramなどの既存SNSでは、投稿形式が限定されていたり、�
 - App Routerを使うことで、最新のReact Server Componentsを活用できるため
 - React/Next.jsが世界的なトレンドだったため
 
+## ローカルでの起動
+
+### 前提
+
+- Docker / Docker Compose
+- Node.js 22 以上（フロントエンドをホストで動かす場合）
+- Gemini API キー（AIチャットを使う場合のみ。無くても他の機能は動きます）
+
+### 手順
+
+```bash
+git clone https://github.com/sugitayuuki/nokoroa.git
+cd nokoroa
+
+# 1. バックエンド + DB + AI サービスの環境変数を用意
+cd nokoroa-backend
+cp .env.example .env
+export JWT_SECRET=$(openssl rand -base64 32)   # 32文字未満だと起動しません
+export INTERNAL_AI_TOKEN=$(openssl rand -hex 16)
+export GEMINI_API_KEY=your-gemini-api-key      # AIチャットを使う場合
+
+# 2. 起動（PostgreSQL は pgvector 同梱イメージを使います）
+docker compose up -d
+
+# 3. マイグレーション適用
+docker compose exec backend npx prisma migrate deploy
+
+# 4. フロントエンド
+cd ../nokoroa-frontend
+cp .env.example .env.local   # NEXT_PUBLIC_API_URL などを設定
+npm ci
+npm run dev
+```
+
+| サービス | URL |
+| --- | --- |
+| フロントエンド | http://localhost:3000 |
+| バックエンド | http://localhost:4000 |
+| API ドキュメント (Swagger) | http://localhost:4000/api/docs |
+| AI サービス | http://localhost:8000 |
+
+既存の投稿に埋め込みを作るには `npm run backfill:embeddings`（`nokoroa-backend` 配下）を実行します。
+
 ## 使用技術一覧
 
-**バックエンド**: Node.js 23 / NestJS 11 / TypeScript 5 / Prisma 6 / PostgreSQL
+**バックエンド**: Node.js 22 / NestJS 11 / TypeScript 5 / Prisma 6 / PostgreSQL
 
 コード解析 / フォーマッター: ESLint / Prettier
 
@@ -111,6 +157,8 @@ Instagramなどの既存SNSでは、投稿形式が限定されていたり、�
 CSSフレームワーク: Material-UI v7
 
 主要パッケージ: SWR / React Hook Form / Zod / react-hot-toast / date-fns
+
+**AI / RAG**: Python 3.12 / FastAPI / Google Gemini (チャット + 埋め込み) / pgvector (HNSW)
 
 **インフラ**: AWS (Route53 / ACM / ALB / VPC / ECR / ECS Fargate / RDS PostgreSQL / S3 / CloudWatch)
 
@@ -134,6 +182,7 @@ erDiagram
     User ||--o{ Follow : "フォローされる"
     Post ||--o{ Bookmark : "ブックマークされる"
     Post ||--o{ PostTag : "タグ付け"
+    Post ||--o| PostEmbedding : "埋め込み"
     Tag ||--o{ PostTag : "投稿に付く"
     Location ||--o{ Post : "場所"
 
@@ -186,6 +235,15 @@ erDiagram
         datetime createdAt
     }
 
+    PostEmbedding {
+        int id PK
+        int postId FK_UK
+        string contentText
+        vector embedding "vector(768) / pgvector"
+        datetime createdAt
+        datetime updatedAt
+    }
+
     Bookmark {
         int id PK
         int userId FK
@@ -222,6 +280,9 @@ nokoroa/
 │   │   │   └── posts.service.ts
 │   │   ├── favorites/           # ブックマークモジュール
 │   │   ├── follows/             # フォローモジュール
+│   │   ├── chat/                # AIチャット (SSE中継・RAGの検索)
+│   │   ├── embeddings/          # 埋め込み生成・ベクトル検索 (pgvector)
+│   │   ├── scripts/             # 埋め込みのバックフィル等の運用スクリプト
 │   │   ├── prisma/              # Prismaサービス
 │   │   └── main.ts              # アプリケーションエントリーポイント
 │   ├── prisma/
@@ -231,6 +292,14 @@ nokoroa/
 │   ├── test/                    # E2Eテスト
 │   ├── Dockerfile
 │   └── docker-compose.yml
+│
+├── nokoroa-ai/                  # AIサービス (FastAPI + Gemini)
+│   ├── app/
+│   │   ├── routers/             # chat / embeddings エンドポイント
+│   │   ├── services/            # Gemini クライアント
+│   │   ├── security.py          # 内部呼び出しのトークン検証
+│   │   └── config.py            # モデルID等の設定
+│   └── Dockerfile
 │
 ├── nokoroa-frontend/
 │   ├── src/

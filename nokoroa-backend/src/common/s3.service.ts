@@ -15,11 +15,16 @@ export class S3Service {
 
   constructor(private configService: ConfigService) {
     this.region = this.configService.get('AWS_REGION') || 'ap-northeast-1';
-    this.bucketName =
-      this.configService.get('AWS_BUCKET_NAME') || 'nokoroa-prod-uploads';
     const nodeEnv = this.configService.get<string>('NODE_ENV');
     const isProduction = nodeEnv === 'production' || nodeEnv === 'prod';
     this.isDevelopment = !isProduction;
+
+    // 本番バケット名を既定値にすると、設定漏れに気付かないまま
+    // 本番バケットへ書きに行ってしまうためフォールバックしない。
+    this.bucketName = this.configService.get('AWS_BUCKET_NAME') || '';
+    if (isProduction && !this.bucketName) {
+      throw new Error('AWS_BUCKET_NAME is not set.');
+    }
     const port = this.configService.get<number>('PORT') ?? 4000;
     this.backendUrl =
       this.configService.get('BACKEND_URL') || `http://localhost:${port}`;

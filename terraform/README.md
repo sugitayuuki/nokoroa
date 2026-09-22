@@ -16,17 +16,20 @@ terraform/
 │   ├── security_groups/       # セキュリティグループ
 │   ├── secrets/               # SSM Parameter Store
 ├── envs/                       # 環境別設定
-│   ├── prod/                  # 本番環境
+│   ├── prod/                  # 本番環境（実装済み）
 │   │   ├── main.tf
 │   │   ├── variables.tf
 │   │   ├── outputs.tf
 │   │   ├── versions.tf
 │   │   ├── terraform.tfvars.example
 │   │   └── terraform.tfvars   # ※gitignore対象
-│   ├── stg/                   # ステージング環境
-│   └── dev/                   # 開発環境
+│   ├── stg/                   # ステージング環境（未実装・方針メモのみ）
+│   └── dev/                   # 開発環境（未実装・方針メモのみ）
 └── README.md
 ```
+
+> 個人開発でコストを抑えるため、実際に構築しているのは `prod` のみです。
+> `stg/` `dev/` には `.tf` を置いておらず、README に方針だけ残しています。
 
 ## 前提条件
 
