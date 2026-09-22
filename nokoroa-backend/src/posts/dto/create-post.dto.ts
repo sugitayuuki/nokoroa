@@ -34,7 +34,13 @@ export class CreatePostDto {
     description: '投稿画像のURL',
     example: 'https://example.com/images/kyoto.jpg',
   })
-  @IsUrl({ protocols: ['http', 'https'], require_protocol: true })
+  // require_tld: false は localhost / compose のサービス名を許可するため。
+  // javascript: data: 相対パス等の遮断は protocols + require_protocol が担う。
+  @IsUrl({
+    protocols: ['http', 'https'],
+    require_protocol: true,
+    require_tld: false,
+  })
   @IsNotEmpty({ message: '画像は必須です' })
   @MaxLength(2048)
   imageUrl: string;

@@ -5,6 +5,8 @@ import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
+import { isProductionLikeEnv } from './environment';
+
 @Injectable()
 export class S3Service {
   private s3Client: S3Client | null = null;
@@ -15,14 +17,16 @@ export class S3Service {
 
   constructor(private configService: ConfigService) {
     this.region = this.configService.get('AWS_REGION') || 'ap-northeast-1';
+    // 環境判定は common/environment.ts に集約する
+    // (箇所ごとに基準が違うと staging で挙動が食い違うため)
     const nodeEnv = this.configService.get<string>('NODE_ENV');
-    const isProduction = nodeEnv === 'production' || nodeEnv === 'prod';
-    this.isDevelopment = !isProduction;
+    const usesS3 = isProductionLikeEnv(nodeEnv);
+    this.isDevelopment = !usesS3;
 
     // 本番バケット名を既定値にすると、設定漏れに気付かないまま
     // 本番バケットへ書きに行ってしまうためフォールバックしない。
     this.bucketName = this.configService.get('AWS_BUCKET_NAME') || '';
-    if (isProduction && !this.bucketName) {
+    if (usesS3 && !this.bucketName) {
       throw new Error('AWS_BUCKET_NAME is not set.');
     }
     const port = this.configService.get<number>('PORT') ?? 4000;

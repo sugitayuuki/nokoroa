@@ -6,12 +6,12 @@ import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import helmet from 'helmet';
 
 import { AppModule } from './app.module';
+import { isDevelopmentEnv } from './common/environment';
 import { PrismaExceptionFilter } from './common/prisma-exception.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
-  const nodeEnv = process.env.NODE_ENV;
-  const isDevelopment = nodeEnv === 'development' || nodeEnv === undefined;
+  const isDevelopment = isDevelopmentEnv();
 
   // ALB 配下では req.ip が ALB ノードのIPになるため、これが無いと
   // レート制限が「IPごと」ではなく「全ユーザー共有」になり、

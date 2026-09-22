@@ -238,7 +238,7 @@ export default function EditPostPage() {
                 required
                 disabled={submitting}
                 inputProps={{ maxLength: 200 }}
-                helperText={`${formData.title.length}/100`}
+                helperText={`${formData.title.length}/200`}
               />
 
               <TextField
@@ -251,7 +251,7 @@ export default function EditPostPage() {
                 rows={10}
                 disabled={submitting}
                 inputProps={{ maxLength: 10000 }}
-                helperText={`${formData.content.length}/5000`}
+                helperText={`${formData.content.length}/10000`}
               />
 
               <TextField

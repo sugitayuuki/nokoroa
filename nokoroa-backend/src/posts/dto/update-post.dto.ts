@@ -34,7 +34,13 @@ export class UpdatePostDto {
     example: 'https://example.com/images/kyoto.jpg',
   })
   @IsOptional()
-  @IsUrl({ protocols: ['http', 'https'], require_protocol: true })
+  // require_tld: false は localhost / compose のサービス名を許可するため。
+  // javascript: data: 相対パス等の遮断は protocols + require_protocol が担う。
+  @IsUrl({
+    protocols: ['http', 'https'],
+    require_protocol: true,
+    require_tld: false,
+  })
   @MaxLength(2048)
   imageUrl?: string;
 

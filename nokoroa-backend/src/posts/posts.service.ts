@@ -423,9 +423,10 @@ export class PostsService {
     offset: number = 0,
     requesterId?: number,
   ) {
-    // 非公開投稿は本人にのみ返す(他の一覧系と同じ方針に揃える)
-    const where =
-      requesterId === authorId ? { authorId } : { authorId, isPublic: true };
+    // 非公開投稿は本人にのみ返す(他の一覧系と同じ方針に揃える)。
+    // undefined === undefined で本人判定が成立しないよう、整数であることを確認する。
+    const isOwner = Number.isInteger(requesterId) && requesterId === authorId;
+    const where = isOwner ? { authorId } : { authorId, isPublic: true };
 
     const [posts, total] = await Promise.all([
       this.prisma.post.findMany({
