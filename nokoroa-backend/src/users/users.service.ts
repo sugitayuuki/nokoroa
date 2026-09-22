@@ -4,6 +4,7 @@ import {
   BadRequestException,
   UnauthorizedException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { hash, compare } from 'bcrypt';
 
 import { PrismaService } from '../prisma/prisma.service';
@@ -103,18 +104,16 @@ export class UsersService {
       throw new NotFoundException('ユーザーが見つかりません');
     }
 
-    // パスワードがある場合はハッシュ化
-    const updateData: Partial<UpdateUserDto & { password?: string }> = {
-      ...updateUserDto,
-    };
-    if (updateUserDto.password) {
-      updateData.password = await hash(updateUserDto.password, 10);
-    }
+    // DTO をそのまま data に渡さない。書き込むフィールドを明示することで、
+    // DTO に列が増えても意図しない更新経路が生まれないようにする。
+    const data: Prisma.UserUpdateInput = {};
+    if (updateUserDto.name !== undefined) data.name = updateUserDto.name;
+    if (updateUserDto.bio !== undefined) data.bio = updateUserDto.bio;
 
     // ユーザー情報を更新
     const updatedUser = await this.prisma.user.update({
       where: { id },
-      data: updateData,
+      data,
       include: {
         posts: {
           orderBy: { createdAt: 'desc' },
@@ -144,6 +143,14 @@ export class UsersService {
 
     if (!user) {
       throw new NotFoundException('ユーザーが見つかりません');
+    }
+
+    // Google 連携のみのユーザーは password が null。
+    // compare(x, null) は bcrypt が throw するため 500 になる。
+    if (!user.password) {
+      throw new BadRequestException(
+        'このアカウントはパスワード認証を使用していません',
+      );
     }
 
     // 現在のパスワードが正しいかチェック

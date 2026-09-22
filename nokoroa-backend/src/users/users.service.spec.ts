@@ -219,14 +219,22 @@ describe('UsersService', () => {
       ).rejects.toThrow(NotFoundException);
     });
 
-    it('パスワード更新時にハッシュ化される', async () => {
+    it('name と bio だけを更新し、他のフィールドは書き込まない', async () => {
       mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
       mockPrismaService.user.update.mockResolvedValue(mockUser);
-      (bcrypt.hash as jest.Mock).mockResolvedValue('newHashedPassword');
 
-      await service.update(1, { password: 'newpassword' });
+      await service.update(1, { name: 'Updated Name', bio: 'new bio' });
 
-      expect(bcrypt.hash).toHaveBeenCalledWith('newpassword', 10);
+      const [args] = (
+        mockPrismaService.user.update as jest.Mock<
+          unknown,
+          [{ data: Record<string, unknown> }]
+        >
+      ).mock.calls[0];
+
+      // パスワード・メールアドレスはこの経路では変更できない
+      expect(args.data).toEqual({ name: 'Updated Name', bio: 'new bio' });
+      expect(bcrypt.hash).not.toHaveBeenCalled();
     });
   });
 
@@ -237,6 +245,22 @@ describe('UsersService', () => {
       name: 'Test User',
       password: 'currentHashedPassword',
     };
+
+    it('パスワード未設定(Google連携のみ)のユーザーは400を返す', async () => {
+      mockPrismaService.user.findUnique.mockResolvedValue({
+        ...mockUser,
+        password: null,
+      });
+
+      await expect(
+        service.changePassword(1, {
+          currentPassword: 'x',
+          newPassword: 'newpassword123',
+          confirmPassword: 'newpassword123',
+        }),
+      ).rejects.toThrow(BadRequestException);
+      expect(bcrypt.compare).not.toHaveBeenCalled();
+    });
 
     it('パスワードを正常に変更できる', async () => {
       mockPrismaService.user.findUnique.mockResolvedValue(mockUser);

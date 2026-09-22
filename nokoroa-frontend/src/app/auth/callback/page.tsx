@@ -3,7 +3,7 @@
 import { CircularProgress, Container, Typography } from '@mui/material';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect } from 'react';
-import { toast } from 'react-hot-toast';
+import { toast } from 'react-toastify';
 
 function AuthCallbackContent() {
   const router = useRouter();

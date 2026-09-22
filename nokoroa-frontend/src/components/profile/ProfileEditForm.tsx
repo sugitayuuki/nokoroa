@@ -9,52 +9,30 @@ import {
   Card,
   CardContent,
   IconButton,
+  Link as MuiLink,
   Stack,
   TextField,
   Typography,
 } from '@mui/material';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { toast } from 'react-hot-toast';
+import { toast } from 'react-toastify';
 import { z } from 'zod';
 
 import { useUpdateUser } from '@/hooks/useUpdateUser';
 import { useUser } from '@/hooks/useUser';
 import { API_CONFIG } from '@/lib/apiConfig';
 
-const schema = z
-  .object({
-    name: z.string().min(2, '名前は2文字以上入力してください'),
-    email: z.string().email('有効なメールアドレスを入力してください'),
-    bio: z.string().optional(),
-    password: z.string().optional(),
-    confirmPassword: z.string().optional(),
-  })
-  .refine(
-    (data) => {
-      if (data.password && data.password.length > 0) {
-        return data.password.length >= 8;
-      }
-      return true;
-    },
-    {
-      path: ['password'],
-      message: 'パスワードは8文字以上入力してください',
-    },
-  )
-  .refine(
-    (data) => {
-      if (data.password && data.password.length > 0) {
-        return data.password === data.confirmPassword;
-      }
-      return true;
-    },
-    {
-      path: ['confirmPassword'],
-      message: 'パスワードが一致しません',
-    },
-  );
+// email とパスワードはこのフォームでは扱わない（専用エンドポイントを使う）
+const schema = z.object({
+  name: z.string().min(2, '名前は2文字以上入力してください'),
+  bio: z
+    .string()
+    .max(500, '自己紹介は500文字以内で入力してください')
+    .optional(),
+});
 
 type FormType = z.infer<typeof schema>;
 
@@ -79,7 +57,6 @@ export default function ProfileEditForm() {
   useEffect(() => {
     if (user) {
       setValue('name', user.name);
-      setValue('email', user.email);
       setValue('bio', user.bio || '');
       if (user.avatar) {
         setAvatarPreview(user.avatar);
@@ -156,21 +133,12 @@ export default function ProfileEditForm() {
   };
 
   const onSubmit = async (data: FormType) => {
-    const updateData: {
-      name: string;
-      email: string;
-      bio?: string;
-      password?: string;
-    } = {
+    // email / password はこのエンドポイントでは変更できない。
+    // パスワードは現在のパスワード確認が必要なため専用エンドポイントを使う。
+    const updateData: { name: string; bio?: string } = {
       name: data.name,
-      email: data.email,
       bio: data.bio,
     };
-
-    // パスワードが入力されている場合のみ更新
-    if (data.password && data.password.length > 0) {
-      updateData.password = data.password;
-    }
 
     const success = await updateUser(updateData);
     if (success) {
@@ -272,16 +240,6 @@ export default function ProfileEditForm() {
               helperText={errors.name?.message}
             />
 
-            {/* メールアドレス */}
-            <TextField
-              label="メールアドレス"
-              type="email"
-              fullWidth
-              {...register('email')}
-              error={!!errors.email}
-              helperText={errors.email?.message}
-            />
-
             {/* 自己紹介 */}
             <TextField
               label="自己紹介"
@@ -296,31 +254,14 @@ export default function ProfileEditForm() {
               }
             />
 
-            {/* パスワード変更 */}
-            <Typography variant="h6" sx={{ mt: 3, mb: 1 }}>
-              パスワード変更（任意）
+            {/* パスワード変更は現在のパスワードの確認が必要なため専用ページで行う */}
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+              パスワードの変更は
+              <MuiLink component={Link} href="/settings/change-password">
+                こちら
+              </MuiLink>
+              から行えます。
             </Typography>
-
-            <TextField
-              label="新しいパスワード"
-              type="password"
-              fullWidth
-              {...register('password')}
-              error={!!errors.password}
-              helperText={
-                errors.password?.message ||
-                'パスワードを変更する場合のみ入力してください'
-              }
-            />
-
-            <TextField
-              label="新しいパスワード（確認）"
-              type="password"
-              fullWidth
-              {...register('confirmPassword')}
-              error={!!errors.confirmPassword}
-              helperText={errors.confirmPassword?.message}
-            />
 
             {/* ボタン */}
             <Box sx={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>

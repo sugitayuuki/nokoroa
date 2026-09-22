@@ -20,7 +20,7 @@ import {
 } from '@mui/material';
 import { useParams, useRouter } from 'next/navigation';
 import React, { useEffect, useState } from 'react';
-import { toast } from 'react-hot-toast';
+import { toast } from 'react-toastify';
 
 import FollowButton from '@/components/follow/FollowButton';
 import { useUser } from '@/hooks/useUser';

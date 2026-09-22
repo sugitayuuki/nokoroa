@@ -59,6 +59,39 @@ function buildInfoWindowContent(post: PostData): HTMLElement {
   return container;
 }
 
+/** IP 由来の位置情報ウィンドウ。外部APIの文字列を HTML として解釈させない。 */
+function buildIpLocationContent(ipLocation: {
+  lat: number;
+  lng: number;
+  city?: string;
+  country?: string;
+  accuracy?: string;
+}): HTMLElement {
+  const container = document.createElement('div');
+  container.style.cssText = 'padding: 8px; text-align: center;';
+
+  const heading = document.createElement('h4');
+  heading.style.cssText = 'margin: 0 0 4px 0; color: #ff9800;';
+  heading.textContent = '🌐 IP-based位置';
+  container.appendChild(heading);
+
+  const place = document.createElement('p');
+  place.style.cssText = 'margin: 0 0 4px 0; font-size: 14px; color: #333;';
+  place.textContent = [ipLocation.city, ipLocation.country]
+    .filter(Boolean)
+    .join(', ');
+  container.appendChild(place);
+
+  const coords = document.createElement('p');
+  coords.style.cssText = 'margin: 0; font-size: 12px; color: #666;';
+  coords.textContent = `緯度: ${ipLocation.lat.toFixed(6)} / 経度: ${ipLocation.lng.toFixed(6)}${
+    ipLocation.accuracy ? ` / ${ipLocation.accuracy}` : ''
+  }`;
+  container.appendChild(coords);
+
+  return container;
+}
+
 interface GoogleMapProps {
   posts: PostData[];
   center?: { lat: number; lng: number };
@@ -225,14 +258,10 @@ export const GoogleMap: React.FC<GoogleMapProps> = ({
           },
         });
 
+        // city / country / accuracy は外部API(ipapi.co)の応答なので、
+        // 投稿本文と同様に HTML 文字列へ埋め込まず DOM として組み立てる
         const ipLocationInfoWindow = new window.google.maps.InfoWindow({
-          content: `
-            <div style="padding: 8px; text-align: center;">
-              <h4 style="margin: 0 0 4px 0; color: #ff9800;">🌐 IP-based位置</h4>
-              <p style="margin: 0 0 4px 0; font-size: 14px; color: #333;">${ipLocation.city}, ${ipLocation.country}</p>
-              <p style="margin: 0; font-size: 12px; color: #666;">緯度: ${ipLocation.lat.toFixed(6)}<br/>経度: ${ipLocation.lng.toFixed(6)}<br/>${ipLocation.accuracy}</p>
-            </div>
-          `,
+          content: buildIpLocationContent(ipLocation),
         });
 
         ipLocationMarker.addListener('click', () => {

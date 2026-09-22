@@ -281,7 +281,9 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
             }
 
             fullResponse += data;
-            charQueueRef.current.push(...data.split(''));
+            // split('') はサロゲートペアを分断して絵文字が化けるため
+            // コードポイント単位で分割する
+            charQueueRef.current.push(...Array.from(data));
             startTyping();
           }
         }

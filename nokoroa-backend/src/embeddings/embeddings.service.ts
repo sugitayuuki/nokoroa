@@ -9,7 +9,11 @@ export interface SimilarPostHit {
 
 export const EMBEDDING_DIM = 768;
 const EMBED_TIMEOUT_MS = 10_000;
-const MAX_TEXT_LEN = 8000;
+// gemini-embedding-001 の入力上限は 2,048 トークン。日本語はおおよそ
+// 1文字1トークン前後なので、文字数で保守的に切る。
+// 超過分はモデル側で黙って切り捨てられる（＝後半が検索に効かなくなる）ため、
+// アプリ側で上限を管理する。
+const MAX_TEXT_LEN = 2000;
 // pgvector の HNSW は動的候補リスト(hnsw.ef_search、既定40)を超える行を返せない。
 // ここを 40 より大きくすると「上限まで返る」という契約が実装と食い違う。
 // 40 を超えたい場合は SET LOCAL hnsw.ef_search をトランザクション内で発行する必要がある。
