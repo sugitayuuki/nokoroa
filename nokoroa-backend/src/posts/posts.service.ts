@@ -86,10 +86,11 @@ function formatPost(post: PostWithRelations) {
   return {
     ...post,
     tags: post.postTags.map((pt) => pt.tag.name),
-    location: post.location?.name || null,
-    latitude: post.location?.latitude || null,
-    longitude: post.location?.longitude || null,
-    prefecture: post.location?.prefecture || null,
+    // ?? を使う。|| だと緯度0(赤道)・経度0(本初子午線)・空文字が null に潰れる
+    location: post.location?.name ?? null,
+    latitude: post.location?.latitude ?? null,
+    longitude: post.location?.longitude ?? null,
+    prefecture: post.location?.prefecture ?? null,
   };
 }
 

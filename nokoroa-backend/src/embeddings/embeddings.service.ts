@@ -10,7 +10,10 @@ export interface SimilarPostHit {
 export const EMBEDDING_DIM = 768;
 const EMBED_TIMEOUT_MS = 10_000;
 const MAX_TEXT_LEN = 8000;
-const MAX_LIMIT = 50;
+// pgvector の HNSW は動的候補リスト(hnsw.ef_search、既定40)を超える行を返せない。
+// ここを 40 より大きくすると「上限まで返る」という契約が実装と食い違う。
+// 40 を超えたい場合は SET LOCAL hnsw.ef_search をトランザクション内で発行する必要がある。
+const MAX_LIMIT = 40;
 
 @Injectable()
 export class EmbeddingsService {

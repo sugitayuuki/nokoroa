@@ -127,8 +127,9 @@ describe('EmbeddingsService', () => {
 
       await service.searchSimilar('東京', 1_000_000);
 
-      // values は [literal, literal, limit]
-      expect(valuesOf(mockPrisma.$queryRaw)[2]).toBe(50);
+      // values は [literal, literal, limit]。
+      // 上限は hnsw.ef_search(既定40)を超えない値であること
+      expect(valuesOf(mockPrisma.$queryRaw)[2]).toBe(40);
     });
 
     it('不正なlimitでも1以上の整数になる', async () => {

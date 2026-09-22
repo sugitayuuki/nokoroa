@@ -211,6 +211,28 @@ describe('PostsService', () => {
       expect(result.favoritesCount).toBe(5);
     });
 
+    it('緯度0・経度0の座標をnullに潰さない', async () => {
+      mockPrismaService.post.findUnique.mockResolvedValue({
+        ...mockPost,
+        location: {
+          id: 2,
+          name: 'ヌル島',
+          country: 'N/A',
+          prefecture: '',
+          latitude: 0,
+          longitude: 0,
+          createdAt: new Date(),
+        },
+      });
+      mockPrismaService.bookmark.count.mockResolvedValue(0);
+
+      const result = await service.findOne(1);
+
+      expect(result.latitude).toBe(0);
+      expect(result.longitude).toBe(0);
+      expect(result.prefecture).toBe('');
+    });
+
     it('存在しない投稿IDでNotFoundExceptionを投げる', async () => {
       mockPrismaService.post.findUnique.mockResolvedValue(null);
 
