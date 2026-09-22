@@ -10,7 +10,8 @@ import { PrismaExceptionFilter } from './common/prisma-exception.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
-  const isProduction = process.env.NODE_ENV === 'production';
+  const nodeEnv = process.env.NODE_ENV;
+  const isDevelopment = nodeEnv === 'development' || nodeEnv === undefined;
 
   // ALB 配下では req.ip が ALB ノードのIPになるため、これが無いと
   // レート制限が「IPごと」ではなく「全ユーザー共有」になり、
@@ -18,11 +19,12 @@ async function bootstrap() {
   app.set('trust proxy', 1);
 
   // セキュリティヘッダ。他のミドルウェアより先に適用する。
-  // 画像は別オリジン(フロント)から参照されるため CORP は緩める。
+  app.use(helmet());
+  // 開発時のみローカル配信する画像はフロント(別オリジン)から参照されるため、
+  // この配下に限って CORP を緩める。API レスポンスは same-origin のまま。
   app.use(
-    helmet({
-      crossOriginResourcePolicy: { policy: 'cross-origin' },
-    }),
+    '/uploads',
+    helmet.crossOriginResourcePolicy({ policy: 'cross-origin' }),
   );
   app.setGlobalPrefix('api');
 
@@ -47,8 +49,9 @@ async function bootstrap() {
     .addTag('favorites', 'ブックマーク関連')
     .addTag('follows', 'フォロー関連')
     .build();
-  // API仕様書は全エンドポイントとDTOを列挙するため本番では公開しない。
-  if (!isProduction) {
+  // API仕様書は全エンドポイントとDTOを列挙するため、開発環境でのみ公開する。
+  // 「本番以外」だと staging で露出してしまうため、開発環境を明示で判定する。
+  if (isDevelopment) {
     const document = SwaggerModule.createDocument(app, config);
     SwaggerModule.setup('api/docs', app, document);
   }
@@ -70,10 +73,10 @@ async function bootstrap() {
   });
 
   // CORSの設定
-  // 本番でFRONTEND_URLが未設定だとlocalhostへフォールバックしCORSが実質無効に
-  // なるため、設定漏れは起動時に失敗させる。
+  // FRONTEND_URLが未設定だとlocalhostへフォールバックしCORSが実質無効に
+  // なるため、開発環境以外では設定漏れを起動時に失敗させる。
   const frontendUrl = process.env.FRONTEND_URL;
-  if (isProduction && !frontendUrl) {
+  if (!isDevelopment && !frontendUrl) {
     throw new Error('FRONTEND_URL is not set.');
   }
   app.enableCors({

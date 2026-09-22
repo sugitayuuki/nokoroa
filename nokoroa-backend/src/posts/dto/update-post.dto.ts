@@ -7,6 +7,7 @@ import {
   IsNumber,
   MaxLength,
   ArrayMaxSize,
+  IsUrl,
 } from 'class-validator';
 
 export class UpdatePostDto {
@@ -33,7 +34,8 @@ export class UpdatePostDto {
     example: 'https://example.com/images/kyoto.jpg',
   })
   @IsOptional()
-  @IsString()
+  @IsUrl({ protocols: ['http', 'https'], require_protocol: true })
+  @MaxLength(2048)
   imageUrl?: string;
 
   @ApiPropertyOptional({

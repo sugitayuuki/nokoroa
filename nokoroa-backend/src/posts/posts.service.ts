@@ -417,16 +417,25 @@ export class PostsService {
     });
   }
 
-  async findByAuthor(authorId: number, limit: number = 10, offset: number = 0) {
+  async findByAuthor(
+    authorId: number,
+    limit: number = 10,
+    offset: number = 0,
+    requesterId?: number,
+  ) {
+    // 非公開投稿は本人にのみ返す(他の一覧系と同じ方針に揃える)
+    const where =
+      requesterId === authorId ? { authorId } : { authorId, isPublic: true };
+
     const [posts, total] = await Promise.all([
       this.prisma.post.findMany({
-        where: { authorId },
+        where,
         include: postInclude,
         orderBy: { createdAt: 'desc' },
         skip: offset,
         take: limit,
       }),
-      this.prisma.post.count({ where: { authorId } }),
+      this.prisma.post.count({ where }),
     ]);
 
     return {

@@ -8,6 +8,7 @@ import {
   IsNotEmpty,
   MaxLength,
   ArrayMaxSize,
+  IsUrl,
 } from 'class-validator';
 
 export class CreatePostDto {
@@ -33,8 +34,9 @@ export class CreatePostDto {
     description: '投稿画像のURL',
     example: 'https://example.com/images/kyoto.jpg',
   })
-  @IsString()
+  @IsUrl({ protocols: ['http', 'https'], require_protocol: true })
   @IsNotEmpty({ message: '画像は必須です' })
+  @MaxLength(2048)
   imageUrl: string;
 
   @ApiPropertyOptional({

@@ -191,8 +191,10 @@ export class FavoritesService {
   }
 
   async getFavoriteStats(postId: number) {
+    // 無認証で呼べるエンドポイントなので、非公開投稿の人気度を
+    // 観測できないよう公開投稿に限定する
     const count = await this.prisma.bookmark.count({
-      where: { postId },
+      where: { postId, post: { isPublic: true } },
     });
 
     return { favoritesCount: count };
