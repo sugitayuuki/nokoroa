@@ -1,18 +1,50 @@
 # Nokoroa
 
-旅の思い出を共有するソーシャルプラットフォーム
+**旅の思い出を、地図の上に残していく。**
+
+行った場所、撮った写真、そのとき感じたこと。ばらばらになりがちな旅の記録を、
+ひとつの地図の上にまとめて置いておけるサービスです。
 
 **URL**: https://nokoroa.com
 
-> **Note**: 現在、コスト削減のため本番環境の稼働を停止しています。動作確認はデモ動画をご覧ください。
+> [!NOTE]
+> 現在、コスト削減のため本番環境は停止しています。動きは下の[デモ動画](#デモ動画)でご覧いただけます。
+> ローカルでも [数コマンドで起動できます](#ローカルで動かす)。
 
 ![Nokoroa Screenshot](https://github.com/sugitayuuki/nokoroa/releases/download/assets/screencapture-localhost-3000-2025-11-26-02_41_56.png)
 
+## なぜ作ったのか
+
+旅行が好きで、帰ってきたあとに写真を見返す時間もわりと好きです。
+でもその「見返す」がいつも少し面倒でした。
+
+Instagram に上げた写真は日常の投稿に埋もれてしまうし、カメラロールは日付順に並ぶだけ。
+「3年前のあの街、何を食べたんだっけ」を思い出そうとすると、結局スクロールの旅が始まります。
+旅行特化のアプリもいくつか試してみたのですが、しっくりくるものに出会えませんでした。
+
+ないなら作ろう！ ということで作ったのが Nokoroa です。
+**時系列ではなく場所から辿れること**を中心に据えて、地図・タグ・AI検索を組み立てています。
+
+## できること
+
+旅の記録を投稿して、あとからいろいろな入り口で探し出せます。
+
+| できること | 中身 |
+| --- | --- |
+| **投稿する** | 写真・位置情報・タグをまとめて1つの思い出として記録 |
+| **地図から探す** | Google Maps 上にピンが並び、訪れた場所から辿れる |
+| **AI に聞いて探す** | 「海がきれいだった場所」のような曖昧な言葉でも見つかる |
+| **とっておく** | 気になった投稿をブックマーク |
+| **つながる** | フォロー / フォロワー、プロフィール管理 |
+| **ログイン** | メール + パスワード、または Google アカウント |
 
 ### AIチャット（RAG）
 
-投稿本文を Gemini で埋め込み、pgvector に保存。質問に近い投稿をベクトル検索で取り出し、
-文脈として Gemini に渡して SSE でストリーミング応答します。
+「あの時の、海がきれいだったところ」——タグにも本文にも書いていない曖昧な言葉で探せるように、
+RAG を実装しました。
+
+投稿本文を Gemini で埋め込みベクトルに変換して pgvector に保存し、質問に近い投稿をベクトル検索で取り出して、
+文脈として Gemini に渡します。返答は SSE でストリーミングされるので、待ち時間が「無言の数秒」になりません。
 
 ![Image](https://github.com/user-attachments/assets/caa08bd7-da73-4388-b8d2-4e2108cda0a7)
 
@@ -20,22 +52,9 @@
 
 https://github.com/user-attachments/assets/f07d74f1-8a48-466a-92bb-30d0cdebf994
 
-## 概要
+## 触ってみる
 
-Nokoroaは、旅行の思い出を写真と共に共有できるWebアプリケーションです。ユーザーは旅先での体験を投稿し、地図上で視覚的に探索できます。
-
-### 主な機能
-
-- 写真・位置情報・タグ付きの旅行体験投稿
-- Google Mapsを活用した地図検索
-- ブックマーク機能
-- フォロー/フォロワー機能
-- ユーザープロフィール管理
-- Google OAuth認証
-
-## テストユーザー
-
-以下のアカウントでログインできます。
+ログインからやると手間だと思うので、そのまま使えるアカウントを用意しました。どうぞご自由に！
 
 | メールアドレス | パスワード |
 |---------------|-----------|
@@ -45,67 +64,61 @@ Nokoroaは、旅行の思い出を写真と共に共有できるWebアプリケ�
 | `david@example.com` | `password123` |
 | `alex@example.com` | `password123` |
 
-## 開発背景
+## 技術選定 — 何を考えて選んだか
 
-旅行が好きで、旅先での思い出を共有することに特化したサービスがあれば便利だと感じたのがきっかけです。
-
-Instagramなどの既存SNSでは、投稿形式が限定されていたり、旅行以外の様々な投稿が混在してしまい、旅行体験だけを振り返ったり探したりするのが難しいと感じていました。また、旅行に特化した既存アプリを探してみましたが、満足できるものが見つかりませんでした。
-
-そこで、旅行の思い出共有に特化し、地図から投稿を探せるなど旅行体験に最適化されたプラットフォームを自分で作ることにしました。
-
-## 技術選定理由
-
-各技術を採用した理由を記載しております。
+「流行っているから」だけで選ばないようにしました。
+それぞれ、こう考えて決めています。
 
 ### バックエンド: NestJS
 
-**採用理由**:
-- 前職で使用しており、実務経験があったため
-- フロントエンドのNext.jsと同じTypeScriptで統一できるため
-- 中規模サービスを想定しており、NestJSのモジュール構造がちょうど良いと判断したため
+前職で書いていたので、**手が覚えている**のが一番大きい理由です。
+個人開発で学習コストを2つ同時に払うと、だいたいどちらも中途半端になります。
+
+加えて、フロントの Next.js と TypeScript で揃えられること、
+想定していた規模（中規模）に対して NestJS のモジュール構造がちょうど良かったことが決め手でした。
 
 ### ORM: Prisma
 
-**採用理由**:
-- スキーマ駆動開発ができ、マイグレーション管理が直感的なため
-- 生成される型が厳密で、コンパイル時にDBアクセスのエラーを検出できるため
-- ドキュメントが充実しており、学習しやすかったため
-
-### インフラ: AWS ECS Fargate + Terraform
-
-**採用理由**:
-- 実務で使われるインフラ構成を経験したかったため
-- Terraformでインフラをコード管理することで、環境の再現性を担保できるため
-- Fargateを選択することで、サーバー管理の負担を減らしつつ本番運用レベルの構成を実現できるため
-
-### 認証: JWT + Google OAuth
-
-**採用理由**:
-- 認証の仕組みを理解するため、自前でJWT認証を実装したかったため
-- 外部サービスに依存せず、認証フロー全体をコントロールできるため
-- Google OAuthはユーザーの利便性向上のために追加したため
-
-### CI / CD: GitHub Actions
-
-**採用理由**:
-- GitHubとの統合がシームレスで、設定が直感的なため
-- パブリックリポジトリであれば無料枠が大きいため
+スキーマファイルが1つあれば、そこからマイグレーションも型も生成されるのが気持ちよかったからです。
+DB アクセスのミスがコンパイル時に落ちるので、実行して初めて気づくことがだいぶ減りました。
+ドキュメントが丁寧で詰まりにくいのも、1人で書く上では効いています。
 
 ### フロントエンド: Next.js (App Router)
 
-**採用理由**:
-- 前職で使用しており、実務経験があったため
-- Reactエコシステムが充実しており、情報量が多いため
-- App Routerを使うことで、最新のReact Server Componentsを活用できるため
-- React/Next.jsが世界的なトレンドだったため
+こちらも前職での経験が土台です。React エコシステムの層の厚さは1人開発だと素直に助かります。
 
-## ローカルでの起動
+App Router を選んだのは、React Server Components を実際に触ってみたかったからです。
+ただし**この判断には反省点もあります** — 認証トークンを localStorage に置いた結果、
+サーバー側でトークンを読めず、ほとんどのページが Client Component になりました。
+Cookie 認証に移せば段階的に RSC 化できる、というのが現時点の整理です。
 
-### 前提
+### 認証: JWT + Google OAuth
+
+ライブラリに丸投げすれば早かったのですが、**認証は仕組みを理解しておきたかった**ので自前で実装しました。
+おかげでトークンの寿命や失効の難しさを、身をもって理解することになりました。
+
+Google OAuth は、パスワードを覚えてもらう前提のサービスにしたくなかったので追加しています。
+
+### インフラ: AWS ECS Fargate + Terraform
+
+実務で使われる構成を、自分の手で最初から組んでみたかったからです。
+Terraform でコード化しておけば「あの設定どこで変えたっけ」が起きず、環境ごと作り直せます。
+Fargate はサーバーの面倒を見なくていい分、アプリ側に時間を使えました。
+
+### CI / CD: GitHub Actions
+
+リポジトリと同じ場所で完結するのが一番の理由です。
+パブリックリポジトリなら無料枠が大きいのも、個人開発では現実的に効きます。
+
+## ローカルで動かす
+
+手元で動かせるところまで、なるべく短い手順にしました。4ステップです！
+
+### 用意するもの
 
 - Docker / Docker Compose
 - Node.js 22 以上（フロントエンドをホストで動かす場合）
-- Gemini API キー（AIチャットを使う場合のみ。無くても他の機能は動きます）
+- Gemini API キー — **AIチャットを使う場合のみ**。無くても投稿・地図・検索はふつうに動きます
 
 ### 手順
 
@@ -142,49 +155,60 @@ npm run dev
 | API ドキュメント (Swagger) | http://localhost:4000/api/docs |
 | AI サービス | http://localhost:8000 |
 
-既存の投稿に埋め込みを作るには `npm run backfill:embeddings`（`nokoroa-backend` 配下）を実行します。
+お疲れさまでした、ここまでで一通り動きます！ AIチャットで既存の投稿もヒットさせたい場合は、
+`nokoroa-backend` 配下で `npm run backfill:embeddings` を実行して埋め込みを作ってください。
 
-### 運用上の注意
+<details>
+<summary><b>運用するときに踏みやすい落とし穴（3つ）</b></summary>
 
-- **埋め込みモデル（`EMBEDDING_MODEL`）を変更した場合は、必ず全件の再埋め込みが必要です。**
-  モデルごとにベクトル空間が異なるため、新旧のベクトルが混在すると類似度検索の結果が壊れます。
-  ```bash
-  cd nokoroa-backend && npm run backfill:embeddings -- --all
-  ```
-- スキーマ変更を含むデプロイでは、アプリの入れ替え前に `npx prisma migrate deploy` を実行してください（現状、デプロイワークフローには含まれていません）。
-- 非公開投稿の埋め込みを過去分まで削除するには `npm run purge:private-embeddings`（`-- --dry-run` で件数確認）。
+実際に自分が踏んだ・踏みかけたものです。同じ思いをする人が出ないように残しておきます！
+
+**1. 埋め込みモデルを変えたら、必ず全件やり直す**
+
+> [!WARNING]
+> モデルが違うとベクトル空間そのものが違うので、新旧が混ざると**検索結果が静かに壊れます**。
+> エラーは出ません。ただ「なんか検索がバカになった」という形で表に出ます。
+
+```bash
+cd nokoroa-backend && npm run backfill:embeddings -- --all
+```
+
+**2. スキーマ変更を含むデプロイは、先にマイグレーション**
+
+アプリを入れ替える前に `npx prisma migrate deploy` を実行してください。
+現状これは**デプロイワークフローに入っていません**（認識していて、まだ直せていない箇所です）。
+
+**3. 非公開にした投稿の埋め込みは、自動では消えない**
+
+過去分をまとめて消すには下記を。`-- --dry-run` を付けると件数だけ確認できます。
+
+```bash
+npm run purge:private-embeddings
+```
+
+</details>
 
 ## 使用技術一覧
 
-**バックエンド**: Node.js 22 / NestJS 11 / TypeScript 5 / Prisma 6 / PostgreSQL
+ひと目で分かるように表にまとめました！
 
-コード解析 / フォーマッター: ESLint / Prettier
-
-テストフレームワーク: Jest / SuperTest
-
-**フロントエンド**: TypeScript 5 / React 19 / Next.js 15 (App Router)
-
-コード解析 / フォーマッター: ESLint / Prettier
-
-CSSフレームワーク: Material-UI v7
-
-主要パッケージ: SWR / React Hook Form / Zod / react-hot-toast / date-fns
-
-**AI / RAG**: Python 3.12 / FastAPI / Google Gemini (チャット + 埋め込み) / pgvector (HNSW)
-
-**インフラ**: AWS (Route53 / ACM / ALB / VPC / ECR / ECS Fargate / RDS PostgreSQL / S3 / CloudWatch)
-
-CI / CD: GitHub Actions
-
-IaC: Terraform
-
-環境構築: Docker / Docker Compose
-
-**認証**: JWT / Google OAuth 2.0
-
-**外部API**: Google Maps JavaScript API
+| 分類 | 使用技術 |
+| --- | --- |
+| **バックエンド** | Node.js 22 / NestJS 11 / TypeScript 5 / Prisma 6 / PostgreSQL |
+| **フロントエンド** | TypeScript 5 / React 19 / Next.js 15 (App Router) / Material-UI v7 |
+| **主要パッケージ** | SWR / React Hook Form / Zod / react-hot-toast / date-fns |
+| **AI / RAG** | Python 3.12 / FastAPI / Google Gemini（チャット + 埋め込み）/ pgvector (HNSW) |
+| **インフラ** | AWS（Route53 / ACM / ALB / VPC / ECR / ECS Fargate / RDS PostgreSQL / S3 / CloudWatch） |
+| **IaC / 環境構築** | Terraform / Docker / Docker Compose |
+| **CI / CD** | GitHub Actions |
+| **認証** | JWT / Google OAuth 2.0 |
+| **外部API** | Google Maps JavaScript API |
+| **テスト** | Jest / SuperTest（ユニット + E2E） |
+| **静的解析** | ESLint / Prettier（フロント・バックとも） |
 
 ## ER図
+
+`Post` を中心に、場所（`Location`）・タグ（`Tag`）・埋め込み（`PostEmbedding`）がぶら下がる形です。
 
 ```mermaid
 erDiagram
@@ -273,6 +297,11 @@ erDiagram
 
 ## ディレクトリ構成
 
+バックエンド / AI / フロントエンド / インフラの4つに分かれています。長いので折りたたんでいます。
+
+<details>
+<summary><b>全体を見る</b></summary>
+
 ```
 nokoroa/
 ├── nokoroa-backend/
@@ -344,6 +373,16 @@ nokoroa/
     └── outputs.tf
 ```
 
+</details>
+
 ## インフラ構成図
 
+ALB の後ろに ECS Fargate、その中に backend と AI サービスを同居させています。
+AI サービスは外部に出さず、localhost 経由でのみ呼べる構成です。
+
 ![Infrastructure](https://github.com/sugitayuuki/nokoroa/releases/download/assets/messageImage_1764334338555.jpg)
+
+---
+
+ここまで読んでいただき、ありがとうございました！
+気になった点があれば、[Issue](https://github.com/sugitayuuki/nokoroa/issues) からお気軽にどうぞ。
