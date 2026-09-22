@@ -1,19 +1,20 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 
+import { isDevelopmentEnv } from '../common/environment';
+
 @Injectable()
 export class PrismaService
   extends PrismaClient
   implements OnModuleInit, OnModuleDestroy
 {
   constructor() {
-    // 本番でqueryログを出すと、WHERE句の値(メールアドレス等)がそのまま
-    // ログ基盤へ流れるため開発時のみ有効にする。
+    // queryログはWHERE句の値(メールアドレス等)をそのまま出力するため、
+    // 開発環境に限定する(本番のログ基盤への流出とテスト出力の汚染を防ぐ)。
     super({
-      log:
-        process.env.NODE_ENV === 'production'
-          ? ['warn', 'error']
-          : ['query', 'info', 'warn', 'error'],
+      log: isDevelopmentEnv()
+        ? ['query', 'info', 'warn', 'error']
+        : ['warn', 'error'],
     });
   }
 

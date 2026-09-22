@@ -1,5 +1,6 @@
 import {
   Injectable,
+  BadRequestException,
   ConflictException,
   NotFoundException,
 } from '@nestjs/common';
@@ -10,8 +11,19 @@ export class FollowsService {
   constructor(private prisma: PrismaService) {}
 
   async follow(followerId: number, followingId: number) {
+    // 入力自体が不正なので、状態の競合を表す 409 ではなく 400 を返す
     if (followerId === followingId) {
-      throw new ConflictException('自分自身をフォローすることはできません');
+      throw new BadRequestException('自分自身をフォローすることはできません');
+    }
+
+    // 事前に存在確認しないと、外部キー違反が未処理のまま 500 になる
+    const target = await this.prisma.user.findUnique({
+      where: { id: followingId },
+      select: { id: true },
+    });
+
+    if (!target) {
+      throw new NotFoundException('ユーザーが見つかりません');
     }
 
     const existingFollow = await this.prisma.follow.findUnique({

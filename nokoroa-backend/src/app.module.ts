@@ -19,7 +19,12 @@ import { UsersModule } from './users/users.module';
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     // 既定のレート制限。認証系やAI課金が絡む経路は @Throttle で個別に絞る。
-    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
+    // e2e は同一プロセスから多数のリクエストを撃つため、テスト時は無効化する
+    // (skipIf は @Throttle による個別指定にも効く)。
+    ThrottlerModule.forRoot({
+      throttlers: [{ ttl: 60_000, limit: 100 }],
+      skipIf: () => process.env.NODE_ENV === 'test',
+    }),
     CommonModule,
     UsersModule,
     PrismaModule,

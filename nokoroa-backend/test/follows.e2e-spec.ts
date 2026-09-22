@@ -9,7 +9,6 @@ import {
   FollowCheckResponse,
   FollowersResponse,
   FollowingResponse,
-  FollowResponse,
   FollowStatsResponse,
 } from './types';
 import { AppModule } from '../src/app.module';
@@ -64,8 +63,8 @@ describe('Follows (e2e)', () => {
         .set('Authorization', `Bearer ${user1Token}`)
         .expect(201);
 
-      const body = response.body as FollowResponse;
-      expect(body.success).toBe(true);
+      const body = response.body as { following: { id: number } };
+      expect(body.following.id).toBe(user2Id);
     });
 
     it('認証なしではフォローできない', async () => {
@@ -98,8 +97,8 @@ describe('Follows (e2e)', () => {
         .set('Authorization', `Bearer ${user1Token}`)
         .expect(200);
 
-      const body = response.body as FollowResponse;
-      expect(body.success).toBe(true);
+      const body = response.body as { message: string };
+      expect(body.message).toBe('フォローを解除しました');
     });
 
     it('認証なしではフォロー解除できない', async () => {
