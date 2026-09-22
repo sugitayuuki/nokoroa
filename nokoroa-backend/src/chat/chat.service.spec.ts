@@ -108,6 +108,42 @@ describe('ChatService', () => {
     expect(sent.history[sent.history.length - 1].content).toHaveLength(8000);
   });
 
+  it('切り詰め位置が絵文字の途中でも孤立サロゲートを残さない', async () => {
+    mockEmbeddings.searchSimilar.mockResolvedValue([]);
+    mockPosts.search.mockResolvedValue({ posts: [], total: 0, hasMore: false });
+    makeStreamFetch();
+
+    // 総バジェット20000の境界がサロゲートペアの中央に来るよう配置する
+    const history = [
+      { role: 'user', content: 'あ'.repeat(19999) + '😀' },
+      { role: 'model', content: 'ok' },
+    ];
+
+    await service.streamChat({ message: 'test', history }, makeRes());
+
+    const streamCall = (
+      global.fetch as jest.Mock<unknown, [string, { body: string }]>
+    ).mock.calls.find(([url]) => url.includes('/api/chat/stream'));
+    const sent = JSON.parse(streamCall[1].body) as {
+      history: { content: string }[];
+    };
+
+    for (const msg of sent.history) {
+      for (let i = 0; i < msg.content.length; i++) {
+        const unit = msg.content.charCodeAt(i);
+        const isHigh = unit >= 0xd800 && unit <= 0xdbff;
+        const isLow = unit >= 0xdc00 && unit <= 0xdfff;
+        if (isHigh) {
+          const next = msg.content.charCodeAt(i + 1);
+          expect(next >= 0xdc00 && next <= 0xdfff).toBe(true);
+          i++;
+        } else {
+          expect(isLow).toBe(false);
+        }
+      }
+    }
+  });
+
   it('履歴が無い場合は空配列を送る', async () => {
     mockEmbeddings.searchSimilar.mockResolvedValue([]);
     mockPosts.search.mockResolvedValue({ posts: [], total: 0, hasMore: false });

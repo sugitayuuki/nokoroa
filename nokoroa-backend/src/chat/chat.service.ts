@@ -12,6 +12,21 @@ import {
 import { RelatedPostsRequestDto } from './dto/related-posts-request.dto';
 import { SuggestionsRequestDto } from './dto/suggestions-request.dto';
 
+/**
+ * 文字列を指定長で切り詰める。境界が絵文字などのサロゲートペアの途中に
+ * 落ちた場合は1コードユニット余分に削る。
+ * 孤立サロゲートを残すと、受け側(Python)でUTF-8エンコードに失敗する。
+ */
+function sliceSafely(text: string, maxLength: number): string {
+  const cut = text.slice(0, maxLength);
+  if (cut.length === 0) return cut;
+
+  const lastUnit = cut.charCodeAt(cut.length - 1);
+  const isLoneHighSurrogate = lastUnit >= 0xd800 && lastUnit <= 0xdbff;
+
+  return isLoneHighSurrogate ? cut.slice(0, -1) : cut;
+}
+
 const AI_REQUEST_TIMEOUT_MS = 10_000;
 const AI_STREAM_TIMEOUT_MS = 60_000;
 // 検索ヒット0件時のキーワード分割フォールバックで走査する最大単語数。
@@ -55,8 +70,8 @@ export class ChatService {
 
     for (const msg of history.slice(-MAX_HISTORY_ITEMS).reverse()) {
       if (budget <= 0) break;
-      const content = msg.content.slice(
-        0,
+      const content = sliceSafely(
+        msg.content,
         Math.min(budget, MAX_HISTORY_CONTENT_LENGTH),
       );
       budget -= content.length;
