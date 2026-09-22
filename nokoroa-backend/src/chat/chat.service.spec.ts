@@ -80,6 +80,29 @@ describe('ChatService', () => {
     expect(mockPosts.search).not.toHaveBeenCalled();
   });
 
+  it('AIへ送る履歴は件数と本文長を上限まで切り詰める', async () => {
+    mockEmbeddings.searchSimilar.mockResolvedValue([]);
+    mockPosts.search.mockResolvedValue({ posts: [], total: 0, hasMore: false });
+    makeStreamFetch();
+
+    const history = Array.from({ length: 50 }, (_, i) => ({
+      role: i % 2 === 0 ? 'user' : 'model',
+      content: 'x'.repeat(20000),
+    }));
+
+    await service.streamChat({ message: 'test', history }, makeRes());
+
+    const streamCall = (
+      global.fetch as jest.Mock<unknown, [string, { body: string }]>
+    ).mock.calls.find(([url]) => url.includes('/api/chat/stream'));
+    const sent = JSON.parse(streamCall[1].body) as {
+      history: { content: string }[];
+    };
+
+    expect(sent.history).toHaveLength(20);
+    expect(sent.history[0].content).toHaveLength(8000);
+  });
+
   it('ベクトル検索ヒット0件ならキーワード検索を呼ぶ', async () => {
     mockEmbeddings.searchSimilar.mockResolvedValue([]);
     mockPosts.search.mockResolvedValue({

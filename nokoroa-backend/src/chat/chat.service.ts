@@ -3,7 +3,11 @@ import { ConfigService } from '@nestjs/config';
 import { Response } from 'express';
 import { EmbeddingsService } from '../embeddings/embeddings.service';
 import { PostsService } from '../posts/posts.service';
-import { ChatRequestDto } from './dto/chat-request.dto';
+import {
+  ChatRequestDto,
+  MAX_HISTORY_CONTENT_LENGTH,
+  MAX_HISTORY_ITEMS,
+} from './dto/chat-request.dto';
 import { RelatedPostsRequestDto } from './dto/related-posts-request.dto';
 import { SuggestionsRequestDto } from './dto/suggestions-request.dto';
 
@@ -29,6 +33,21 @@ export class ChatService {
       'http://localhost:8000';
     this.internalToken =
       this.configService.get<string>('INTERNAL_AI_TOKEN') || '';
+  }
+
+  /**
+   * AIへ転送する会話履歴を上限まで切り詰める。
+   * DTOの上限は「拒否」でしかないため、実際に外部へ送る量はここで抑える
+   * (クライアントの善意に依存しない)。
+   */
+  private trimHistory(
+    history: ChatRequestDto['history'],
+  ): ChatRequestDto['history'] {
+    if (!history) return [];
+    return history.slice(-MAX_HISTORY_ITEMS).map((msg) => ({
+      ...msg,
+      content: msg.content.slice(0, MAX_HISTORY_CONTENT_LENGTH),
+    }));
   }
 
   /** AIサービスは内部呼び出しのみを受け付けるため、全リクエストに内部トークンを付ける */
@@ -124,7 +143,7 @@ export class ChatService {
         headers: this.aiHeaders(),
         body: JSON.stringify({
           message: dto.message,
-          history: dto.history || [],
+          history: this.trimHistory(dto.history),
           context_posts: contextPosts,
         }),
         signal: AbortSignal.timeout(AI_STREAM_TIMEOUT_MS),

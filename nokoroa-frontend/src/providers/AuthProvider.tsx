@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
+import { mutate } from 'swr';
 
 import { useSmoothNavigation } from '@/hooks/useSmoothNavigation';
 import { API_CONFIG, createApiRequest } from '@/lib/apiConfig';
@@ -155,6 +156,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.removeItem('jwt');
     setIsAuthenticated(false);
     setUser(undefined);
+
+    // SWRのキャッシュはモジュールスコープで保持され、SPA遷移では破棄されない。
+    // 認証済みで取得した内容(自分の非公開投稿など)が、同じ端末で次に
+    // ログインした別ユーザーに一瞬描画されるのを防ぐ。
+    void mutate(() => true, undefined, { revalidate: false });
 
     // 即座にホームページにリダイレクト
     navigation.push('/');
