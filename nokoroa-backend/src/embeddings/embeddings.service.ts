@@ -50,17 +50,14 @@ export class EmbeddingsService {
 
     const literal = this.vectorLiteral(vector);
     try {
-      await this.prisma.$executeRawUnsafe(
-        `INSERT INTO post_embedding ("postId", "contentText", embedding, "createdAt", "updatedAt")
-         VALUES ($1, $2, $3::vector, NOW(), NOW())
-         ON CONFLICT ("postId") DO UPDATE SET
-           "contentText" = EXCLUDED."contentText",
-           embedding = EXCLUDED.embedding,
-           "updatedAt" = NOW()`,
-        postId,
-        text,
-        literal,
-      );
+      await this.prisma.$executeRaw`
+        INSERT INTO post_embedding ("postId", "contentText", embedding, "createdAt", "updatedAt")
+        VALUES (${postId}, ${text}, ${literal}::vector, NOW(), NOW())
+        ON CONFLICT ("postId") DO UPDATE SET
+          "contentText" = EXCLUDED."contentText",
+          embedding = EXCLUDED.embedding,
+          "updatedAt" = NOW()
+      `;
     } catch (err) {
       this.logger.warn(
         `Failed to upsert embedding for post ${postId}: ${err instanceof Error ? err.message : 'unknown'}`,
@@ -74,10 +71,8 @@ export class EmbeddingsService {
    */
   async deleteForPost(postId: number): Promise<void> {
     try {
-      await this.prisma.$executeRawUnsafe(
-        `DELETE FROM post_embedding WHERE "postId" = $1`,
-        postId,
-      );
+      await this.prisma
+        .$executeRaw`DELETE FROM post_embedding WHERE "postId" = ${postId}`;
     } catch (err) {
       this.logger.warn(
         `Failed to delete embedding for post ${postId}: ${err instanceof Error ? err.message : 'unknown'}`,
@@ -105,18 +100,16 @@ export class EmbeddingsService {
     const literal = this.vectorLiteral(vector);
 
     try {
-      const rows = await this.prisma.$queryRawUnsafe<
+      const rows = await this.prisma.$queryRaw<
         { postId: number; distance: number }[]
-      >(
-        `SELECT pe."postId", (pe.embedding <=> $1::vector)::float8 AS distance
-         FROM post_embedding pe
-         JOIN post p ON p.id = pe."postId"
-         WHERE p."isPublic" = true
-         ORDER BY pe.embedding <=> $1::vector
-         LIMIT $2`,
-        literal,
-        safeLimit,
-      );
+      >`
+        SELECT pe."postId", (pe.embedding <=> ${literal}::vector)::float8 AS distance
+        FROM post_embedding pe
+        JOIN post p ON p.id = pe."postId"
+        WHERE p."isPublic" = true
+        ORDER BY pe.embedding <=> ${literal}::vector
+        LIMIT ${safeLimit}
+      `;
       return rows.map((r) => ({
         postId: Number(r.postId),
         distance: Number(r.distance),

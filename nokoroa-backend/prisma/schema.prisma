@@ -54,7 +54,8 @@ model Post {
 }
 
 /// Vector(768)はpgvector拡張に依存。Prisma Clientから embedding カラムには直接アクセスできず、
-/// raw SQL（$queryRawUnsafe / $executeRawUnsafe）で扱う。
+/// raw SQL で扱う。タグ付きテンプレートの $queryRaw / $executeRaw を使うこと。
+/// *Unsafe 系は文字列連結の余地が残り、レビューで毎回「安全か」の確認コストが発生する。
 /// Post削除時は onDelete: Cascade で自動削除されるため、明示的な削除は不要。
 /// 次元数 768 は nokoroa-ai/app/services/gemini_service.py の EMBEDDING_DIM と整合させること。
 model PostEmbedding {
