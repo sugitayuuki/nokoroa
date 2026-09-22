@@ -8,6 +8,10 @@ import { cleanupDatabase } from './setup';
 import { PostResponse, PostsListResponse } from './types';
 import { AppModule } from '../src/app.module';
 
+// imageUrl は必須項目。ローカル保存形式(localhostホスト)も通ることを併せて確認する。
+const TEST_IMAGE_URL = 'https://example.com/images/test.jpg';
+const LOCAL_IMAGE_URL = 'http://localhost:4000/uploads/public/images/test.jpg';
+
 describe('Posts (e2e)', () => {
   let app: INestApplication;
   let server: Server;
@@ -48,6 +52,7 @@ describe('Posts (e2e)', () => {
         .send({
           title: 'テスト投稿',
           content: 'これはテスト投稿です',
+          imageUrl: TEST_IMAGE_URL,
           location: '東京',
           tags: ['旅行', 'グルメ'],
         })
@@ -69,6 +74,30 @@ describe('Posts (e2e)', () => {
         .expect(401);
     });
 
+    it('ローカル保存形式(localhost)のimageUrlでも作成できる', async () => {
+      await request(server)
+        .post('/posts')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          title: 'ローカル画像',
+          content: 'ローカル保存の画像URL',
+          imageUrl: LOCAL_IMAGE_URL,
+        })
+        .expect(201);
+    });
+
+    it('http(s)以外のimageUrlは拒否する', async () => {
+      await request(server)
+        .post('/posts')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          title: '不正な画像URL',
+          content: '本文',
+          imageUrl: 'javascript:alert(1)',
+        })
+        .expect(400);
+    });
+
     it('タイトルなしでは投稿を作成できない', async () => {
       await request(server)
         .post('/posts')
@@ -85,11 +114,11 @@ describe('Posts (e2e)', () => {
       await request(server)
         .post('/posts')
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ title: '投稿1', content: '内容1' });
+        .send({ title: '投稿1', content: '内容1', imageUrl: TEST_IMAGE_URL });
       await request(server)
         .post('/posts')
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ title: '投稿2', content: '内容2' });
+        .send({ title: '投稿2', content: '内容2', imageUrl: TEST_IMAGE_URL });
     });
 
     it('投稿一覧を取得できる', async () => {
@@ -119,7 +148,11 @@ describe('Posts (e2e)', () => {
       const response = await request(server)
         .post('/posts')
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ title: '詳細テスト', content: '詳細内容' });
+        .send({
+          title: '詳細テスト',
+          content: '詳細内容',
+          imageUrl: TEST_IMAGE_URL,
+        });
       postId = (response.body as PostResponse).id;
     });
 
@@ -146,7 +179,11 @@ describe('Posts (e2e)', () => {
       const response = await request(server)
         .post('/posts')
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ title: '更新前', content: '更新前内容' });
+        .send({
+          title: '更新前',
+          content: '更新前内容',
+          imageUrl: TEST_IMAGE_URL,
+        });
       postId = (response.body as PostResponse).id;
     });
 
@@ -187,7 +224,11 @@ describe('Posts (e2e)', () => {
       const response = await request(server)
         .post('/posts')
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ title: '削除テスト', content: '削除内容' });
+        .send({
+          title: '削除テスト',
+          content: '削除内容',
+          imageUrl: TEST_IMAGE_URL,
+        });
       postId = (response.body as PostResponse).id;
     });
 
@@ -222,6 +263,7 @@ describe('Posts (e2e)', () => {
         .send({
           title: '東京旅行',
           content: '東京に行きました',
+          imageUrl: TEST_IMAGE_URL,
           location: '東京',
         });
       await request(server)
@@ -230,6 +272,7 @@ describe('Posts (e2e)', () => {
         .send({
           title: '大阪グルメ',
           content: '大阪で美味しいものを食べました',
+          imageUrl: TEST_IMAGE_URL,
           location: '大阪',
         });
     });

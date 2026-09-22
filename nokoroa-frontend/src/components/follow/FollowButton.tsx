@@ -7,7 +7,7 @@ import {
 import { Button, CircularProgress } from '@mui/material';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { toast } from 'react-hot-toast';
+import { toast } from 'react-toastify';
 
 import { checkFollowStatus, followUser, unfollowUser } from '@/lib/follows';
 import { useAuth } from '@/providers/AuthProvider';

@@ -5,6 +5,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { publicAuthorSelect } from '../common/public-author.select';
 import {
   EmbeddingsService,
   SimilarPostHit,
@@ -16,6 +17,19 @@ import { SearchPostsSemanticDto } from './dto/search-posts-semantic.dto';
 import { SearchPostsDto } from './dto/search-posts.dto';
 import { UpdatePostDto } from './dto/update-post.dto';
 
+const MAX_PAGE_SIZE = 50;
+
+/** 数値でない値・範囲外の値を安全な既定値に丸める */
+function clampInt(
+  value: number,
+  min: number,
+  max: number,
+  fallback: number,
+): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(Math.max(Math.trunc(value), min), max);
+}
+
 function slugify(text: string): string {
   return text
     .toLowerCase()
@@ -26,7 +40,7 @@ function slugify(text: string): string {
 
 const postInclude = {
   author: {
-    select: { id: true, name: true, email: true, avatar: true },
+    select: publicAuthorSelect,
   },
   location: true,
   postTags: {
@@ -49,7 +63,6 @@ interface PostWithRelations {
   author: {
     id: number;
     name: string;
-    email: string;
     avatar: string | null;
   };
   location: {
@@ -77,10 +90,11 @@ function formatPost(post: PostWithRelations) {
   return {
     ...post,
     tags: post.postTags.map((pt) => pt.tag.name),
-    location: post.location?.name || null,
-    latitude: post.location?.latitude || null,
-    longitude: post.location?.longitude || null,
-    prefecture: post.location?.prefecture || null,
+    // ?? を使う。|| だと緯度0(赤道)・経度0(本初子午線)・空文字が null に潰れる
+    location: post.location?.name ?? null,
+    latitude: post.location?.latitude ?? null,
+    longitude: post.location?.longitude ?? null,
+    prefecture: post.location?.prefecture ?? null,
   };
 }
 
@@ -93,14 +107,30 @@ export class PostsService {
     private embeddingsService: EmbeddingsService,
   ) {}
 
-  private fireEmbedding(postId: number, title: string, content: string): void {
-    this.embeddingsService
-      .generateForPost(postId, title, content)
-      .catch((err: unknown) => {
-        this.logger.error(
-          `embedding generation failed for post ${postId}: ${err instanceof Error ? err.message : 'unknown'}`,
-        );
-      });
+  /**
+   * 投稿の埋め込みを非同期で同期させる。
+   * 非公開投稿は外部AIへ本文を送らず、既存の埋め込みも削除する
+   * (post_embedding は可視性を持たないため、行を残さないことで守る)。
+   */
+  private syncEmbedding(post: {
+    id: number;
+    title: string;
+    content: string;
+    isPublic: boolean;
+  }): void {
+    const task = post.isPublic
+      ? this.embeddingsService.generateForPost(
+          post.id,
+          post.title,
+          post.content,
+        )
+      : this.embeddingsService.deleteForPost(post.id);
+
+    task.catch((err: unknown) => {
+      this.logger.error(
+        `embedding sync failed for post ${post.id}: ${err instanceof Error ? err.message : 'unknown'}`,
+      );
+    });
   }
 
   private async getOrCreateLocation(
@@ -200,19 +230,23 @@ export class PostsService {
       include: postInclude,
     });
 
-    this.fireEmbedding(post.id, post.title, post.content);
+    this.syncEmbedding(post);
 
     return formatPost(post as PostWithRelations);
   }
 
   async findAll(limit: number = 10, offset: number = 0) {
+    // コントローラから渡る値は生の parseInt なので、NaN や過大値をここで正規化する
+    const take = clampInt(limit, 1, MAX_PAGE_SIZE, 10);
+    const skip = clampInt(offset, 0, Number.MAX_SAFE_INTEGER, 0);
+
     const [posts, total] = await Promise.all([
       this.prisma.post.findMany({
         where: { isPublic: true },
         include: postInclude,
         orderBy: { createdAt: 'desc' },
-        skip: offset,
-        take: limit,
+        skip,
+        take,
       }),
       this.prisma.post.count({ where: { isPublic: true } }),
     ]);
@@ -220,7 +254,7 @@ export class PostsService {
     return {
       posts: (posts as PostWithRelations[]).map(formatPost),
       total,
-      hasMore: offset + limit < total,
+      hasMore: skip + take < total,
     };
   }
 
@@ -328,7 +362,7 @@ export class PostsService {
     };
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, requesterId?: number) {
     const [post, favoritesCount] = await Promise.all([
       this.prisma.post.findUnique({
         where: { id },
@@ -338,6 +372,12 @@ export class PostsService {
     ]);
 
     if (!post) {
+      throw new NotFoundException(`Post with ID ${id} not found`);
+    }
+
+    // 非公開投稿は投稿者本人のみ閲覧できる。
+    // 存在自体を隠すため403ではなく404を返す。
+    if (!post.isPublic && post.authorId !== requesterId) {
       throw new NotFoundException(`Post with ID ${id} not found`);
     }
 
@@ -408,7 +448,7 @@ export class PostsService {
       this.prisma.bookmark.count({ where: { postId: id } }),
     ]);
 
-    this.fireEmbedding(updatedPost.id, updatedPost.title, updatedPost.content);
+    this.syncEmbedding(updatedPost);
 
     return {
       ...formatPost(updatedPost as PostWithRelations),
@@ -433,25 +473,6 @@ export class PostsService {
     await this.prisma.post.delete({
       where: { id },
     });
-  }
-
-  async findByAuthor(authorId: number, limit: number = 10, offset: number = 0) {
-    const [posts, total] = await Promise.all([
-      this.prisma.post.findMany({
-        where: { authorId },
-        include: postInclude,
-        orderBy: { createdAt: 'desc' },
-        skip: offset,
-        take: limit,
-      }),
-      this.prisma.post.count({ where: { authorId } }),
-    ]);
-
-    return {
-      posts: (posts as PostWithRelations[]).map(formatPost),
-      total,
-      hasMore: offset + limit < total,
-    };
   }
 
   async searchByLocation(searchDto: SearchPostsByLocationDto) {
@@ -479,7 +500,6 @@ export class PostsService {
       locationId: number | null;
       author_id: number;
       author_name: string;
-      author_email: string;
       author_avatar: string | null;
       location_name: string | null;
       prefecture: string | null;
@@ -495,7 +515,7 @@ export class PostsService {
           SELECT
             p.id, p.title, p.content, p."imageUrl", p."isPublic",
             p."createdAt", p."updatedAt", p."authorId", p."locationId",
-            u.id as "author_id", u.name as "author_name", u.email as "author_email", u.avatar as "author_avatar",
+            u.id as "author_id", u.name as "author_name", u.avatar as "author_avatar",
             l.name as "location_name", l.prefecture, l.latitude, l.longitude,
             (6371 * acos(
               LEAST(1.0, GREATEST(-1.0,
@@ -540,7 +560,7 @@ export class PostsService {
           SELECT
             p.id, p.title, p.content, p."imageUrl", p."isPublic",
             p."createdAt", p."updatedAt", p."authorId", p."locationId",
-            u.id as "author_id", u.name as "author_name", u.email as "author_email", u.avatar as "author_avatar",
+            u.id as "author_id", u.name as "author_name", u.avatar as "author_avatar",
             l.name as "location_name", l.prefecture, l.latitude, l.longitude,
             NULL::float as distance,
             COUNT(*) OVER() AS total_count,
@@ -588,7 +608,6 @@ export class PostsService {
       author: {
         id: row.author_id,
         name: row.author_name,
-        email: row.author_email,
         avatar: row.author_avatar,
       },
       ...(hasGeo && { distance: row.distance ?? undefined }),

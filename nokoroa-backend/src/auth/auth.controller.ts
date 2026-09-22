@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { Request, Response } from 'express';
 
 import { AuthService } from './auth.service';
@@ -26,6 +27,8 @@ export class AuthController {
   constructor(private authService: AuthService) {}
 
   @Post('login')
+  // 総当たり・クレデンシャルスタッフィング対策
+  @Throttle({ default: { ttl: 60_000, limit: 5 } })
   @ApiOperation({
     summary: 'ログイン',
     description: 'メールアドレスとパスワードでログインします',

@@ -9,7 +9,15 @@ export interface SimilarPostHit {
 
 export const EMBEDDING_DIM = 768;
 const EMBED_TIMEOUT_MS = 10_000;
-const MAX_TEXT_LEN = 8000;
+// gemini-embedding-001 の入力上限は 2,048 トークン。日本語はおおよそ
+// 1文字1トークン前後なので、文字数で保守的に切る。
+// 超過分はモデル側で黙って切り捨てられる（＝後半が検索に効かなくなる）ため、
+// アプリ側で上限を管理する。
+const MAX_TEXT_LEN = 2000;
+// pgvector の HNSW は動的候補リスト(hnsw.ef_search、既定40)を超える行を返せない。
+// ここを 40 より大きくすると「上限まで返る」という契約が実装と食い違う。
+// 40 を超えたい場合は SET LOCAL hnsw.ef_search をトランザクション内で発行する必要がある。
+const MAX_LIMIT = 40;
 
 @Injectable()
 export class EmbeddingsService {
@@ -54,17 +62,14 @@ export class EmbeddingsService {
 
     const literal = this.vectorLiteral(vector);
     try {
-      await this.prisma.$executeRawUnsafe(
-        `INSERT INTO post_embedding ("postId", "contentText", embedding, "createdAt", "updatedAt")
-         VALUES ($1, $2, $3::vector, NOW(), NOW())
-         ON CONFLICT ("postId") DO UPDATE SET
-           "contentText" = EXCLUDED."contentText",
-           embedding = EXCLUDED.embedding,
-           "updatedAt" = NOW()`,
-        postId,
-        text,
-        literal,
-      );
+      await this.prisma.$executeRaw`
+        INSERT INTO post_embedding ("postId", "contentText", embedding, "createdAt", "updatedAt")
+        VALUES (${postId}, ${text}, ${literal}::vector, NOW(), NOW())
+        ON CONFLICT ("postId") DO UPDATE SET
+          "contentText" = EXCLUDED."contentText",
+          embedding = EXCLUDED.embedding,
+          "updatedAt" = NOW()
+      `;
     } catch (err) {
       this.logger.error(
         `Failed to upsert embedding for post ${postId}: ${err instanceof Error ? err.message : 'unknown'}`,
@@ -72,6 +77,25 @@ export class EmbeddingsService {
     }
   }
 
+  /**
+   * 投稿の埋め込みを削除する。非公開化された投稿の本文を残さないために使う。
+   * 対象が存在しない場合も正常終了する。
+   */
+  async deleteForPost(postId: number): Promise<void> {
+    try {
+      await this.prisma
+        .$executeRaw`DELETE FROM post_embedding WHERE "postId" = ${postId}`;
+    } catch (err) {
+      this.logger.warn(
+        `Failed to delete embedding for post ${postId}: ${err instanceof Error ? err.message : 'unknown'}`,
+      );
+    }
+  }
+
+  /**
+   * ベクトル検索。失敗時は例外を投げる。
+   * 呼び出し側にエラーを見せたい経路(意味検索UI)はこちらを使う。
+   */
   async searchSimilarStrict(
     query: string,
     limit = 5,
@@ -79,21 +103,21 @@ export class EmbeddingsService {
     const trimmed = query?.trim() ?? '';
     if (!trimmed) return [];
     const text = trimmed.slice(0, MAX_TEXT_LEN);
+    // 呼び出し側の値をそのままLIMITに渡さない(全件走査の踏み台にしない)
+    const safeLimit = Math.min(Math.max(Math.trunc(limit) || 1, 1), MAX_LIMIT);
 
     const vector = await this.embed(text, 'RETRIEVAL_QUERY');
     const literal = this.vectorLiteral(vector);
-    const rows = await this.prisma.$queryRawUnsafe<
+    const rows = await this.prisma.$queryRaw<
       { postId: number; distance: number }[]
-    >(
-      `SELECT pe."postId", (pe.embedding <=> $1::vector)::float8 AS distance
-       FROM post_embedding pe
-       JOIN post p ON p.id = pe."postId"
-       WHERE p."isPublic" = true
-       ORDER BY pe.embedding <=> $1::vector
-       LIMIT $2`,
-      literal,
-      limit,
-    );
+    >`
+      SELECT pe."postId", (pe.embedding <=> ${literal}::vector)::float8 AS distance
+      FROM post_embedding pe
+      JOIN post p ON p.id = pe."postId"
+      WHERE p."isPublic" = true
+      ORDER BY pe.embedding <=> ${literal}::vector
+      LIMIT ${safeLimit}
+    `;
     return rows.map((r) => ({
       postId: Number(r.postId),
       distance: Number(r.distance),

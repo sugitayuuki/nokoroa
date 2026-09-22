@@ -141,6 +141,34 @@ describe('FavoritesService', () => {
       expect(result.favorites).toHaveLength(0);
       expect(result.total).toBe(0);
     });
+
+    it('他人の非公開投稿は除外し、自分の非公開投稿は残す', async () => {
+      mockPrismaService.bookmark.findMany.mockResolvedValue([]);
+      mockPrismaService.bookmark.count.mockResolvedValue(0);
+
+      await service.getUserFavorites(1, 10, 0);
+
+      const expectedWhere = {
+        userId: 1,
+        post: { OR: [{ isPublic: true }, { authorId: 1 }] },
+      };
+
+      const [findArgs] = (
+        mockPrismaService.bookmark.findMany as jest.Mock<
+          unknown,
+          [{ where: unknown }]
+        >
+      ).mock.calls[0];
+      const [countArgs] = (
+        mockPrismaService.bookmark.count as jest.Mock<
+          unknown,
+          [{ where: unknown }]
+        >
+      ).mock.calls[0];
+
+      expect(findArgs.where).toEqual(expectedWhere);
+      expect(countArgs.where).toEqual(expectedWhere);
+    });
   });
 
   describe('checkFavoriteStatus', () => {

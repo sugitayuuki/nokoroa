@@ -4,6 +4,7 @@ import {
   BadRequestException,
   UnauthorizedException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { hash, compare } from 'bcrypt';
 
 import { PrismaService } from '../prisma/prisma.service';
@@ -35,10 +36,14 @@ export class UsersService {
   }
 
   async findById(id: number, currentUserId?: number) {
+    const isOwner = currentUserId === id;
+
     const user = await this.prisma.user.findUnique({
       where: { id },
       include: {
         posts: {
+          // 非公開投稿は本人にのみ返す
+          ...(isOwner ? {} : { where: { isPublic: true } }),
           orderBy: { createdAt: 'desc' },
           take: 10,
         },
@@ -69,13 +74,23 @@ export class UsersService {
       isFollowing = !!follow;
     }
 
-    const { password: _password, ...userWithoutPassword } = user;
+    // 除外リスト方式(passwordだけ外してspread)だと、schemaに列が増えるたびに
+    // 自動で公開されてしまう。返すフィールドを明示する許可リスト方式にする。
     return {
-      ...userWithoutPassword,
+      id: user.id,
+      name: user.name,
+      bio: user.bio,
+      avatar: user.avatar,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+      posts: user.posts,
+      _count: user._count,
+      // メールアドレスは本人にのみ返す
+      ...(isOwner ? { email: user.email } : {}),
       isFollowing,
-      followersCount: userWithoutPassword._count.followers,
-      followingCount: userWithoutPassword._count.following,
-      postsCount: userWithoutPassword._count.posts,
+      followersCount: user._count.followers,
+      followingCount: user._count.following,
+      postsCount: user._count.posts,
     };
   }
 
@@ -89,18 +104,16 @@ export class UsersService {
       throw new NotFoundException('ユーザーが見つかりません');
     }
 
-    // パスワードがある場合はハッシュ化
-    const updateData: Partial<UpdateUserDto & { password?: string }> = {
-      ...updateUserDto,
-    };
-    if (updateUserDto.password) {
-      updateData.password = await hash(updateUserDto.password, 10);
-    }
+    // DTO をそのまま data に渡さない。書き込むフィールドを明示することで、
+    // DTO に列が増えても意図しない更新経路が生まれないようにする。
+    const data: Prisma.UserUpdateInput = {};
+    if (updateUserDto.name !== undefined) data.name = updateUserDto.name;
+    if (updateUserDto.bio !== undefined) data.bio = updateUserDto.bio;
 
     // ユーザー情報を更新
     const updatedUser = await this.prisma.user.update({
       where: { id },
-      data: updateData,
+      data,
       include: {
         posts: {
           orderBy: { createdAt: 'desc' },
@@ -130,6 +143,14 @@ export class UsersService {
 
     if (!user) {
       throw new NotFoundException('ユーザーが見つかりません');
+    }
+
+    // Google 連携のみのユーザーは password が null。
+    // compare(x, null) は bcrypt が throw するため 500 になる。
+    if (!user.password) {
+      throw new BadRequestException(
+        'このアカウントはパスワード認証を使用していません',
+      );
     }
 
     // 現在のパスワードが正しいかチェック

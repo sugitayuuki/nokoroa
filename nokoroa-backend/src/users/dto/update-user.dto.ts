@@ -1,6 +1,14 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEmail, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
+/**
+ * プロフィール更新の入力。
+ *
+ * password と email は意図的に含めない。
+ * ここに置くと現在のパスワードを検証しないまま変更できてしまい、
+ * 盗まれたトークン1本で恒久的な乗っ取りが成立する。
+ * パスワード変更は PUT /users/change-password（現在のパスワード必須）を使う。
+ */
 export class UpdateUserDto {
   @ApiPropertyOptional({
     description: 'ユーザー名（2文字以上）',
@@ -10,25 +18,8 @@ export class UpdateUserDto {
   @IsOptional()
   @IsString()
   @MinLength(2, { message: '名前は2文字以上である必要があります' })
+  @MaxLength(50, { message: '名前は50文字以内である必要があります' })
   name?: string;
-
-  @ApiPropertyOptional({
-    description: 'メールアドレス',
-    example: 'user@example.com',
-  })
-  @IsOptional()
-  @IsEmail({}, { message: '有効なメールアドレスを入力してください' })
-  email?: string;
-
-  @ApiPropertyOptional({
-    description: 'パスワード（6文字以上）',
-    example: 'newpassword123',
-    minLength: 6,
-  })
-  @IsOptional()
-  @IsString()
-  @MinLength(6, { message: 'パスワードは6文字以上である必要があります' })
-  password?: string;
 
   @ApiPropertyOptional({
     description: '自己紹介文',
@@ -36,13 +27,6 @@ export class UpdateUserDto {
   })
   @IsOptional()
   @IsString()
+  @MaxLength(500, { message: '自己紹介は500文字以内である必要があります' })
   bio?: string;
-
-  @ApiPropertyOptional({
-    description: 'アバター画像URL',
-    example: 'https://example.com/avatar.jpg',
-  })
-  @IsOptional()
-  @IsString()
-  avatarUrl?: string;
 }

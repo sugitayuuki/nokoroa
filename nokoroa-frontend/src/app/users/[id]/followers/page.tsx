@@ -13,7 +13,7 @@ import {
 } from '@mui/material';
 import { useParams, useRouter } from 'next/navigation';
 import React, { useEffect, useState } from 'react';
-import { toast } from 'react-hot-toast';
+import { toast } from 'react-toastify';
 
 import UserCard from '@/components/follow/UserCard';
 import { getFollowers } from '@/lib/follows';

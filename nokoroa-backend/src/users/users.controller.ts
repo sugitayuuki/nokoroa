@@ -22,8 +22,10 @@ import {
   ApiBody,
   ApiParam,
 } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { memoryStorage } from 'multer';
 
+import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { S3Service } from '../common/s3.service';
 import { ChangePasswordDto } from './dto/change-password.dto';
@@ -31,13 +33,10 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { CreateUserResponse } from './interfaces/create-user-response.interface';
 import { UsersService } from './users.service';
-
-interface AuthenticatedRequest extends Request {
-  user: {
-    userId: number;
-    email: string;
-  };
-}
+import {
+  AuthenticatedRequest,
+  OptionallyAuthenticatedRequest,
+} from '../common/authenticated-request';
 
 @ApiTags('users')
 @Controller('users')
@@ -48,6 +47,8 @@ export class UsersController {
   ) {}
 
   @Post('signup')
+  // アカウントの大量生成を抑止する
+  @Throttle({ default: { ttl: 60_000, limit: 5 } })
   @ApiOperation({
     summary: 'ユーザー登録',
     description: '新規ユーザーを登録します',
@@ -79,17 +80,19 @@ export class UsersController {
   }
 
   @Get(':id')
+  @UseGuards(OptionalJwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
   @ApiOperation({
     summary: 'ユーザー情報取得',
-    description: '指定したユーザーの情報を取得します',
+    description:
+      '指定したユーザーの情報を取得します。非公開投稿とメールアドレスは本人のみに返します',
   })
   @ApiParam({ name: 'id', description: 'ユーザーID', example: 1 })
   @ApiResponse({ status: 200, description: '取得成功' })
   @ApiResponse({ status: 404, description: 'ユーザーが見つかりません' })
   async getUserById(
     @Param('id', ParseIntPipe) id: number,
-    @Request()
-    req: AuthenticatedRequest & { user?: { userId: number; email: string } },
+    @Request() req: OptionallyAuthenticatedRequest,
   ) {
     const currentUserId = req.user?.userId;
     return this.usersService.findById(id, currentUserId);

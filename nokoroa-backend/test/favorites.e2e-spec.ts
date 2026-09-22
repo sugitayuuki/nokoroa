@@ -7,7 +7,6 @@ import { createUserAndLogin } from './helpers';
 import { cleanupDatabase } from './setup';
 import {
   FavoriteCheckResponse,
-  FavoriteResponse,
   FavoritesListResponse,
   PostResponse,
 } from './types';
@@ -46,6 +45,7 @@ describe('Favorites (e2e)', () => {
       .send({
         title: 'ブックマーク用投稿',
         content: 'ブックマークテスト用の投稿です',
+        imageUrl: 'https://example.com/images/test.jpg',
       });
     postId = (postResponse.body as PostResponse).id;
   });
@@ -62,8 +62,8 @@ describe('Favorites (e2e)', () => {
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(201);
 
-      const body = response.body as FavoriteResponse;
-      expect(body.success).toBe(true);
+      const body = response.body as { id: number; post: { id: number } };
+      expect(body.post.id).toBe(postId);
     });
 
     it('認証なしではブックマークできない', async () => {
@@ -89,8 +89,8 @@ describe('Favorites (e2e)', () => {
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(200);
 
-      const body = response.body as FavoriteResponse;
-      expect(body.success).toBe(true);
+      const body = response.body as { message: string };
+      expect(body.message).toBe('Favorite removed successfully');
     });
 
     it('認証なしでは解除できない', async () => {

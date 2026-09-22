@@ -30,8 +30,8 @@ const schema = z
   .object({
     name: z.string().min(2, '2文字以上入力してください'),
     email: z.string().email('メールアドレスが不正です'),
-    password: z.string().min(6, '6文字以上入力してください'),
-    confirmPassword: z.string().min(6, '6文字以上入力してください'),
+    password: z.string().min(8, '8文字以上入力してください'),
+    confirmPassword: z.string().min(8, '8文字以上入力してください'),
   })
   .refine((v) => v.password === v.confirmPassword, {
     path: ['confirmPassword'],

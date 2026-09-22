@@ -1,4 +1,8 @@
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 
 import { FollowsService } from './follows.service';
@@ -8,6 +12,9 @@ describe('FollowsService', () => {
   let service: FollowsService;
 
   const mockPrismaService = {
+    user: {
+      findUnique: jest.fn(),
+    },
     follow: {
       findUnique: jest.fn(),
       create: jest.fn(),
@@ -55,6 +62,7 @@ describe('FollowsService', () => {
 
   describe('follow', () => {
     it('ユーザーをフォローできる', async () => {
+      mockPrismaService.user.findUnique.mockResolvedValue({ id: 2 });
       mockPrismaService.follow.findUnique.mockResolvedValue(null);
       mockPrismaService.follow.create.mockResolvedValue(mockFollow);
 
@@ -65,11 +73,19 @@ describe('FollowsService', () => {
       expect(result.following.name).toBe('Following User');
     });
 
-    it('自分自身をフォローしようとするとConflictExceptionを投げる', async () => {
-      await expect(service.follow(1, 1)).rejects.toThrow(ConflictException);
+    it('自分自身をフォローしようとするとBadRequestExceptionを投げる', async () => {
+      await expect(service.follow(1, 1)).rejects.toThrow(BadRequestException);
+    });
+
+    it('存在しないユーザーへのフォローはNotFoundExceptionを投げる', async () => {
+      mockPrismaService.user.findUnique.mockResolvedValue(null);
+
+      await expect(service.follow(1, 99999)).rejects.toThrow(NotFoundException);
+      expect(mockPrismaService.follow.create).not.toHaveBeenCalled();
     });
 
     it('既にフォロー済みの場合ConflictExceptionを投げる', async () => {
+      mockPrismaService.user.findUnique.mockResolvedValue({ id: 2 });
       mockPrismaService.follow.findUnique.mockResolvedValue(mockFollow);
 
       await expect(service.follow(1, 2)).rejects.toThrow(ConflictException);

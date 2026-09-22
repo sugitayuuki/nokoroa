@@ -1,4 +1,4 @@
-FROM node:23-slim AS builder
+FROM node:22-slim AS builder
 
 WORKDIR /app
 
@@ -13,7 +13,7 @@ RUN npx prisma generate
 COPY . .
 RUN npm run build
 
-FROM node:23-slim AS runner
+FROM node:22-slim AS runner
 
 WORKDIR /app
 

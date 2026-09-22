@@ -18,6 +18,13 @@ const isSafeImageUrl = (url: string | null | undefined): url is string => {
   }
 };
 
+/**
+ * InfoWindow の中身を DOM として組み立てる。
+ *
+ * content に HTML 文字列を渡すと、投稿のタイトル・本文・画像URL(いずれも
+ * ユーザーの自由入力)がそのまま HTML として解釈され XSS が成立する。
+ * textContent / setAttribute 経由で組むことで、値は常にデータとして扱われる。
+ */
 const buildPostInfoContent = (post: PostData): HTMLElement => {
   const root = document.createElement('div');
   root.style.maxWidth = '250px';
@@ -283,6 +290,8 @@ export const GoogleMap: React.FC<GoogleMapProps> = ({
           },
         });
 
+        // city / country / accuracy は外部API(ipapi.co)の応答なので、
+        // 投稿本文と同様に HTML 文字列へ埋め込まず DOM として組み立てる
         const ipLocationInfoWindow = new window.google.maps.InfoWindow({
           content: buildLocationInfoContent({
             heading: '🌐 IP-based位置',

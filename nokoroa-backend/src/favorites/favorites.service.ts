@@ -3,11 +3,12 @@ import {
   NotFoundException,
   ConflictException,
 } from '@nestjs/common';
+import { publicAuthorSelect } from '../common/public-author.select';
 import { PrismaService } from '../prisma/prisma.service';
 
 const postInclude = {
   author: {
-    select: { id: true, name: true, email: true, avatar: true },
+    select: publicAuthorSelect,
   },
   location: true,
   postTags: {
@@ -33,7 +34,6 @@ interface PostWithRelations {
   author: {
     id: number;
     name: string;
-    email: string;
     avatar: string | null;
   };
   location: {
@@ -147,9 +147,17 @@ export class FavoritesService {
     limit: number = 10,
     offset: number = 0,
   ) {
+    // ブックマーク後に投稿が非公開化された場合、ブックマークは残るため
+    // ここで可視性を再評価しないと非公開投稿の本文が返り続ける。
+    // 自分の投稿は非公開でも見られる(findOne と同じ基準)。
+    const where = {
+      userId,
+      post: { OR: [{ isPublic: true }, { authorId: userId }] },
+    };
+
     const [favorites, total] = await Promise.all([
       this.prisma.bookmark.findMany({
-        where: { userId },
+        where,
         include: {
           post: {
             include: postInclude,
@@ -159,7 +167,7 @@ export class FavoritesService {
         skip: offset,
         take: limit,
       }),
-      this.prisma.bookmark.count({ where: { userId } }),
+      this.prisma.bookmark.count({ where }),
     ]);
 
     return {
@@ -187,8 +195,10 @@ export class FavoritesService {
   }
 
   async getFavoriteStats(postId: number) {
+    // 無認証で呼べるエンドポイントなので、非公開投稿の人気度を
+    // 観測できないよう公開投稿に限定する
     const count = await this.prisma.bookmark.count({
-      where: { postId },
+      where: { postId, post: { isPublic: true } },
     });
 
     return { favoritesCount: count };

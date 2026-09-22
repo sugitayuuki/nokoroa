@@ -3,9 +3,35 @@ import { ConfigService } from '@nestjs/config';
 import { Response } from 'express';
 import { EmbeddingsService } from '../embeddings/embeddings.service';
 import { PostsService } from '../posts/posts.service';
-import { ChatRequestDto } from './dto/chat-request.dto';
+import {
+  ChatRequestDto,
+  MAX_HISTORY_CONTENT_LENGTH,
+  MAX_HISTORY_ITEMS,
+  MAX_HISTORY_TOTAL_LENGTH,
+} from './dto/chat-request.dto';
 import { RelatedPostsRequestDto } from './dto/related-posts-request.dto';
 import { SuggestionsRequestDto } from './dto/suggestions-request.dto';
+
+/**
+ * 文字列を指定長で切り詰める。境界が絵文字などのサロゲートペアの途中に
+ * 落ちた場合は1コードユニット余分に削る。
+ * 孤立サロゲートを残すと、受け側(Python)でUTF-8エンコードに失敗する。
+ */
+function sliceSafely(text: string, maxLength: number): string {
+  const cut = text.slice(0, maxLength);
+  if (cut.length === 0) return cut;
+
+  const lastUnit = cut.charCodeAt(cut.length - 1);
+  const isLoneHighSurrogate = lastUnit >= 0xd800 && lastUnit <= 0xdbff;
+
+  return isLoneHighSurrogate ? cut.slice(0, -1) : cut;
+}
+
+const AI_REQUEST_TIMEOUT_MS = 10_000;
+const AI_STREAM_TIMEOUT_MS = 60_000;
+// 検索ヒット0件時のキーワード分割フォールバックで走査する最大単語数。
+// 上限が無いと1リクエストで単語数ぶんのDB検索が直列実行される。
+const MAX_FALLBACK_KEYWORDS = 5;
 
 @Injectable()
 export class ChatService {
@@ -30,14 +56,42 @@ export class ChatService {
     }
   }
 
-  private aiHeaders(): Record<string, string> {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-    if (this.internalToken) {
-      headers['X-Internal-Token'] = this.internalToken;
+  /**
+   * AIへ転送する会話履歴を上限まで切り詰める。
+   * DTOの上限は「拒否」でしかないため、実際に外部へ送る量はここで抑える
+   * (クライアントの善意に依存しない)。
+   */
+  private trimHistory(
+    history: ChatRequestDto['history'],
+  ): ChatRequestDto['history'] {
+    if (!history) return [];
+
+    // DTOの上限(20件 × 8000文字)は「拒否」の境界なので、そのままだと
+    // 1リクエストで16万文字を外部AIへ転送できてしまう。
+    // 新しいターンから総文字数のバジェットを積み、超えた時点で打ち切る。
+    // 直近の会話はそのまま残り、古いターンから落ちる。
+    const trimmed: NonNullable<ChatRequestDto['history']> = [];
+    let budget = MAX_HISTORY_TOTAL_LENGTH;
+
+    for (const msg of history.slice(-MAX_HISTORY_ITEMS).reverse()) {
+      if (budget <= 0) break;
+      const content = sliceSafely(
+        msg.content,
+        Math.min(budget, MAX_HISTORY_CONTENT_LENGTH),
+      );
+      budget -= content.length;
+      trimmed.unshift({ ...msg, content });
     }
-    return headers;
+
+    return trimmed;
+  }
+
+  /** AIサービスは内部呼び出しのみを受け付けるため、全リクエストに内部トークンを付ける */
+  private aiHeaders(): Record<string, string> {
+    return {
+      'Content-Type': 'application/json',
+      'X-Internal-Token': this.internalToken,
+    };
   }
 
   async streamChat(dto: ChatRequestDto, res: Response): Promise<void> {
@@ -74,9 +128,11 @@ export class ChatService {
       }
 
       if (posts.length === 0) {
-        const words = dto.message
+        const allWords = dto.message
           .split(/[\s\u3000,、。のはがをでにへともより]+/)
           .filter((w) => w.length >= 2);
+        // 重複を除いたうえで上限まで。入力語数に比例してDB検索が増えるのを防ぐ。
+        const words = [...new Set(allWords)].slice(0, MAX_FALLBACK_KEYWORDS);
         const seen = new Set<number>();
         for (const word of words) {
           const wordResult = await this.postsService.search({
@@ -123,10 +179,10 @@ export class ChatService {
         headers: this.aiHeaders(),
         body: JSON.stringify({
           message: dto.message,
-          history: dto.history || [],
+          history: this.trimHistory(dto.history),
           context_posts: contextPosts,
         }),
-        signal: AbortSignal.timeout(60_000),
+        signal: AbortSignal.timeout(AI_STREAM_TIMEOUT_MS),
       });
     } catch (err) {
       this.logger.error(
@@ -165,24 +221,32 @@ export class ChatService {
   }
 
   async getSuggestions(dto: SuggestionsRequestDto): Promise<string[]> {
-    const response = await fetch(`${this.aiServiceUrl}/api/chat/suggestions`, {
-      method: 'POST',
-      headers: this.aiHeaders(),
-      body: JSON.stringify({
-        message: dto.message,
-        ai_response: dto.ai_response,
-      }),
-    });
+    try {
+      const response = await fetch(
+        `${this.aiServiceUrl}/api/chat/suggestions`,
+        {
+          method: 'POST',
+          headers: this.aiHeaders(),
+          body: JSON.stringify({
+            message: dto.message,
+            ai_response: dto.ai_response,
+          }),
+          signal: AbortSignal.timeout(AI_REQUEST_TIMEOUT_MS),
+        },
+      );
 
-    if (!response.ok) {
+      if (!response.ok) {
+        return [];
+      }
+
+      const data = (await response.json()) as { suggestions?: string[] };
+      return data.suggestions ?? [];
+    } catch (error) {
       this.logger.warn(
-        `AI suggestions responded ${response.status}; returning empty list`,
+        `Failed to get suggestions: ${error instanceof Error ? error.message : 'Unknown error'}`,
       );
       return [];
     }
-
-    const data = (await response.json()) as { suggestions?: string[] };
-    return data.suggestions ?? [];
   }
 
   private async searchByVector(
@@ -217,6 +281,7 @@ export class ChatService {
             message: dto.message,
             ai_response: dto.ai_response,
           }),
+          signal: AbortSignal.timeout(AI_REQUEST_TIMEOUT_MS),
         },
       );
 

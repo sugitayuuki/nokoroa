@@ -84,6 +84,107 @@ describe('ChatService', () => {
     expect(mockPosts.search).not.toHaveBeenCalled();
   });
 
+  it('AIへ送る履歴は件数と本文長を上限まで切り詰める', async () => {
+    mockEmbeddings.searchSimilar.mockResolvedValue([]);
+    mockPosts.search.mockResolvedValue({ posts: [], total: 0, hasMore: false });
+    makeStreamFetch();
+
+    const history = Array.from({ length: 50 }, (_, i) => ({
+      role: i % 2 === 0 ? 'user' : 'model',
+      content: 'x'.repeat(20000),
+    }));
+
+    await service.streamChat({ message: 'test', history }, makeRes());
+
+    const streamCall = (
+      global.fetch as jest.Mock<unknown, [string, { body: string }]>
+    ).mock.calls.find(([url]) => url.includes('/api/chat/stream'));
+    const sent = JSON.parse(streamCall[1].body) as {
+      history: { content: string }[];
+    };
+
+    // 総文字数バジェット(20000)で打ち切るため、8000文字のターンは
+    // 2件フルに入り3件目が端数になる
+    const total = sent.history.reduce((n, m) => n + m.content.length, 0);
+    expect(total).toBe(20000);
+    expect(sent.history.length).toBeLessThan(20);
+    // 直近のターンが末尾に残っている(古い側から落ちる)
+    expect(sent.history[sent.history.length - 1].content).toHaveLength(8000);
+  });
+
+  it('切り詰め位置が絵文字の途中でも孤立サロゲートを残さない', async () => {
+    mockEmbeddings.searchSimilar.mockResolvedValue([]);
+    mockPosts.search.mockResolvedValue({ posts: [], total: 0, hasMore: false });
+    makeStreamFetch();
+
+    // 総バジェット20000の境界がサロゲートペアの中央に来るよう配置する
+    const history = [
+      { role: 'user', content: 'あ'.repeat(19999) + '😀' },
+      { role: 'model', content: 'ok' },
+    ];
+
+    await service.streamChat({ message: 'test', history }, makeRes());
+
+    const streamCall = (
+      global.fetch as jest.Mock<unknown, [string, { body: string }]>
+    ).mock.calls.find(([url]) => url.includes('/api/chat/stream'));
+    const sent = JSON.parse(streamCall[1].body) as {
+      history: { content: string }[];
+    };
+
+    for (const msg of sent.history) {
+      for (let i = 0; i < msg.content.length; i++) {
+        const unit = msg.content.charCodeAt(i);
+        const isHigh = unit >= 0xd800 && unit <= 0xdbff;
+        const isLow = unit >= 0xdc00 && unit <= 0xdfff;
+        if (isHigh) {
+          const next = msg.content.charCodeAt(i + 1);
+          expect(next >= 0xdc00 && next <= 0xdfff).toBe(true);
+          i++;
+        } else {
+          expect(isLow).toBe(false);
+        }
+      }
+    }
+  });
+
+  it('履歴が無い場合は空配列を送る', async () => {
+    mockEmbeddings.searchSimilar.mockResolvedValue([]);
+    mockPosts.search.mockResolvedValue({ posts: [], total: 0, hasMore: false });
+    makeStreamFetch();
+
+    await service.streamChat({ message: 'test' }, makeRes());
+
+    const streamCall = (
+      global.fetch as jest.Mock<unknown, [string, { body: string }]>
+    ).mock.calls.find(([url]) => url.includes('/api/chat/stream'));
+    const sent = JSON.parse(streamCall[1].body) as { history: unknown[] };
+
+    expect(sent.history).toEqual([]);
+  });
+
+  it('短い履歴はそのまま送る(不要な切り詰めをしない)', async () => {
+    mockEmbeddings.searchSimilar.mockResolvedValue([]);
+    mockPosts.search.mockResolvedValue({ posts: [], total: 0, hasMore: false });
+    makeStreamFetch();
+
+    const history = [
+      { role: 'user', content: 'こんにちは' },
+      { role: 'model', content: 'こんにちは。ご旅行のご相談ですか？' },
+    ];
+
+    await service.streamChat({ message: 'test', history }, makeRes());
+
+    const streamCall = (
+      global.fetch as jest.Mock<unknown, [string, { body: string }]>
+    ).mock.calls.find(([url]) => url.includes('/api/chat/stream'));
+    const sent = JSON.parse(streamCall[1].body) as {
+      history: { role: string; content: string }[];
+    };
+
+    expect(sent.history).toEqual(history);
+  });
+
   it('ベクトル検索ヒット0件ならキーワード検索を呼ぶ', async () => {
     mockEmbeddings.searchSimilar.mockResolvedValue([]);
     mockPosts.search.mockResolvedValue({

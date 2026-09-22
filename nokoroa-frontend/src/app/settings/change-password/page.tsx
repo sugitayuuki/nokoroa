@@ -62,8 +62,8 @@ export default function ChangePasswordPage() {
 
     if (!formData.newPassword) {
       errors.newPassword = '新しいパスワードを入力してください';
-    } else if (formData.newPassword.length < 6) {
-      errors.newPassword = 'パスワードは6文字以上である必要があります';
+    } else if (formData.newPassword.length < 8) {
+      errors.newPassword = 'パスワードは8文字以上である必要があります';
     }
 
     if (!formData.confirmPassword) {
@@ -169,7 +169,7 @@ export default function ChangePasswordPage() {
                 onChange={handleChange('newPassword')}
                 error={!!formErrors.newPassword}
                 helperText={
-                  formErrors.newPassword || '6文字以上で入力してください'
+                  formErrors.newPassword || '8文字以上で入力してください'
                 }
                 disabled={isLoading}
               />
@@ -213,7 +213,7 @@ export default function ChangePasswordPage() {
             <strong>パスワードのセキュリティについて：</strong>
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-            • パスワードは6文字以上で設定してください
+            • パスワードは8文字以上で設定してください
             <br />
             • 英数字や記号を組み合わせることを推奨します
             <br />• 他のサービスで使用しているパスワードは避けてください

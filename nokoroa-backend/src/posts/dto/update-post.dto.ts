@@ -5,6 +5,9 @@ import {
   IsArray,
   IsBoolean,
   IsNumber,
+  MaxLength,
+  ArrayMaxSize,
+  IsUrl,
 } from 'class-validator';
 
 export class UpdatePostDto {
@@ -14,6 +17,7 @@ export class UpdatePostDto {
   })
   @IsOptional()
   @IsString()
+  @MaxLength(200)
   title?: string;
 
   @ApiPropertyOptional({
@@ -22,6 +26,7 @@ export class UpdatePostDto {
   })
   @IsOptional()
   @IsString()
+  @MaxLength(10000)
   content?: string;
 
   @ApiPropertyOptional({
@@ -29,7 +34,14 @@ export class UpdatePostDto {
     example: 'https://example.com/images/kyoto.jpg',
   })
   @IsOptional()
-  @IsString()
+  // require_tld: false は localhost / compose のサービス名を許可するため。
+  // javascript: data: 相対パス等の遮断は protocols + require_protocol が担う。
+  @IsUrl({
+    protocols: ['http', 'https'],
+    require_protocol: true,
+    require_tld: false,
+  })
+  @MaxLength(2048)
   imageUrl?: string;
 
   @ApiPropertyOptional({
@@ -38,6 +50,7 @@ export class UpdatePostDto {
   })
   @IsOptional()
   @IsString()
+  @MaxLength(100)
   location?: string;
 
   @ApiPropertyOptional({
@@ -46,6 +59,7 @@ export class UpdatePostDto {
   })
   @IsOptional()
   @IsString()
+  @MaxLength(50)
   prefecture?: string;
 
   @ApiPropertyOptional({
@@ -71,7 +85,9 @@ export class UpdatePostDto {
   })
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(20)
   @IsString({ each: true })
+  @MaxLength(50, { each: true })
   tags?: string[];
 
   @ApiPropertyOptional({

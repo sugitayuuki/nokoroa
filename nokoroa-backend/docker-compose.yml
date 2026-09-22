@@ -12,18 +12,25 @@ services:
     command: npm run start:dev
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/nokoroa_db
-      - FRONTEND_URL=http://localhost:3003
-      - JWT_SECRET=your-super-secret-jwt-key-change-this-in-production
+      - FRONTEND_URL=http://localhost:3000
+      # 既定値を置かない。リポジトリに載った固定鍵で起動できてしまうため。
+      # 生成例: export JWT_SECRET=$(openssl rand -base64 32)
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
       - NODE_ENV=development
       - PORT=4000
       - AI_SERVICE_URL=http://ai:8000
-      - INTERNAL_AI_TOKEN=${INTERNAL_AI_TOKEN:-dev-internal-token}
+      # AIサービスとの内部通信用トークン。ai サービス側と同じ値を使う。
+      # 既定値を置かない（リポジトリ上の固定値で内部APIが開くため）。
+      # 生成例: export INTERNAL_AI_TOKEN=$(openssl rand -hex 16)
+      - INTERNAL_AI_TOKEN=${INTERNAL_AI_TOKEN:?INTERNAL_AI_TOKEN is required}
     depends_on:
       - postgres
       - ai
 
   postgres:
-    image: postgres:16
+    # pgvector拡張が必要（prisma/migrations の CREATE EXTENSION vector）。
+    # 素の postgres イメージでは当該マイグレーションが適用できない。
+    image: pgvector/pgvector:pg16
     container_name: postgres
     ports:
       - '5432:5432'
@@ -43,7 +50,8 @@ services:
       - '8000:8000'
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
-      - INTERNAL_AI_TOKEN=${INTERNAL_AI_TOKEN:-dev-internal-token}
+      # backend と同じ値にする。未設定だと全リクエストが503になる。
+      - INTERNAL_AI_TOKEN=${INTERNAL_AI_TOKEN:?INTERNAL_AI_TOKEN is required}
 
 volumes:
   postgres_data:

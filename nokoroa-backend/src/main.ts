@@ -1,13 +1,34 @@
 import { join } from 'path';
-import { ValidationPipe } from '@nestjs/common';
-import { NestFactory } from '@nestjs/core';
+import { Logger, ValidationPipe } from '@nestjs/common';
+import { HttpAdapterHost, NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import helmet from 'helmet';
 
 import { AppModule } from './app.module';
+import { assertKnownEnv, isDevelopmentEnv } from './common/environment';
+import { PrismaExceptionFilter } from './common/prisma-exception.filter';
 
 async function bootstrap() {
+  // NODE_ENV の打ち間違いは「無言で防御が緩む」形で効くため、起動前に弾く
+  assertKnownEnv();
+
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  const isDevelopment = isDevelopmentEnv();
+
+  // ALB 配下では req.ip が ALB ノードのIPになるため、これが無いと
+  // レート制限が「IPごと」ではなく「全ユーザー共有」になり、
+  // 1人の攻撃者が全員を 429 にできてしまう。ALBは1ホップ。
+  app.set('trust proxy', 1);
+
+  // セキュリティヘッダ。他のミドルウェアより先に適用する。
+  app.use(helmet());
+  // 開発時のみローカル配信する画像はフロント(別オリジン)から参照されるため、
+  // この配下に限って CORP を緩める。API レスポンスは same-origin のまま。
+  app.use(
+    '/uploads',
+    helmet.crossOriginResourcePolicy({ policy: 'cross-origin' }),
+  );
   app.setGlobalPrefix('api');
 
   const config = new DocumentBuilder()
@@ -31,8 +52,13 @@ async function bootstrap() {
     .addTag('favorites', 'ブックマーク関連')
     .addTag('follows', 'フォロー関連')
     .build();
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api/docs', app, document);
+  // API仕様書は全エンドポイントとDTOを列挙するため、開発環境でのみ公開する。
+  // 「本番以外」だと staging で露出してしまうため、開発環境を明示で判定する。
+  if (isDevelopment) {
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('api/docs', app, document);
+  }
+
   app.useGlobalPipes(
     new ValidationPipe({
       transform: true,
@@ -41,20 +67,36 @@ async function bootstrap() {
     }),
   );
 
+  const { httpAdapter } = app.get(HttpAdapterHost);
+  app.useGlobalFilters(new PrismaExceptionFilter(httpAdapter));
+
   // 静的ファイルの提供設定
   app.useStaticAssets(join(process.cwd(), 'uploads'), {
     prefix: '/uploads/',
   });
 
   // CORSの設定
+  // FRONTEND_URLが未設定だとlocalhostへフォールバックしCORSが実質無効に
+  // なるため、開発環境以外では設定漏れを起動時に失敗させる。
+  const frontendUrl = process.env.FRONTEND_URL;
+  if (!isDevelopment && !frontendUrl) {
+    throw new Error('FRONTEND_URL is not set.');
+  }
   app.enableCors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+    origin: frontendUrl || 'http://localhost:3000',
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     credentials: true,
   });
 
+  // ECSのタスク停止(SIGTERM)時に PrismaService.onModuleDestroy を発火させ、
+  // DB接続をクリーンに閉じる
+  app.enableShutdownHooks();
+
   const port = process.env.PORT ?? 4000;
   await app.listen(port);
-  console.log(`Application is running on: http://localhost:${port}`);
+  Logger.log(
+    `Application is running on: http://localhost:${port}`,
+    'Bootstrap',
+  );
 }
 void bootstrap();

@@ -355,6 +355,7 @@ export const PostForm = ({
               setFormData((prev) => ({ ...prev, title: e.target.value }))
             }
             placeholder="投稿のタイトルを入力してください"
+            slotProps={{ htmlInput: { maxLength: 200 } }}
           />
 
           <TextField
@@ -368,6 +369,7 @@ export const PostForm = ({
               setFormData((prev) => ({ ...prev, content: e.target.value }))
             }
             placeholder="投稿の内容を入力してください"
+            slotProps={{ htmlInput: { maxLength: 10000 } }}
           />
 
           <Box>

@@ -4,6 +4,7 @@ import {
   Post,
   Body,
   Param,
+  ParseIntPipe,
   Query,
   UseGuards,
   Put,
@@ -34,6 +35,7 @@ import { SearchPostsSemanticDto } from './dto/search-posts-semantic.dto';
 import { SearchPostsDto } from './dto/search-posts.dto';
 import { UpdatePostDto } from './dto/update-post.dto';
 import { PostsService } from './posts.service';
+import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
 @ApiTags('posts')
@@ -196,15 +198,21 @@ export class PostsController {
   }
 
   @Get(':id')
+  @UseGuards(OptionalJwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
   @ApiOperation({
     summary: '投稿詳細取得',
-    description: '指定したIDの投稿を取得します',
+    description:
+      '指定したIDの投稿を取得します。非公開投稿は投稿者本人のみ取得できます',
   })
   @ApiParam({ name: 'id', description: '投稿ID', example: 1 })
   @ApiResponse({ status: 200, description: '取得成功' })
   @ApiResponse({ status: 404, description: '投稿が見つかりません' })
-  findOne(@Param('id') id: string) {
-    return this.postsService.findOne(+id);
+  findOne(
+    @Param('id', ParseIntPipe) id: number,
+    @Request() req: { user?: { id: number } },
+  ) {
+    return this.postsService.findOne(id, req.user?.id);
   }
 
   @Put(':id')
@@ -218,10 +226,10 @@ export class PostsController {
   @ApiResponse({ status: 404, description: '投稿が見つかりません' })
   update(
     @Request() req: { user: { id: number } },
-    @Param('id') id: string,
+    @Param('id', ParseIntPipe) id: number,
     @Body() updatePostDto: UpdatePostDto,
   ) {
-    return this.postsService.update(+id, updatePostDto, req.user.id);
+    return this.postsService.update(id, updatePostDto, req.user.id);
   }
 
   @Delete(':id')
@@ -234,7 +242,10 @@ export class PostsController {
   @ApiResponse({ status: 401, description: '認証エラー' })
   @ApiResponse({ status: 403, description: '権限がありません' })
   @ApiResponse({ status: 404, description: '投稿が見つかりません' })
-  remove(@Request() req: { user: { id: number } }, @Param('id') id: string) {
-    return this.postsService.remove(+id, req.user.id);
+  remove(
+    @Request() req: { user: { id: number } },
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.postsService.remove(id, req.user.id);
   }
 }

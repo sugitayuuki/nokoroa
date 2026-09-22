@@ -1,10 +1,10 @@
 import { Module } from '@nestjs/common';
 import { FavoritesController } from './favorites.controller';
 import { FavoritesService } from './favorites.service';
-import { PrismaService } from '../prisma/prisma.service';
 
 @Module({
   controllers: [FavoritesController],
-  providers: [FavoritesService, PrismaService],
+  // PrismaService は @Global() な PrismaModule が提供する（再宣言すると別インスタンスになる）
+  providers: [FavoritesService],
 })
 export class FavoritesModule {}

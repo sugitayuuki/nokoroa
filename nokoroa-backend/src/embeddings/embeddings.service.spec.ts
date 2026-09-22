@@ -8,9 +8,16 @@ describe('EmbeddingsService', () => {
   let service: EmbeddingsService;
 
   const mockPrisma = {
-    $executeRawUnsafe: jest.fn(),
-    $queryRawUnsafe: jest.fn(),
+    $executeRaw: jest.fn(),
+    $queryRaw: jest.fn(),
   };
+
+  // タグ付きテンプレートは (strings, ...values) で呼ばれる。
+  // SQL本文は strings の結合、補間値は values 側に入る（＝連結されない）。
+  const firstCall = (mock: jest.Mock): [TemplateStringsArray, ...unknown[]] =>
+    (mock.mock.calls as [TemplateStringsArray, ...unknown[]][])[0];
+  const sqlOf = (mock: jest.Mock): string => firstCall(mock)[0].join('<param>');
+  const valuesOf = (mock: jest.Mock): unknown[] => firstCall(mock).slice(1);
 
   const mockConfig = {
     get: jest.fn((key: string) => {
@@ -44,7 +51,7 @@ describe('EmbeddingsService', () => {
 
   describe('generateForPost', () => {
     it('AI serviceを呼びvectorをDBにupsertする', async () => {
-      mockPrisma.$executeRawUnsafe.mockResolvedValue(1);
+      mockPrisma.$executeRaw.mockResolvedValue(1);
 
       await service.generateForPost(42, 'タイトル', '本文');
 
@@ -52,21 +59,22 @@ describe('EmbeddingsService', () => {
         'http://test-ai:8000/api/embeddings/',
         expect.objectContaining({ method: 'POST' }),
       );
-      expect(mockPrisma.$executeRawUnsafe).toHaveBeenCalledTimes(1);
-      const calls = (
-        mockPrisma.$executeRawUnsafe as jest.Mock<
-          unknown,
-          [string, ...unknown[]]
-        >
-      ).mock.calls;
-      const sql = calls[0][0];
-      expect(sql).toContain('INSERT INTO post_embedding');
+      expect(mockPrisma.$executeRaw).toHaveBeenCalledTimes(1);
+      expect(sqlOf(mockPrisma.$executeRaw)).toContain(
+        'INSERT INTO post_embedding',
+      );
+      // postId / contentText / ベクタは全てパラメータとして渡る
+      expect(valuesOf(mockPrisma.$executeRaw)).toEqual([
+        42,
+        'タイトル\n\n本文',
+        expect.stringMatching(/^\[-?\d/) as unknown,
+      ]);
     });
 
     it('text空のときは何もしない', async () => {
       await service.generateForPost(1, '', '');
       expect(global.fetch).not.toHaveBeenCalled();
-      expect(mockPrisma.$executeRawUnsafe).not.toHaveBeenCalled();
+      expect(mockPrisma.$executeRaw).not.toHaveBeenCalled();
     });
 
     it('AI service失敗時もthrowせず警告のみ', async () => {
@@ -77,11 +85,11 @@ describe('EmbeddingsService', () => {
       await expect(
         service.generateForPost(1, 'タイトル', '本文'),
       ).resolves.toBeUndefined();
-      expect(mockPrisma.$executeRawUnsafe).not.toHaveBeenCalled();
+      expect(mockPrisma.$executeRaw).not.toHaveBeenCalled();
     });
 
     it('AI service に X-Internal-Token header を送る', async () => {
-      mockPrisma.$executeRawUnsafe.mockResolvedValue(1);
+      mockPrisma.$executeRaw.mockResolvedValue(1);
 
       await service.generateForPost(7, 'タイトル', '本文');
 
@@ -98,7 +106,7 @@ describe('EmbeddingsService', () => {
 
   describe('searchSimilar', () => {
     it('クエリを埋め込みコサイン類似度検索する', async () => {
-      mockPrisma.$queryRawUnsafe.mockResolvedValue([
+      mockPrisma.$queryRaw.mockResolvedValue([
         { postId: 5, distance: 0.12 },
         { postId: 7, distance: 0.34 },
       ]);
@@ -109,12 +117,11 @@ describe('EmbeddingsService', () => {
         { postId: 5, distance: 0.12 },
         { postId: 7, distance: 0.34 },
       ]);
-      const calls = (
-        mockPrisma.$queryRawUnsafe as jest.Mock<unknown, [string, ...unknown[]]>
-      ).mock.calls;
-      const sql = calls[0][0];
-      expect(sql).toContain('embedding <=> $1::vector');
+      const sql = sqlOf(mockPrisma.$queryRaw);
+      expect(sql).toContain('embedding <=> <param>::vector');
       expect(sql).toContain('p."isPublic" = true');
+      // SQL本文にベクタ値そのものが埋め込まれていないこと
+      expect(sql).not.toMatch(/\[[-\d.]+,/);
     });
 
     it('queryが空なら[]', async () => {
@@ -130,6 +137,37 @@ describe('EmbeddingsService', () => {
 
       const hits = await service.searchSimilar('test', 5);
       expect(hits).toEqual([]);
+    });
+
+    it('過大なlimitは上限にクランプされる', async () => {
+      mockPrisma.$queryRaw.mockResolvedValue([]);
+
+      await service.searchSimilar('東京', 1_000_000);
+
+      // values は [literal, literal, limit]。
+      // 上限は hnsw.ef_search(既定40)を超えない値であること
+      expect(valuesOf(mockPrisma.$queryRaw)[2]).toBe(40);
+    });
+
+    it('不正なlimitでも1以上の整数になる', async () => {
+      mockPrisma.$queryRaw.mockResolvedValue([]);
+
+      await service.searchSimilar('東京', -3);
+
+      expect(valuesOf(mockPrisma.$queryRaw)[2]).toBe(1);
+    });
+  });
+
+  describe('deleteForPost', () => {
+    it('対象postIdの埋め込みを削除する', async () => {
+      mockPrisma.$executeRaw.mockResolvedValue(1);
+
+      await service.deleteForPost(42);
+
+      expect(sqlOf(mockPrisma.$executeRaw)).toContain(
+        'DELETE FROM post_embedding',
+      );
+      expect(valuesOf(mockPrisma.$executeRaw)).toEqual([42]);
     });
   });
 });

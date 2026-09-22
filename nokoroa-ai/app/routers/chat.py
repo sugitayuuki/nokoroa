@@ -1,8 +1,9 @@
 import logging
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.deps import verify_internal_token
@@ -10,14 +11,32 @@ from app.services.gemini_service import GeminiService
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+# Gemini APIへの課金リクエストを発行するため、全エンドポイントで内部認証を必須にする
+router = APIRouter(dependencies=[Depends(verify_internal_token)])
 
 gemini_service = GeminiService(api_key=settings.gemini_api_key)
 
+MAX_MESSAGE_LENGTH = 2000
+MAX_HISTORY_ITEMS = 20
+# 履歴にはAIの応答も積まれるため、ユーザー入力より緩い上限にする
+MAX_HISTORY_CONTENT_LENGTH = 8000
+
+
+def _sse_event(payload: str) -> str:
+    """SSEの1イベントとして送出する。
+
+    SSEはイベント内の各行に data: を必要とする。生成テキストには改行が含まれる
+    ため、そのまま流すとクライアント側のイベント分割で本文が欠落する。
+    """
+    body = "\n".join(f"data: {line}" for line in payload.split("\n"))
+    return f"{body}\n\n"
+
 
 class Message(BaseModel):
-    role: str
-    content: str
+    # クライアントが任意のroleを送れると、AIの過去発言を捏造して
+    # システム指示を上書きできてしまうため、値を限定する
+    role: Literal["user", "model"]
+    content: str = Field(..., max_length=MAX_HISTORY_CONTENT_LENGTH)
 
 
 class ContextPost(BaseModel):
@@ -28,8 +47,8 @@ class ContextPost(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    message: str
-    history: list[Message] | None = None
+    message: str = Field(..., max_length=MAX_MESSAGE_LENGTH)
+    history: list[Message] | None = Field(default=None, max_length=MAX_HISTORY_ITEMS)
     context_posts: list[ContextPost] | None = None
 
 
@@ -57,8 +76,9 @@ async def chat(
             grounding_metadata=result["grounding_metadata"],
         )
     except Exception:
+        # 例外文字列にはモデル名やリクエストURLが含まれうるため外部へ返さない
         logger.exception("chat failed")
-        raise HTTPException(status_code=500, detail="chat failed")
+        raise HTTPException(status_code=502, detail="chat failed")
 
 
 @router.post("/stream")
@@ -84,11 +104,11 @@ async def chat_stream(
                 history=history,
                 context_posts=context_posts,
             ):
-                yield f"data: {chunk}\n\n"
-            yield "data: [DONE]\n\n"
+                yield _sse_event(chunk)
+            yield _sse_event("[DONE]")
         except Exception:
             logger.exception("chat stream failed")
-            yield "data: [ERROR] chat stream failed\n\n"
+            yield _sse_event("[ERROR] chat stream failed")
 
     return StreamingResponse(
         generate(),

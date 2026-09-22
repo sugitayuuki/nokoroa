@@ -30,7 +30,9 @@ TaskType = Literal[
 
 
 class EmbeddingRequest(BaseModel):
-    text: str = Field(..., min_length=1, max_length=8000)
+    # gemini-embedding-001 の入力上限は 2,048 トークン。
+    # backend 側の MAX_TEXT_LEN と揃える。
+    text: str = Field(..., min_length=1, max_length=2000)
     task_type: TaskType = "RETRIEVAL_DOCUMENT"
 
 

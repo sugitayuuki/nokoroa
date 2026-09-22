@@ -97,14 +97,61 @@ describe('UsersService', () => {
     it('IDでユーザーを取得できる', async () => {
       mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
 
-      const result = await service.findById(1);
+      const result = await service.findById(1, 1);
 
       expect(result.id).toBe(1);
-      expect(result.email).toBe('test@example.com');
       expect(result.followersCount).toBe(10);
       expect(result.followingCount).toBe(5);
       expect(result.postsCount).toBe(3);
       expect(result).not.toHaveProperty('password');
+    });
+
+    it('本人が取得した場合はメールアドレスを含む', async () => {
+      mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
+
+      const result = await service.findById(1, 1);
+
+      expect(result.email).toBe('test@example.com');
+    });
+
+    it('他人・未認証が取得した場合はメールアドレスを含まない', async () => {
+      mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
+
+      const asOther = await service.findById(1, 999);
+      const asAnonymous = await service.findById(1);
+
+      expect(asOther).not.toHaveProperty('email');
+      expect(asAnonymous).not.toHaveProperty('email');
+    });
+
+    it('他人・未認証には公開投稿のみをselectする', async () => {
+      mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
+
+      await service.findById(1, 999);
+
+      const [args] = (
+        mockPrismaService.user.findUnique as jest.Mock<
+          unknown,
+          [{ include: { posts: { where?: { isPublic?: boolean } } } }]
+        >
+      ).mock.calls[0];
+
+      expect(args.include.posts.where).toEqual({ isPublic: true });
+    });
+
+    it('本人には非公開投稿も含める', async () => {
+      mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
+
+      await service.findById(1, 1);
+
+      const [args] = (
+        mockPrismaService.user.findUnique as jest.Mock<
+          unknown,
+          [{ include: { posts: { where?: { isPublic?: boolean } } } }]
+        >
+      ).mock.calls[0];
+
+      expect(args.include.posts.where).toBeUndefined();
     });
 
     it('存在しないユーザーIDでNotFoundExceptionを投げる', async () => {
@@ -172,14 +219,22 @@ describe('UsersService', () => {
       ).rejects.toThrow(NotFoundException);
     });
 
-    it('パスワード更新時にハッシュ化される', async () => {
+    it('name と bio だけを更新し、他のフィールドは書き込まない', async () => {
       mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
       mockPrismaService.user.update.mockResolvedValue(mockUser);
-      (bcrypt.hash as jest.Mock).mockResolvedValue('newHashedPassword');
 
-      await service.update(1, { password: 'newpassword' });
+      await service.update(1, { name: 'Updated Name', bio: 'new bio' });
 
-      expect(bcrypt.hash).toHaveBeenCalledWith('newpassword', 10);
+      const [args] = (
+        mockPrismaService.user.update as jest.Mock<
+          unknown,
+          [{ data: Record<string, unknown> }]
+        >
+      ).mock.calls[0];
+
+      // パスワード・メールアドレスはこの経路では変更できない
+      expect(args.data).toEqual({ name: 'Updated Name', bio: 'new bio' });
+      expect(bcrypt.hash).not.toHaveBeenCalled();
     });
   });
 
@@ -190,6 +245,22 @@ describe('UsersService', () => {
       name: 'Test User',
       password: 'currentHashedPassword',
     };
+
+    it('パスワード未設定(Google連携のみ)のユーザーは400を返す', async () => {
+      mockPrismaService.user.findUnique.mockResolvedValue({
+        ...mockUser,
+        password: null,
+      });
+
+      await expect(
+        service.changePassword(1, {
+          currentPassword: 'x',
+          newPassword: 'newpassword123',
+          confirmPassword: 'newpassword123',
+        }),
+      ).rejects.toThrow(BadRequestException);
+      expect(bcrypt.compare).not.toHaveBeenCalled();
+    });
 
     it('パスワードを正常に変更できる', async () => {
       mockPrismaService.user.findUnique.mockResolvedValue(mockUser);

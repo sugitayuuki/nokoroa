@@ -8,6 +8,12 @@ from app.config import settings
 def verify_internal_token(
     x_internal_token: str | None = Header(default=None),
 ) -> None:
+    """backendからの内部呼び出しであることを検証する。
+
+    このサービスはGemini APIへの従量課金リクエストを発行するため、
+    chat / embeddings の両ルーターで必須にする
+    (片方だけ保護すると、保護していない側から課金を増幅できる)。
+    """
     expected = settings.internal_ai_token
     if not expected:
         raise HTTPException(

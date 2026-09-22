@@ -43,6 +43,11 @@ const MotionBox = motion.create(Box);
 
 const SUGGESTIONS = ['京都 2泊3日', '沖縄 おすすめ', '温泉旅行', '週末旅行'];
 const MAX_MESSAGES = 100;
+// サーバー側 ChatRequestDto の上限と揃える
+const MAX_HISTORY_SENT = 20;
+const MAX_HISTORY_CONTENT_LENGTH = 8000;
+// 送信メッセージ本文の上限（ChatRequestDto.message と同じ）
+const MAX_INPUT_LENGTH = 2000;
 
 function TypingIndicator() {
   return (
@@ -183,9 +188,11 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
     setTimeout(scrollToBottom, 100);
 
     try {
-      const history = messages.map((msg) => ({
+      // サーバー側の上限(履歴20件 / 1メッセージ8000文字)に合わせて送信分を絞る。
+      // 全件送ると会話が伸びるほど入力トークンが増え、上限超過で400になる。
+      const history = messages.slice(-MAX_HISTORY_SENT).map((msg) => ({
         role: msg.role === 'assistant' ? 'model' : 'user',
-        content: msg.content,
+        content: msg.content.slice(0, MAX_HISTORY_CONTENT_LENGTH),
       }));
 
       const token = localStorage.getItem('jwt');
@@ -233,12 +240,19 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n\n');
-        buffer = lines.pop() || '';
+        const events = buffer.split('\n\n');
+        buffer = events.pop() || '';
 
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6);
+        for (const event of events) {
+          // SSEは1イベントが複数の data: 行を持ちうる。仕様どおり改行で結合する
+          // (1行目だけ見ると、改行を含む生成テキストの2行目以降が欠落する)
+          const dataLines = event
+            .split('\n')
+            .filter((line) => line.startsWith('data: '))
+            .map((line) => line.slice(6));
+
+          if (dataLines.length > 0) {
+            const data = dataLines.join('\n');
             if (data === '[DONE]') {
               continue;
             }
@@ -267,7 +281,9 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
             }
 
             fullResponse += data;
-            charQueueRef.current.push(...data.split(''));
+            // split('') はサロゲートペアを分断して絵文字が化けるため
+            // コードポイント単位で分割する
+            charQueueRef.current.push(...Array.from(data));
             startTyping();
           }
         }
@@ -643,6 +659,7 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
                 disabled={isLoading}
                 multiline
                 maxRows={3}
+                slotProps={{ htmlInput: { maxLength: MAX_INPUT_LENGTH } }}
                 sx={{
                   '& .MuiOutlinedInput-root': {
                     borderRadius: 2,
