@@ -6,7 +6,6 @@ import { AuthService } from './auth.service';
 import { getJwtSecret } from './jwt-secret';
 import { JwtStrategy } from './jwt.strategy';
 import { GoogleStrategy } from './strategies/google.strategy';
-import { PrismaService } from '../prisma/prisma.service';
 
 @Module({
   imports: [
@@ -20,7 +19,9 @@ import { PrismaService } from '../prisma/prisma.service';
       }),
     }),
   ],
-  providers: [AuthService, JwtStrategy, GoogleStrategy, PrismaService],
+  // PrismaService は @Global() な PrismaModule が提供する。
+  // ここで再宣言すると別インスタンスになり、接続プールが余分に張られる。
+  providers: [AuthService, JwtStrategy, GoogleStrategy],
   controllers: [AuthController],
   exports: [AuthService],
 })

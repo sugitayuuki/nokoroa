@@ -72,4 +72,28 @@ describe('Throttling (e2e)', () => {
     const bRes = await callChat(userB.accessToken);
     expect(bRes.status).not.toBe(429);
   }, 60000);
+
+  it('未認証のチャットへの連打はIP単位で制限される', async () => {
+    // @UserScopedThrottle() を付けた経路でも、未認証リクエストは
+    // 後段のユーザー単位ガードに到達しないため、グローバルのIP単位で数える
+    let first429 = -1;
+    for (let i = 1; i <= 130; i += 1) {
+      const res = await request(server)
+        .post('/chat/suggestions')
+        .send({ message: 'x', ai_response: 'y' });
+
+      if (res.status === 429) {
+        first429 = i;
+        break;
+      }
+      // 認証ガードで弾かれる
+      expect(res.status).toBe(401);
+    }
+
+    // グローバル既定(100/分・IP単位)で頭打ちになる。
+    // 同一IPの枠は同スイート内の他テストと共有するため、正確な回数ではなく
+    // 「上限内で必ず 429 に到達すること」を検証する。
+    expect(first429).toBeGreaterThan(0);
+    expect(first429).toBeLessThanOrEqual(101);
+  }, 60000);
 });

@@ -33,13 +33,10 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { CreateUserResponse } from './interfaces/create-user-response.interface';
 import { UsersService } from './users.service';
-
-interface AuthenticatedRequest extends Request {
-  user: {
-    userId: number;
-    email: string;
-  };
-}
+import {
+  AuthenticatedRequest,
+  OptionallyAuthenticatedRequest,
+} from '../common/authenticated-request';
 
 @ApiTags('users')
 @Controller('users')
@@ -95,8 +92,7 @@ export class UsersController {
   @ApiResponse({ status: 404, description: 'ユーザーが見つかりません' })
   async getUserById(
     @Param('id', ParseIntPipe) id: number,
-    @Request()
-    req: AuthenticatedRequest & { user?: { userId: number; email: string } },
+    @Request() req: OptionallyAuthenticatedRequest,
   ) {
     const currentUserId = req.user?.userId;
     return this.usersService.findById(id, currentUserId);

@@ -19,13 +19,7 @@ import {
 } from '@nestjs/swagger';
 import { FollowsService } from './follows.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-
-interface AuthenticatedRequest extends Request {
-  user: {
-    userId: number;
-    email: string;
-  };
-}
+import { AuthenticatedRequest } from '../common/authenticated-request';
 
 @ApiTags('follows')
 @Controller('follows')
