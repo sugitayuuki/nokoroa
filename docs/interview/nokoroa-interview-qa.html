@@ -1,0 +1,595 @@
+<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><title>Nokoroa 技術面談 想定問答集</title><style>
+@page { size: A4; margin: 16mm 14mm; }
+body { font-family: -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; line-height: 1.75; color: #1a1a1a; font-size: 10.5pt; }
+h1 { font-size: 19pt; border-bottom: 3px solid #2563eb; padding-bottom: 6px; margin-top: 28px; page-break-after: avoid; }
+h2 { font-size: 14pt; border-left: 5px solid #2563eb; padding-left: 10px; margin-top: 26px; page-break-after: avoid; }
+h3 { font-size: 12pt; margin-top: 18px; page-break-after: avoid; }
+p { margin: 7px 0; }
+code { background: #f1f5f9; padding: 1px 5px; border-radius: 3px; font-family: "SF Mono", Menlo, monospace; font-size: 9pt; }
+pre { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 5px; padding: 10px; overflow-x: auto; page-break-inside: avoid; }
+pre code { background: none; padding: 0; font-size: 8.5pt; }
+blockquote { border-left: 4px solid #94a3b8; background: #f8fafc; margin: 10px 0; padding: 7px 14px; color: #334155; }
+blockquote p { margin: 3px 0; }
+table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 9pt; page-break-inside: avoid; }
+th, td { border: 1px solid #cbd5e1; padding: 6px 8px; text-align: left; vertical-align: top; }
+th { background: #eff6ff; font-weight: 600; }
+ul { margin: 7px 0; padding-left: 22px; }
+li { margin: 3px 0; }
+a { color: #1d4ed8; text-decoration: none; word-break: break-all; }
+hr { border: none; border-top: 1px solid #e2e8f0; margin: 22px 0; }
+strong { font-weight: 600; }
+</style></head><body><h1>Nokoroa 技術面談 想定問答集</h1>
+<p>コードを実際に読んだ技術面接官が突いてくる箇所を、<strong>聞かれる確率 × 答えられないと痛い度</strong>で並べたもの。</p>
+<p>ビジネス要件ではなく、<strong>コードとしての論理的整合性</strong>だけで答える。</p>
+<p>各項目の構成:</p>
+<ul>
+<li><strong>該当箇所</strong> — <code>file:line</code></li>
+<li><strong>回答</strong> — トレードオフを明示した技術的な説明</li>
+<li><strong>根拠</strong> — 公式ドキュメントの URL、または実装・実測で確認した事実</li>
+<li><strong>追い質問と返し</strong> — さらに掘られたときの想定</li>
+</ul>
+<hr/>
+<h2>この資料の使い方（3つの原則）</h2>
+<h3>1. 弱点は自分から先に言う</h3>
+<p>未対応の箇所を隠すと「知らなかった」に見える。先に言えば「知ったうえで優先度を判断した」に変わる。</p>
+<p>本資料では <strong>未対応項目を 🔸 で明示</strong>しているので、該当する質問が来たら必ず自分から口に出す。</p>
+<h3>2. 「なぜそう書いたか」ではなく「何と何を天秤にかけたか」を答える</h3>
+<p>面接官が見ているのは選択の妥当性ではなく、<strong>選択肢を把握していたか</strong>。</p>
+<p>「A にした」より「A と B を比較して、この条件では A を取った。B に倒れる条件はこれ」の方が強い。</p>
+<h3>3. 事実は実測で裏を取る</h3>
+<p>「たぶん動く」は答えにならない。本資料の技術的主張は、<strong>公式ドキュメントの引用</strong>か、</p>
+<p><strong>実際に実行して確認した結果</strong>のいずれかに紐づけてある。</p>
+<hr/>
+<h2>結論から言える3行</h2>
+<ul>
+<li><strong>SQL は安全。ただし書き方は指摘どおりだったので直した</strong> — <code>$queryRawUnsafe</code> でもパラメータ化はされていたが、Prisma 公式が <code>$queryRaw</code> を推奨しており *Unsafe を選ぶ理由が実際には無かった。実 DB で <code>::vector</code> キャストが動くことを確認してタグ付きテンプレートへ移行済み。</li>
+<li><strong>RAG は「AI に投げた」ではなく「制約から設計した」</strong> — pgvector の 2,000 次元上限から埋め込み次元を、<code>hnsw.ef_search</code> の既定値から検索上限を、モデルのトークン上限から入力長を決めている。</li>
+<li><strong>未対応を把握している</strong> — localStorage の JWT、トークン失効機構、CSP、Redis ストレージ。いずれも「なぜ後回しにしたか」と「正しい直し方」を言える。</li>
+</ul>
+<hr/>
+<h1>第1部 — 最優先（ほぼ確実に聞かれる）</h1>
+<h2>Q1. <code>$queryRawUnsafe</code> でもパラメータ化できますよね。書き換えて「安全になった」というのは嘘では？</h2>
+<p><strong>該当箇所</strong>: <code>nokoroa-backend/src/embeddings/embeddings.service.ts:60, 82, 110</code> / コミット <code>9c2f78f</code></p>
+<p><strong>回答</strong></p>
+<p>嘘です。正確には「<strong>元の実装も安全だった</strong>」が正しい。<code>$queryRawUnsafe(sql, ...values)</code> は第2引数以降を <code>$1, $2</code> にバインドするので、PostgreSQL に送られる Bind メッセージは <code>$queryRaw</code> と同一でした。</p>
+<p>書き換えた理由は実行時の安全性ではなく <strong>検証コストの局所化</strong>です。<code>*Unsafe</code> は「第1引数の文字列がどう組み立てられたか」を呼び出し元まで遡らないと安全性を判定できない。タグ付きテンプレートなら <code>${}</code> が構文上必ずパラメータになるので、<strong>その関数だけ読めば判定が閉じる</strong>。</p>
+<p>トレードオフは表現力で、識別子や <code>ORDER BY</code> の列名を動的に変えたくなった瞬間に <code>Prisma.raw</code> が必要になり、<code>*Unsafe</code> と同じ検証コストが戻ってきます。今回の3クエリは値しか動かないので失うものがなかった、という判断です。</p>
+<p><strong>根拠</strong></p>
+<blockquote>
+<p>"Wherever possible you should use the <code>$queryRaw</code> method instead. When used correctly <code>$queryRaw</code> method is significantly safer"</p>
+<p>— <a href="https://www.prisma.io/docs/orm/prisma-client/using-raw-sql/raw-queries">Prisma — Raw queries</a></p>
+</blockquote>
+<p><strong>追い質問と返し</strong></p>
+<blockquote>
+<p>「じゃあ <code>$queryRaw</code> なら絶対安全なの？」</p>
+</blockquote>
+<p>いいえ。<code>Prisma.raw()</code> や <code>Prisma.sql</code> で文字列を混ぜれば注入できます。公式も "it is still possible to introduce SQL injection if these methods are used in certain ways" と書いています。防げるのは「<strong>補間値が SQL になる</strong>」経路であって「<strong>SQL 自体を組み立てる</strong>」経路ではない。</p>
+<blockquote>
+<p>「<code>::vector</code> キャストがあるのにタグ付きテンプレートで書けたの？」</p>
+</blockquote>
+<p>書けました。実際に pgvector コンテナを立てて確認しています。Prisma は SQL 本文を <code>... (pe.embedding &lt;=&gt; $1::vector)::float8 ... ORDER BY pe.embedding &lt;=&gt; $2::vector LIMIT $3</code> に変換し、Parse → Bind → Execute で投げます。<code>::vector</code> は「パラメータを vector にキャストする」という構文木の一部で、<strong>値側ではなく SQL 側に属する</strong>ので補間と衝突しません。同じベクタを2回補間しているので Bind は <code>$1</code> と <code>$2</code> に同じ値を2回送ります。</p>
+<blockquote>
+<p>「ベクタを text で送るのは無駄では？」</p>
+</blockquote>
+<p>そのとおりで、768次元だと約 8〜10KB の文字列になります。バイナリ形式（<code>4*768+8</code> = 3,080 バイト）に比べて3倍前後。pgvector の公式 Node クライアントは型登録でバイナリ送信できますが、Prisma の raw API は独自プロトコルなので同じ手が使えない。<strong>Prisma を選んだ結果として受け入れているコスト</strong>です。</p>
+<hr/>
+<h2>Q2. HNSW インデックスは本当に効いていますか？ <code>JOIN post WHERE isPublic = true</code> がありますよね。</h2>
+<p><strong>該当箇所</strong>: <code>src/embeddings/embeddings.service.ts:110-119</code> / <code>prisma/migrations/20260501000000_add_pgvector_post_embedding/migration.sql:20-22</code></p>
+<p><strong>回答</strong></p>
+<p>効きますが、<strong>制約付きで効く</strong>という理解です。</p>
+<p>pgvector 公式が明言するとおり、近似インデックスでは「filtering is applied <strong>after</strong> the index is scanned」なので、この JOIN は post-filter です。HNSW スキャンが返す候補は <code>hnsw.ef_search</code>（既定 40）に制限され、そこから <code>isPublic = false</code> の行が落ちると LIMIT に満たない件数しか返らない可能性がある。</p>
+<p>ただしこの設計では <strong><code>post_embedding</code> にそもそも非公開投稿の行を入れない</strong>方針を取っています（<code>posts.service.ts:110-129</code> の <code>syncEmbedding</code> が非公開なら <code>deleteForPost</code> を呼ぶ／既存行は <code>scripts/purge-private-embeddings.ts</code> で削除）。つまり JOIN の選択率は設計上ほぼ 100% で、post-filter による目減りは起きにくい。JOIN は「埋め込み削除が失敗した場合」の二重防御として残しています。</p>
+<p><code>ORDER BY</code> の演算子 <code>&lt;=&gt;</code> はインデックスの opclass <code>vector_cosine_ops</code> と一致しているので、ORDER BY + LIMIT のパターンで index scan が選ばれます。</p>
+<p><strong>根拠</strong></p>
+<blockquote>
+<p>"With approximate indexes, filtering is applied after the index is scanned. If a condition matches 10% of rows, with HNSW and the default <code>hnsw.ef_search</code> of 40, only 4 rows will match on average"</p>
+<p>— <a href="https://github.com/pgvector/pgvector#filtering">pgvector — Filtering</a></p>
+</blockquote>
+<p><strong>追い質問と返し</strong></p>
+<blockquote>
+<p>「埋め込み削除が失敗したら？」</p>
+</blockquote>
+<p><code>deleteForPost</code> は <code>embeddings.service.ts:83-87</code> で例外を握り潰して warn ログを出すので、失敗すると非公開投稿の行が残り、post-filter が実際に働いて結果が目減りします。正しくは (a) 削除を失敗させない（投稿更新と同一トランザクション、または outbox / リトライ）か、(b) <code>post_embedding</code> に <code>isPublic</code> を非正規化して partial index（<code>CREATE INDEX ... WHERE "isPublic"</code>）にする。公式も低カーディナリティのフィルタには partial index を推奨しています。🔸 <strong>未対応</strong>。</p>
+<blockquote>
+<p>「<code>hnsw.iterative_scan</code>（pgvector 0.8.0+）は使わないの？」</p>
+</blockquote>
+<p><code>iterative_scan</code> は「post-filter で目減りする」問題の薬です。この設計は埋め込みテーブルに公開投稿しか入れないことで<strong>目減りの原因そのものを消している</strong>ので、効く相手がいない。導入すれば <code>SET LOCAL</code> の運用コストと <code>hnsw.max_scan_tuples</code>（既定 20,000）のチューニングが増えるだけです。加えて RAG の上位 k を取る用途では距離順が厳密な <code>strict_order</code> 一択になるので速度メリットも小さい。</p>
+<p>将来「著者で絞る」「タグで絞る」のような<strong>選択率の低いフィルタ</strong>をベクトル検索に足すなら、そのとき <code>iterative_scan</code> か partial index を検討します。</p>
+<hr/>
+<h2>Q3. <code>MAX_LIMIT</code> は 40 ですが、<code>hnsw.ef_search</code> はいくつですか？</h2>
+<p><strong>該当箇所</strong>: <code>src/embeddings/embeddings.service.ts:17-20, 95</code></p>
+<p><strong>回答</strong></p>
+<p><strong>設定していないので既定の 40 です。そして元は <code>MAX_LIMIT = 50</code> で、これは契約と実装が食い違っていました。</strong></p>
+<p>pgvector の HNSW スキャンは動的候補リストのサイズを超える行を返せないため、<code>limit</code> が 41〜50 のときフィルタが一切効かなくても最大 40 行しか返りません。呼び出し元が渡す limit は実際には 5 なので顕在化していませんでしたが、API の契約としては壊れていた。今回 40 に揃えました。</p>
+<p><strong>この修正の弱点を3つ、自分から言います。</strong></p>
+<ul>
+<li><strong>40 が GUC 既定値の二重管理になっている</strong> — <code>MAX_LIMIT = 40</code> は <code>hnsw.ef_search</code> の既定値のミラーで、その依存がコードに書かれていない。DBA がパラメータグループで 100 に上げても追随しないし、誰かが 50 に戻しても CI は通ります。</li>
+<li><strong>余裕がゼロ</strong> — <code>ef_search = 40</code> / <code>LIMIT = 40</code> は、JOIN が1行でも落とせば 40 行に届かない。実用上は <code>LIMIT ≤ ef_search / 2</code> が定石で、安全側なら 20 にすべきところです。</li>
+<li><strong>recall のチューニングポイントを閉じた</strong> — <code>ef_search</code> は上限であると同時に<strong>探索の質</strong>そのもの。本来 limit（API 都合）と ef_search（recall 都合）は独立に決めるべきなのに、1つの定数に潰しました。</li>
+</ul>
+<p><strong>本質的には <code>SET LOCAL hnsw.ef_search</code> でアプリ側が GUC を所有するのが正しい。</strong> 40 にしたのは既存の API 契約を壊さない範囲での最小修正です。</p>
+<p><strong>根拠</strong></p>
+<blockquote>
+<p>"Results are limited by the size of the dynamic candidate list (<code>hnsw.ef_search</code>), which is 40 by default"</p>
+<p>— <a href="https://github.com/pgvector/pgvector/blob/master/README.md">pgvector README</a></p>
+</blockquote>
+<p><strong>追い質問と返し</strong></p>
+<blockquote>
+<p>「じゃあ <code>SET LOCAL</code> にすればよかったのでは？」</p>
+</blockquote>
+<p>そちらも安くはありません。(a) トランザクションスコープなので明示トランザクションが必須になりラウンドトリップが +1、(b) GUC 名も値もパラメータ化できない（公式「Variables cannot be used for identifiers ... or for SQL keywords」）ので <code>Prisma.raw</code> が1箇所復活する — せっかく <code>*Unsafe</code> を消した意味が一部後退する、(c) <code>LOCAL</code> を忘れて <code>SET</code> にするとプールされたコネクションに設定が residue として残り他リクエストに漏れる。</p>
+<p><strong>折衷案は接続文字列に <code>?options=-c hnsw.ef_search=100</code> を付けてプール全体に固定する</strong>ことで、トランザクション不要・<code>Prisma.raw</code> 不要・漏れの概念なし、代わりにクエリ単位の調整ができません。</p>
+<hr/>
+<h2>Q4. なぜ 768 次元なんですか？ Gemini の埋め込みは 3072 次元ですよね。</h2>
+<p><strong>該当箇所</strong>: <code>prisma/schema.prisma:66</code> / <code>src/embeddings/embeddings.service.ts:10</code> / <code>nokoroa-ai/app/services/gemini_service.py:63-73</code></p>
+<p><strong>回答</strong></p>
+<p><strong>pgvector のインデックス上限が 2,000 次元だからです。</strong></p>
+<p><code>gemini-embedding-001</code> の既定出力は 3,072 次元ですが、pgvector の HNSW / IVFFlat がインデックスできるのは 2,000 次元まで。そのまま入れるとインデックスが張れず全件シーケンシャルスキャンになります。</p>
+<p>そこで Gemini API の <code>output_dimensionality=768</code> で MRL（Matryoshka Representation Learning）縮約をかけ、DB スキーマ（<code>vector(768)</code>）と一致させました。768 を選んだのは 2,000 未満で公式が推奨している値（768 / 1536 / 3072）のうち最小だから。ストレージは <code>4*768+8</code> = 3,080 バイト/行（3,072 次元なら 12,296 バイト）。</p>
+<p><strong>根拠</strong></p>
+<blockquote>
+<p>"up to 16,000 dimensions" / インデックス可能なのは "up to 2,000 dimensions" / "Each vector takes <code>4 * dimensions + 8</code> bytes of storage"</p>
+<p>— <a href="https://github.com/pgvector/pgvector/blob/master/README.md">pgvector README</a></p>
+<p>"We recommend using 768, 1536, or 3072" / "trained using the Matryoshka Representation Learning (MRL) technique"</p>
+<p>— <a href="https://ai.google.dev/gemini-api/docs/embeddings">Gemini API — Embeddings</a></p>
+</blockquote>
+<p><strong>追い質問と返し</strong></p>
+<blockquote>
+<p>「公式は『3072 以外の次元は手動で正規化が必要』と書いていますよね。正規化していませんよね？」</p>
+</blockquote>
+<p><strong>していません。</strong> 実害が出ていないのは検索が <code>&lt;=&gt;</code>（cosine distance）で、インデックスも <code>vector_cosine_ops</code> だからです。cosine はノルムに対してスケール不変なので順位は正規化の有無で変わりません。</p>
+<p>ただしこれは「<strong>たまたま守られている</strong>」状態で、将来 <code>&lt;-&gt;</code>（L2）や <code>&lt;#&gt;</code>（内積）に変えた瞬間に壊れます。正しくは <code>embed()</code> の戻り値で L2 正規化してから保存すべきで、🔸 <strong>直すべき箇所として認識しています</strong>。</p>
+<blockquote>
+<p>「次元を変えたくなったら？」</p>
+</blockquote>
+<p><code>ALTER TABLE ... ALTER COLUMN embedding TYPE vector(N)</code> は既存データと非互換なので実質全行再生成です。運用としては新カラム追加 → バックフィル → 切り替えの3段。2,000 を超えたいなら <code>halfvec</code>（fp16、4,000 次元までインデックス可）にキャストして <code>halfvec_cosine_ops</code> で張る、が公式の回避策です。</p>
+<blockquote>
+<p>「次元数は何箇所に散っていますか？」</p>
+</blockquote>
+<p>3箇所（backend の <code>EMBEDDING_DIM</code>、AI サービスの <code>settings.embedding_dim</code>、DB スキーマ）です。ズレると <code>$executeRaw</code> が実行時に <code>expected 768 dimensions</code> で落ちる。backend 側は AI サービスの応答長を検証して DB 到達前に弾いていますが、🔸 <strong>3箇所の同期はコメントによる規約でしか担保されていない</strong>のが弱点です。</p>
+<hr/>
+<h2>Q5. <code>ThrottlerGuard</code> をグローバルに置いているのに、チャットだけコントローラ側に書いているのはなぜ？</h2>
+<p><strong>該当箇所</strong>: <code>src/app.module.ts:26-45</code> / <code>src/chat/chat.controller.ts:17-22</code> / <code>src/common/user-throttler.guard.ts</code></p>
+<p><strong>回答</strong></p>
+<p><strong>グローバルガードでは原理的に <code>req.user</code> が読めないからです。</strong></p>
+<p>NestJS の <code>GuardsContextCreator</code> は <code>globalGuards.concat(scopedGuards)</code> を返し、<code>GuardsConsumer</code> がその配列を先頭から逐次実行します（実装で確認）。つまり <code>APP_GUARD</code> は必ず <code>@UseGuards</code> より先に走り、<strong><code>JwtAuthGuard</code> がまだ実行されていない</strong>。ユーザー単位で数えるには認証済みであることが前提なので、スロットラーを認証ガードの後ろに置く必要があり、それを表現できるのは <code>@UseGuards(JwtAuthGuard, UserThrottlerGuard)</code> という順序付きリストだけです。</p>
+<p><strong>ここで一度実装を間違えて、テストで捕まえました。</strong> 最初は「<code>shouldSkip</code> で <code>req.user</code> を見て分岐する」実装にしたのですが、同じ理由で <code>shouldSkip</code> の時点でも <code>req.user</code> は常に undefined。結果、認証済みでもスキップされず IP 単位の 20/分が復活し、<strong>同一 IP の別ユーザーが巻き添えで 429 になる元の症状に戻っていました</strong>。e2e が落ちて気づきました。</p>
+<p>最終形は名前付き throttler です。</p>
+<table><thead><tr><th>throttler</th><th>上限</th><th>単位</th><th>評価するガード</th></tr></thead><tbody>
+<tr><td><code>default</code></td><td>100/分</td><td>IP</td><td>グローバル（全経路）</td></tr>
+<tr><td><code>user</code></td><td>20/分（chat で上書き）</td><td>ユーザー</td><td><code>UserThrottlerGuard</code>（認証後）</td></tr>
+</tbody></table>
+<p><code>user</code> には <code>skipIf: ctx =&gt; isTestEnv() \|\| trackedUserId(ctx) === undefined</code> を付けているので、グローバルガードでは必ずスキップされ、認証後の <code>UserThrottlerGuard</code> だけが評価します。</p>
+<p><strong>根拠</strong></p>
+<ul>
+<li>実装で確認: <code>@nestjs/core/guards/guards-context-creator.js:67</code> の <code>globalGuards.concat(scopedGuards)</code></li>
+<li>公式: 「Guard execution starts with global guards, then proceeds to controller guards, and finally to route guards」— <a href="https://docs.nestjs.com/faq/request-lifecycle">NestJS — Request lifecycle</a></li>
+<li>実測（e2e）: ユーザーA が 21 回目で 429 → 直後に同一 IP の別ユーザーB は通過（<code>test/throttle.e2e-spec.ts</code>）</li>
+</ul>
+<p><strong>追い質問と返し</strong></p>
+<blockquote>
+<p>「なぜ IP 単位とユーザー単位を混在させるの？」</p>
+</blockquote>
+<p>守る対象が違うからです。ログイン・登録は<strong>未認証</strong>なので原理的に IP しか鍵にできない。AI チャットは Gemini の従量課金が走るので、IP で数えると1アカウントが IP をローテートして回避できる。だから経路ごとに単位を選び分けています。</p>
+<blockquote>
+<p>「ALB 配下で <code>req.ip</code> は取れてる？」</p>
+</blockquote>
+<p><code>main.ts:22</code> の <code>app.set('trust proxy', 1)</code> で取れます。Express は <code>X-Forwarded-For</code> を<strong>右から左</strong>に見て、ALB が append した右端の値を採用します。ALB の既定は append（末尾にクライアント IP を追記）で、ECS の SG は ALB の SG からのみ inbound を許可しているので、攻撃者が XFF を偽装しても偽装値は左側に積まれるだけで <code>req.ip</code> は動きません。</p>
+<p><code>trust proxy: true</code> にしなかったのは、<code>true</code> だと左端を無条件に信頼して詐称できるからです。<strong>ALB の前に CloudFront を挟んだらここを 2 に上げる必要があります</strong>。</p>
+<blockquote>
+<p>「ECS を複数タスクにしたら？」</p>
+</blockquote>
+<p>🔸 <strong>破綻します。</strong> <code>ThrottlerModule</code> の既定ストレージはプロセス内 Map なので、N タスクで実効上限が N 倍になり、再起動でカウンタも消えます。スケールアウト前に Redis ストレージ（ElastiCache）へ寄せる必要があります。<strong>現状 1 タスク運用なので顕在化していない、というだけです。</strong></p>
+<hr/>
+<h2>Q6. JWT を localStorage に入れていますよね。OWASP は httpOnly Cookie 推奨だし、<code>SECURITY.md</code> に自分で「リスクあり」と書いてありますよね。</h2>
+<p><strong>該当箇所</strong>: <code>nokoroa-frontend/src/utils/secureAuth.ts</code> / <code>src/providers/AuthProvider.tsx</code> / <code>nokoroa-frontend/SECURITY.md</code></p>
+<p><strong>回答</strong></p>
+<p>🔸 <strong>直していません。意図的に残した未対応項目です。</strong></p>
+<p>理由は「Cookie に移すことが単独の変更にならない」から。Cookie に載せた瞬間ブラウザが自動送信するようになるので、CSRF 対策がセットで必須になり、<code>SameSite</code> の設計、オリジン検証、<code>enableCors({credentials:true})</code> の厳格化、そして <strong>OAuth コールバックのトークン受け渡しの作り直し</strong>まで一続きになります。</p>
+<p>現状は <code>Authorization: Bearer</code> を明示的に付ける方式なので、<strong>ブラウザが自動送信しない＝CSRF 面ではゼロコスト</strong>という利点はあります。ただしその代償が XSS 耐性で、OWASP の言う「1個の XSS で全部盗まれる」状態であることは認めます。</p>
+<p>正しくは <strong>短命アクセストークン（メモリ保持）+ httpOnly の refresh Cookie + CSRF トークン</strong>の構成です。</p>
+<p><strong>根拠</strong></p>
+<blockquote>
+<p>"Do not store session identifiers in local storage as the data is always accessible by JavaScript." / "A single Cross Site Scripting can be used to steal all the data in these objects."</p>
+<p>— <a href="https://cheatsheetseries.owasp.org/cheatsheets/HTML5_Security_Cheat_Sheet.html">OWASP HTML5 Security Cheat Sheet</a></p>
+</blockquote>
+<p><strong>追い質問と返し</strong></p>
+<blockquote>
+<p>「じゃあ XSS 対策は？」</p>
+</blockquote>
+<p>React の既定エスケープに加えて、今回 <strong>Google Maps の InfoWindow を HTML 文字列から DOM 構築に直しました</strong>（<code>GoogleMap.tsx</code>）。ここは React の外に出る唯一の HTML sink で、投稿タイトルに <code>&lt;img src=x onerror=...&gt;</code> を入れれば実行できていた箇所です。</p>
+<p>🔸 <strong>ただし CSP は入れていません。</strong> Google Maps と MUI(emotion) のインラインスタイルに依存していて nonce 化が別作業なので、まず HSTS / nosniff / X-Frame-Options / Referrer-Policy / Permissions-Policy から入れました。<strong>CSP 無し + localStorage は「XSS → 即アカウント乗っ取り」なので、優先度は CSP の方が高い</strong>と今は判断しています。</p>
+<blockquote>
+<p>「sessionStorage や in-memory じゃダメだったの？」</p>
+</blockquote>
+<p>in-memory はリロードで落ちるので refresh トークン機構が前提。sessionStorage は OWASP 的には localStorage と同じ扱い（JS からアクセス可能）なので、XSS 面の改善にならずタブ間で切れる副作用だけ増えます。だから「中間的な小改善」はせず、未対応として明示する選択をしました。</p>
+<hr/>
+<h2>Q7. <code>jwt.strategy.validate</code> が DB を引いていません。退会後やパスワード変更後のトークンは何時間有効ですか？</h2>
+<p><strong>該当箇所</strong>: <code>src/auth/jwt.strategy.ts:21-23</code> / <code>src/auth/auth.module.ts:18</code></p>
+<p><strong>回答</strong></p>
+<p><strong>24 時間有効です。失効機構はありません。</strong> <code>validate</code> は payload をそのまま写すだけで DB 照会をしないので、退会・パスワード変更・ログアウト後も署名と <code>exp</code> が有効な限り通ります。</p>
+<p>これは JWT を stateless セッションとして使った場合の構造的な帰結で、OWASP も "A JWT is often suggested for 'stateless' user sessions. However, this usage is frowned upon" と明言しています。</p>
+<p>選択肢は3つ: (a) <code>validate</code> で毎回 user を引いて <code>tokenVersion</code> と突き合わせる、(b) <code>jti</code> ベースの deny list を Redis に置く、(c) アクセストークンを 15 分に縮めて refresh 側で失効させる。🔸 <strong>どれも入れていません。</strong></p>
+<p><strong>根拠</strong>: <a href="https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_Cheat_Sheet.html">OWASP JWT Cheat Sheet</a></p>
+<p><strong>追い質問と返し</strong></p>
+<blockquote>
+<p>「3つのうちどれを選ぶ？」</p>
+</blockquote>
+<p><strong>(a) の <code>tokenVersion</code></strong> です。deny list は「トークン1本ごとに1エントリ」で失効対象を列挙する形なので、「パスワード変更でそのユーザーの全トークンを落としたい」という要件と粒度が合いません。<code>user.tokenVersion</code> を payload に入れて <code>validate</code> で突き合わせれば、1カラムの UPDATE で全端末を落とせます。DB 往復が気になるなら user を短 TTL でキャッシュし、bump 時に invalidate する。deny list は「特定端末だけログアウト」が要件に入った時点で追加します。</p>
+<blockquote>
+<p>「なぜ <code>expiresIn: '1d'</code> なの？」</p>
+</blockquote>
+<p>refresh 機構が無いので、短くするとユーザーが毎回再ログインになるからです。つまり <strong>「1d」は失効機構が無いことの裏返し</strong>で、独立した判断ではありません。refresh を入れた時点でアクセストークンは 15 分に縮めます。</p>
+<blockquote>
+<p>「フロントの自動ログアウトタイマーは？」</p>
+</blockquote>
+<p>クライアント側だけの UX 機構で、サーバから見たトークンの有効性には一切影響しません。攻撃者がトークンを抜いて curl で使う場合には何の意味もないので、<strong>防御として数えていません。</strong></p>
+<hr/>
+<h2>Q8. App Router を使っているのに、ほぼ全ページが <code>'use client'</code> ですよね。App Router を使う意味あります？</h2>
+<p><strong>該当箇所</strong>: <code>nokoroa-frontend/src/app/</code> 配下 29 ファイル中 27 が <code>'use client'</code></p>
+<p><strong>回答</strong></p>
+<p><strong>RSC の恩恵はほぼ受けられていません。</strong> 理由は認証設計にあって、JWT を localStorage に置いているためサーバ側にトークンが渡らず、データ取得を Server Component で行えない構造になっています。結果「認証状態を読む → データを取る」が全部クライアントに寄り、<code>useAuth()</code> を参照する page が芋づる式に <code>'use client'</code> になりました。</p>
+<p>ただし App Router を選んだこと自体は無駄ではなく、<strong>Parallel Routes + Intercepting Routes</strong>（<code>app/@dialog/(.)login/page.tsx</code>）でログインモーダルの URL 同期を実装しています。これは Pages Router では自前ルーティングが必要になる部分です。</p>
+<p>正しくは、トークンを httpOnly Cookie に移して page を Server Component にし、<code>'use client'</code> は <code>BookmarkButton</code> / <code>ChatPanel</code> のような<strong>葉に押し下げる</strong>べきです。</p>
+<p><strong>根拠</strong></p>
+<blockquote>
+<p>"add <code>'use client'</code> to specific interactive components instead of marking large parts of your UI as Client Components"</p>
+<p>— <a href="https://nextjs.org/docs/app/getting-started/server-and-client-components">Next.js — Server and Client Components</a></p>
+</blockquote>
+<p><strong>追い質問と返し</strong></p>
+<blockquote>
+<p>「じゃあ Pages Router でよかったのでは？」</p>
+</blockquote>
+<p>機能要件だけ見ればそうです。ただ <code>layout.tsx</code> は現状も Server Component なので、<strong>Cookie 認証に切り替えれば page 単位で段階的に RSC 化できる</strong>。Pages Router だとこの移行パスがありません。Q6 と Q8 は同じ根（localStorage）から出ている、というのが整理です。</p>
+<hr/>
+<h1>第2部 — よく聞かれる</h1>
+<h2>Q9. <code>PostWithRelations</code> を手書きして <code>as</code> でキャストしていますよね。Prisma は型を生成しますよね？</h2>
+<p><strong>該当箇所</strong>: <code>src/posts/posts.service.ts:49-83</code> と <code>as</code> キャスト6箇所 / <code>src/favorites/favorites.service.ts</code> に2箇所</p>
+<p><strong>回答</strong></p>
+<p>🔸 <strong>正当化できません、負債です。</strong></p>
+<p><code>postInclude</code> という定数から型を導出できるのに手書きしているので、スキーマを変えても TypeScript は何も言わず、<code>as</code> が型エラーを黙らせます。実際 <code>favorites.service.ts</code> 側の <code>PostWithRelations</code> には <code>location.createdAt</code> が無く、<code>posts.service.ts</code> 側にはある — <strong>同名の型が2つ、しかも中身が違う</strong>状態です。</p>
+<p>正しくは公式推奨の <code>satisfies</code> + <code>GetPayload</code>:</p>
+<pre><code>
+const postArgs = { include: postInclude } satisfies Prisma.PostDefaultArgs;
+type PostWithRelations = Prisma.PostGetPayload&lt;typeof postArgs&gt;;
+</code></pre>
+<p>これで <code>postInclude</code> の変更が型に自動追随し、<code>as</code> は全部不要になります（<code>findMany</code> の戻り値がそのまま代入可能になるため）。</p>
+<p><strong>根拠</strong></p>
+<blockquote>
+<p>"Reduced maintenance burden and improved type safety when the schema changes"</p>
+<p>— <a href="https://www.prisma.io/docs/orm/prisma-client/type-safety/operating-against-partial-structures-of-model-types">Prisma — Operating against partial structures of model types</a></p>
+</blockquote>
+<p><strong>追い質問と返し</strong></p>
+<blockquote>
+<p>「<code>as</code> が具体的に何を隠していますか？」</p>
+</blockquote>
+<p><code>publicAuthorSelect</code> から <code>avatar</code> を外した瞬間、<code>formatPost</code> 内の <code>post.author.avatar</code> は<strong>型上は生きたまま実行時 <code>undefined</code></strong> になります。<code>GetPayload</code> ならコンパイルエラー。もう一例、<code>Post</code> に新カラムを足すと手書き interface は古いまま <code>as</code> で通り、レスポンスに載っているのに型定義に無い乖離が起きます。</p>
+<hr/>
+<h2>Q10. <code>req.user</code> の形が <code>posts</code> では <code>{ id }</code>、他は <code>{ userId }</code> で揃っていませんね。</h2>
+<p><strong>該当箇所</strong>: <code>src/auth/jwt.strategy.ts:22</code> / 各コントローラ</p>
+<p><strong>回答</strong></p>
+<p>🔸 <strong>設計判断ではなく、歴史的経緯を strategy 側で吸収した技術的負債です。</strong> <code>posts</code> が <code>id</code> を、後から足したモジュールが <code>userId</code> を前提に書かれ、どちらかに寄せると呼び出し側を全部直す必要があったので、<code>validate()</code> が両方を返して両立させています。</p>
+<p><strong>ここに関連して、型が完全に嘘になっている箇所がありました（今回修正済み）。</strong></p>
+<p><code>interface AuthenticatedRequest extends Request</code> の <code>Request</code> が <code>@nestjs/common</code> からの import で、これは<strong>パラメータデコレータという「値」</strong>であって型ではありません。結果 <code>extends Request</code> は <strong>Fetch API の <code>Request</code></strong> に解決されていました。</p>
+<p>実際に tsc で確認した結果:</p>
+<table><thead><tr><th>アクセス</th><th>結果</th></tr></thead><tbody>
+<tr><td><code>r.params</code>（Express なら存在）</td><td><code>Property 'params' does not exist</code></td></tr>
+<tr><td><code>r.bodyUsed</code>（Fetch API なら存在）</td><td>通る</td></tr>
+</tbody></table>
+<p>つまりこの interface は「Express の req に user を足した型」ではなく「fetch の Request に user を足した別物」で、<strong><code>user</code> 以外は全部嘘</strong>でした。<code>common/authenticated-request.ts</code> に集約し、<code>express</code> の <code>Request</code> を明示的に import する形に修正しています。</p>
+<p><strong>根拠</strong>: <a href="https://docs.nestjs.com/custom-decorators">NestJS — Custom decorators</a>（<code>createParamDecorator</code> による <code>@User()</code> パターン）</p>
+<p><strong>追い質問と返し</strong></p>
+<blockquote>
+<p>「<code>AuthenticatedRequest &amp; { user?: ... }</code> で optional にしていた箇所は？」</p>
+</blockquote>
+<p><strong>これも無意味でした。</strong> TypeScript の交差型ではプロパティが optional になるのは全構成要素で optional な時だけなので、<code>{user: T} &amp; {user?: T}</code> の <code>user</code> は <strong>required のまま</strong>です。実際に守っていたのは実行時の <code>?.</code> だけ。専用の <code>OptionallyAuthenticatedRequest</code> 型に置き換えました。</p>
+<blockquote>
+<p>「なぜ気づけなかった？」</p>
+</blockquote>
+<p><code>tsconfig.json</code> が <code>strict: true</code> を書きつつ <code>strictNullChecks: false</code> / <code>noImplicitAny: false</code> で<strong>明示的に打ち消している</strong>ためです。🔸 「strict を有効にしている」という外観だけが残っている状態で、これも未対応の負債です。</p>
+<hr/>
+<h2>Q11. <code>posts.service.ts</code> が 710 行あります。大きすぎませんか？</h2>
+<p><strong>該当箇所</strong>: <code>src/posts/posts.service.ts</code></p>
+<p><strong>回答</strong></p>
+<p><strong>大きすぎます。</strong> 混在している関心事は最低4つ:</p>
+<ul>
+<li>投稿の CRUD と所有権チェック</li>
+<li><code>location</code> / <code>tag</code> の upsert（本来 <code>LocationsService</code> / <code>TagsService</code> に分けるべき別集約）</li>
+<li>3種類の検索（Prisma クエリビルダ / Haversine 生 SQL / 集計）</li>
+<li>埋め込みの副作用同期</li>
+</ul>
+<p><code>searchByLocation</code> の Haversine 式が同一ファイル内に3回重複しているのは <code>$queryRaw</code> のタグ付きテンプレートを選んだコストです。<code>$queryRawUnsafe</code> なら文字列連結で WHERE 句を1箇所にできますが、それは SQL インジェクションの窓口を開けることと引き換え。<strong>安全性を取って重複を許容した</strong>、というのが判断です。</p>
+<p><strong>追い質問と返し</strong></p>
+<blockquote>
+<p>「重複を消す方法は本当に無い？」</p>
+</blockquote>
+<p>あります。<code>Prisma.sql</code> ヘルパで WHERE 句を <code>const whereClause = Prisma.sql\</code>...\`<code> として切り出し、両方のクエリに </code>${whereClause}` で埋め込めば、<strong>パラメータ化を保ったまま1箇所にできます</strong>。やっていないのは単に手を入れていないからで、技術的な障壁はありません。</p>
+<blockquote>
+<p>「分割するとしたら？」</p>
+</blockquote>
+<p><code>PostsService</code>（CRUD + 所有権）/ <code>PostSearchService</code>（3種の検索）/ <code>LocationsService</code> + <code>TagsService</code>（upsert）。<code>syncEmbedding</code> は直接呼び出しをやめて <code>EventEmitter2</code> で <code>post.created</code> / <code>post.updated</code> を発行し <code>EmbeddingsListener</code> が購読する形にすれば、<code>PostsModule → EmbeddingsModule</code> の依存が1本消えます。</p>
+<blockquote>
+<p>「Haversine を毎行計算しているのは遅くない？」</p>
+</blockquote>
+<p>遅いです。<code>WHERE</code> 節の距離式は列に対する関数なので B-tree インデックスが効かず、結合結果に対して全件で <code>acos</code>/<code>cos</code>/<code>sin</code> を評価します。本来は bounding box で事前絞り込みするか、<strong>PostGIS の <code>geography</code> + GiST（<code>ST_DWithin</code>）に置き換える</strong>のが筋。pgvector を既に入れているので拡張を足す抵抗は小さいはずです。</p>
+<hr/>
+<h2>Q12. チャットのストリーミングで <code>@Res()</code> を使っていますね。<code>@Sse()</code> があるのに。</h2>
+<p><strong>該当箇所</strong>: <code>src/chat/chat.controller.ts</code> / <code>src/chat/chat.service.ts</code></p>
+<p><strong>回答</strong></p>
+<p><code>@Sse()</code> は「<code>Observable&lt;MessageEvent&gt;</code> を返すと Nest が <code>data:</code> 形式にシリアライズする」仕組みで、<strong>自前でイベントを組み立てたい</strong>場合に合いません。ここでは上流の Python サービスが既に SSE フレームを返すので、それをバイト列でパススルーしたい。<code>@Sse()</code> に載せるには一度パース → 再シリアライズが必要で、無駄な往復と壊れやすい処理が増えます。</p>
+<p>ただし代償は大きく、公式が明記するとおり「you lose compatibility with Nest features that rely on standard response handling」で、<strong>例外フィルタも実質効きません</strong>。実際このコードは <code>res.status(502).json(...)</code> を<strong>サービス層で</strong>手書きしており、サービスがトランスポート層の知識を持っています。</p>
+<p><strong>根拠</strong>: <a href="https://docs.nestjs.com/controllers">NestJS — Controllers（library-specific approach）</a> / <a href="https://docs.nestjs.com/techniques/server-sent-events">NestJS — SSE</a></p>
+<p><strong>追い質問と返し</strong></p>
+<blockquote>
+<p>「具体的にどんなバグが起き得ますか？」</p>
+</blockquote>
+<p>2つあります。(1) <code>reader.read()</code> がストリーム途中で throw すると <code>finally { res.end() }</code> が走って接続を閉じた後に例外が伝播し、Nest の例外レイヤが終了済みの <code>res</code> に書こうとして <code>ERR_HTTP_HEADERS_SENT</code> になる。(2) 🔸 <strong>クライアントが切断しても上流 fetch の <code>reader</code> は読み続けるので、<code>@Sse()</code> が自動でやってくれる unsubscribe 相当が無く、上流への課金が続きます。</strong> 最低限 <code>res.on('close', () =&gt; reader.cancel())</code> を足すべきで、未対応です。</p>
+<hr/>
+<h2>Q13. SSE のパースで <code>data:</code> 行を集めて改行で join していますね。普通は1行目だけでは？</h2>
+<p><strong>該当箇所</strong>: <code>nokoroa-frontend/src/components/chat/ChatPanel.tsx:246-255</code> / <code>nokoroa-ai/app/routers/chat.py</code></p>
+<p><strong>回答</strong></p>
+<p><strong>SSE の仕様がそうなっているからです。</strong> WHATWG のパーサは <code>data</code> フィールドを見つけるたびに「Append the field value to the data buffer, then append a single LF character」と定義していて、1イベントが複数の <code>data:</code> 行を持つのは正常なケースです。</p>
+<p>Gemini の生成テキストには改行が入るので、送信側で <code>payload.split("\n")</code> して各行に <code>data: </code> を付けています。<strong>受信側で1行目だけ読むと2行目以降が丸ごと欠落する</strong> — これは実際にバグとして存在し、今回修正しました。<code>.slice(6)</code> で <code>"data: "</code> を落としているのも仕様の「If value starts with a SPACE character, remove it」に対応しています。</p>
+<p><strong>根拠</strong>: <a href="https://html.spec.whatwg.org/multipage/server-sent-events.html">WHATWG HTML — Server-sent events</a></p>
+<p><strong>追い質問と返し</strong></p>
+<blockquote>
+<p>「<code>EventSource</code> を使えばパースは不要では？」</p>
+</blockquote>
+<p>そのとおりですが、<code>EventSource</code> は <strong>GET しか送れず Authorization ヘッダも付けられない</strong>ので、POST + <code>fetch</code> + 手動パースを選んでいます。</p>
+<blockquote>
+<p>「<code>id:</code> や <code>retry:</code>、コメント行は？」</p>
+</blockquote>
+<p>🔸 <strong>未対応です。</strong> 今は自分で送るイベントだけを相手にしていて、backend も生バイトをそのまま流すので <code>data:</code> 以外は発生しません。<code>data:</code> 以外を無視する現在の filter で壊れはしませんが、<code>retry:</code> による再接続を使いたくなったら <code>EventSource</code> 系に寄せます。</p>
+<hr/>
+<h2>Q14. なぜ AI を NestJS 内で完結させず Python の別サービスに？ しかも ECS のサイドカーですよね。</h2>
+<p><strong>該当箇所</strong>: <code>nokoroa-ai/</code> / <code>terraform/modules/ecs/main.tf</code></p>
+<p><strong>回答</strong></p>
+<p>技術的な理由は3つ。</p>
+<ul>
+<li><strong>SDK の先行度</strong> — <code>google-genai</code> の Python SDK が Node 版より先行していて、<code>output_dimensionality</code> による MRL 縮約や Google Search Grounding が先に来るのが Python 側でした。</li>
+<li><strong>信頼境界の分離</strong> — AI 呼び出しは従量課金を伴う外向きの境界なので、プロセスを分けて <code>INTERNAL_API_KEY</code> の検証をルーター単位で必須化し、backend を通らない呼び出しを構造的に拒否できるようにした。</li>
+<li><strong>運用単位を増やさない</strong> — 別 ECS サービスではなく<strong>同一タスク定義のサイドカー</strong>にして、Fargate の awsvpc モードで「同一タスクのコンテナは localhost で通信できる」性質を使い、<code>portMappings</code> を一切付けずに ALB・SG・サービスディスカバリを増やさずに済ませています。</li>
+</ul>
+<p>トレードオフは、<strong>デプロイ単位が backend と一体化する</strong>ことと、スケール粒度を分けられないことです。</p>
+<p><strong>根拠</strong>: <a href="https://docs.aws.amazon.com/AmazonECS/latest/developerguide/fargate-task-networking.html">AWS — Fargate task networking</a></p>
+<p><strong>追い質問と返し</strong></p>
+<blockquote>
+<p>「<code>portMappings</code> が無いのに <code>localhost:8000</code> で繋がるのは？」</p>
+</blockquote>
+<p><code>portMappings</code> は awsvpc では「タスク ENI の外に晒すか」の宣言で、同一タスク内のコンテナは同じネットワーク名前空間を共有するのでループバックでは常に到達可能です。<strong>書かないことが「外部に晒さない」という意図の表明</strong>になります。</p>
+<blockquote>
+<p>「AI サービスのイメージはどうやってデプロイしている？」</p>
+</blockquote>
+<p>🔸 <strong>これは穴です。</strong> <code>deploy.yml</code> に AI のビルド・push ジョブが無く、手動運用になっています。さらに <code>ai_image</code> が未指定だとフォールバックが素の <code>python:3.12-slim</code> で、これは uvicorn を起動しないため必ずヘルスチェックに落ち、backend が <code>dependsOn: HEALTHY</code> で待っているので<strong>タスク全体が起動しません</strong>。「設定漏れ＝即障害」という危険なデフォルトです。</p>
+<hr/>
+<h2>Q15. デプロイに <code>prisma migrate deploy</code> がありません。本番のマイグレーションは？</h2>
+<p><strong>該当箇所</strong>: <code>.github/workflows/deploy.yml</code>（<code>migrate</code> の出現 0 件）/ <code>.github/workflows/ci.yml:96</code></p>
+<p><strong>回答</strong></p>
+<p>🔸 <strong>走りません。これが現状の欠落です。</strong></p>
+<p><code>migrate deploy</code> は CI の ephemeral な Postgres に対して e2e の前準備として実行されているだけで、本番 RDS には誰も適用していない。デプロイは ECR push → タスク定義更新 → サービス再デプロイだけなので、<strong>スキーマ変更を含むリリースは新コードが旧スキーマに対して動く</strong>状態になります。</p>
+<p>正しくは ECS デプロイの<strong>前</strong>に migrate ステップを挟む。RDS が private subnet なので GitHub Runner から直接は届かず、<code>aws ecs run-task</code> でワンショットタスクを流して終了コードを待つのが現実的です。</p>
+<p><strong>根拠</strong>: <a href="https://www.prisma.io/docs/orm/prisma-migrate/workflows/development-and-production">Prisma — Development and production workflows</a></p>
+<p><strong>追い質問と返し</strong></p>
+<blockquote>
+<p>「コンテナ起動時に流せばよいのでは？ Postgres なら advisory lock で待つし。」</p>
+</blockquote>
+<p>壊れはしません（Prisma 公式も「one of them waits for the other」と書いています）。ただ待っている間コンテナが起動完了せず、ヘルスチェックの <code>startPeriod = 60</code> を超えるとタスクが kill されてデプロイがロールバックします。実用上は run-task 分離のほうが安全です。</p>
+<blockquote>
+<p>「<code>CREATE EXTENSION IF NOT EXISTS vector</code> は RDS で通りますか？」</p>
+</blockquote>
+<p>ここも要注意です。PostgreSQL 公式は「For many extensions this means superuser privileges are needed」としていて、RDS には真の superuser が無く <code>rds_superuser</code> ロールになります。通常アプリユーザーには渡さない権限なので、🔸 <strong>この1行だけは Prisma のマイグレーション履歴から外し、インフラ側で先に張っておくのが正しい分離</strong>です。現状はマイグレーションに埋まっているので本番適用時に権限で止まる可能性があります。</p>
+<blockquote>
+<p>「本番の PostgreSQL バージョンは？」</p>
+</blockquote>
+<p><code>terraform/modules/rds/variables.tf</code> の <code>engine_version</code> 既定値が <strong><code>15.15</code></strong> で、<code>envs/prod/main.tf</code> では上書きしていません。一方ローカルと CI は <code>pgvector/pgvector:pg16</code>。🔸 <strong>dev/prod parity のギャップです。</strong></p>
+<p>HNSW 自体は動きます（RDS PG 15.4-R3 以降で pgvector 0.5.1）。ただし <code>hnsw.iterative_scan</code> は pgvector 0.8.0 = <strong>PG 16.5 以降</strong>が必要なので、<strong>ローカルでは使えて本番では使えない</strong>という差があります。</p>
+<hr/>
+<h1>第3部 — 掘られたら答える</h1>
+<h2>Q16. <code>getOrCreateTags</code> が <code>Promise.all</code> の中で <code>findUnique</code> → <code>create</code> していますね。</h2>
+<p><strong>該当箇所</strong>: <code>src/posts/posts.service.ts:158-173</code></p>
+<p><strong>回答</strong></p>
+<p>🔸 <strong>N+1 です。</strong> タグ N 個で最大 2N クエリ、しかも <code>Promise.all</code> なので N 本の接続を同時に掴みます。さらに競合に無防備で、同じタグ名の投稿が同時に2件作られると両方の <code>findUnique</code> が空を返し、両方が <code>create</code> して片方が一意制約で P2002 になります（Prisma 公式 issue #3242 と同型）。</p>
+<p>正しくは <code>createMany({ data, skipDuplicates: true })</code> を1回投げてから <code>findMany({ where: { name: { in: tags } } })</code> で1回引く（計2クエリ）。<code>skipDuplicates</code> は PostgreSQL では <code>ON CONFLICT DO NOTHING</code> なので<strong>競合が例外にならない</strong>のが利点です。</p>
+<p><strong>根拠</strong>: <a href="https://www.prisma.io/docs/orm/v6/prisma-client/queries/crud">Prisma — CRUD</a></p>
+<hr/>
+<h2>Q17. タグ更新が <code>deleteMany</code> → <code>createMany</code> → <code>update</code> で、<code>$transaction</code> の外ですね。</h2>
+<p><strong>該当箇所</strong>: <code>src/posts/posts.service.ts:370-391</code></p>
+<p><strong>回答</strong></p>
+<p>🔸 <strong>意図的ではなく、直すべき箇所です。</strong> <code>deleteMany</code> が成功して <code>createMany</code> が失敗すると、<strong>その投稿のタグが全消失した状態でコミット済み</strong>になります（Prisma は個々のクエリを暗黙の単一文トランザクションとして実行するため）。</p>
+<p>正しくは interactive transaction にまとめる。ただし <code>getOrCreateTags</code> は外部往復を含むのでトランザクション外に出し、<code>postTag</code> の入れ替えだけを中に入れるのが妥当です（既定 <code>timeout</code> は 5,000ms なので外部 I/O を中に入れない原則）。</p>
+<p><strong>根拠</strong>: <a href="https://www.prisma.io/docs/orm/v6/prisma-client/queries/transactions">Prisma — Transactions</a></p>
+<hr/>
+<h2>Q18. <code>COUNT(*)</code> を <code>Number()</code> で包んでいるのに、<code>p.id</code> は包んでいませんね。</h2>
+<p><strong>該当箇所</strong>: <code>src/posts/posts.service.ts</code> の COUNT クエリ群</p>
+<p><strong>回答</strong></p>
+<p>PostgreSQL の <code>COUNT(*)</code> は <code>int8</code>（bigint）を返し、Prisma の raw クエリ型マッピングでは <code>BigInt</code> になります。<code>BigInt</code> は <code>JSON.stringify</code> でシリアライズできず <code>TypeError</code> で 500 になるので、レスポンスに載せる前に <code>Number()</code> へ落としています。一方 <code>p.id</code> は <code>SERIAL</code> = <code>int4</code> なので Prisma が最初から <code>Number</code> で返す。だから包む必要がない。</p>
+<p>型注釈を <code>&lt;{ count: bigint }[]&gt;</code> と書いているのはこの事実を明示するためですが、<strong><code>$queryRaw&lt;T&gt;</code> の型注釈は実行時に検証されない</strong>ので、これは「ドキュメント」であって保証ではありません。</p>
+<p><strong>根拠</strong>: <a href="https://www.prisma.io/docs/orm/prisma-client/using-raw-sql/raw-queries">Prisma — Raw queries</a>（型マッピング表 / "the raw data might not always match the suggested TypeScript type"）</p>
+<hr/>
+<h2>Q19. 非公開投稿に他人がアクセスしたとき 403 ではなく 404 ですね。</h2>
+<p><strong>該当箇所</strong>: <code>src/posts/posts.service.ts:320-324</code>（404）/ 同 <code>:342-344</code>（update は 403）</p>
+<p><strong>回答</strong></p>
+<p><strong>意図的に 404 です。</strong> 403 を返すと「その ID の投稿は存在する（が見えない）」という情報を渡してしまい、ID を総当たりすれば非公開投稿の分布が観測できます。OWASP Authorization Cheat Sheet の「認可エラーから情報を漏らさない」に沿って<strong>存在秘匿</strong>を優先しました。</p>
+<p>一方 <code>update</code> / <code>remove</code> は 403 のままです。「自分の投稿を編集しようとして 404」だと原因切り分けが不可能になるためで、そもそも認証必須の経路なので 403 が漏らす情報は限定的。<strong>読み取りは匿名でも叩けるので秘匿優先、書き込みは認証済み前提で診断性優先</strong>、という線引きです。</p>
+<p><strong>根拠</strong>: <a href="https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html">OWASP Authorization Cheat Sheet</a></p>
+<p><strong>追い質問と返し</strong></p>
+<blockquote>
+<p>「404 にしても漏れる経路は？」</p>
+</blockquote>
+<p>🔸 <strong>応答時間です。</strong> 存在しない ID は <code>findUnique</code> が空で即返り、存在する非公開 ID は JOIN と <code>bookmark.count</code> を実行した後に 404 になります。理屈の上ではタイミング差が出る。潰すなら可視性判定を先にやって、見えないと決まった時点で以降のクエリを打たない形に組み替えます。未対応です。</p>
+<hr/>
+<h2>Q20. <code>OptionalJwtAuthGuard</code> が <code>err</code> を捨てていますね。改竄トークンでも 200 ですよね。</h2>
+<p><strong>該当箇所</strong>: <code>src/auth/guards/optional-jwt-auth.guard.ts</code></p>
+<p><strong>回答</strong></p>
+<p><strong>安全だと判断しています。</strong> 根拠は passport-jwt の制御フローで、署名検証の失敗時は <code>self.fail(jwt_err)</code> を呼びます。passport の <code>fail</code> は <code>(err=null, user=false)</code> でコールバックするため、改竄・期限切れトークンは <code>handleRequest</code> に <code>user = false</code> で届き、<code>undefined</code> が返ります。結果 <code>req.user === undefined</code> となり、<code>findOne(id, undefined)</code> で 404、<code>findById(id, undefined)</code> で <code>isOwner=false</code>。</p>
+<p>つまり <strong>「偽トークン = 匿名」であり、偽トークンで他人になれる経路は存在しません</strong>（fail-closed）。</p>
+<p>代償は UX と診断性で、期限切れトークンを持ったオーナーが自分の非公開投稿を開くと <strong>401 ではなく 404</strong> が返り、フロントは「再ログインが必要」を判別できません。</p>
+<p><strong>根拠</strong>: 実装で確認（<code>passport-jwt/lib/strategy.js</code> の <code>fail</code> 呼び出し、<code>@nestjs/passport/dist/auth.guard.js</code> の <code>request[property] = user; return true;</code>）</p>
+<p><strong>追い質問と返し</strong></p>
+<blockquote>
+<p>「<code>err</code> が非 null になるケースは本当に無い？」</p>
+</blockquote>
+<p><strong>あります。</strong> <code>passport-jwt</code> が <code>self.error(ex)</code> を呼ぶのは <strong>verify コールバック（= <code>validate()</code>）が例外を投げた時</strong>です。現状の <code>validate()</code> は純粋な写像なので投げる余地がありませんが、🔸 <strong>将来 <code>validate()</code> で DB を引くようにしたら、DB 障害という 500 相当の事象が「匿名アクセス」に化けます。</strong></p>
+<p>正しくは <code>if (err) throw err; return user ?? undefined;</code> として「認証失敗は通す／サーバ側エラーは通さない」を区別すべきで、今は <code>validate()</code> が throw しない前提に依存した実装です。<strong>その前提はコードに書かれていません。</strong></p>
+<hr/>
+<h2>Q21. RAG で他ユーザーの投稿がプロンプトに入りますよね。プロンプトインジェクションは？</h2>
+<p><strong>該当箇所</strong>: <code>nokoroa-ai/app/services/gemini_service.py</code></p>
+<p><strong>回答</strong></p>
+<p><strong>完全には防げません。</strong> OWASP LLM01 自体が "it is unclear if there are fool-proof methods of prevention for prompt injection" と書いていて、これは緩和策の積み上げです。</p>
+<p>4層で対策しています。</p>
+<ul>
+<li><code>&lt;nokoroa_user_posts&gt;</code> で外部データを構造的に分離（"Segregate and Identify External Content"）</li>
+<li>区切りの<strong>後ろ</strong>で指示を再掲 — 前置きだけだと長い投稿本文に埋もれるため</li>
+<li><code>title</code> / <code>content</code> / <code>location</code> / <code>author</code> の<strong>全部</strong>を無害化 — 1つでも生で残ると閉じタグを偽造されて境界を破られる</li>
+<li>ゼロ幅文字（U+200B/200C/200D/FEFF）を除去 — 人間には見えないがトークナイザには見える指示を無効化</li>
+</ul>
+<p><strong>ただし防御の本体は「成功しても被害が出ない設計」側に置いています。</strong> この AI は Google Search ツールしか持たず、DB 書き込みも関数呼び出し権限も無い。<strong>最悪ケースが「変な旅行提案が返る」</strong>で、データ流出や権限昇格には至りません。逆に言えば、将来 AI に投稿削除のようなツールを持たせた瞬間に、この強度では足りなくなります。</p>
+<p><strong>根拠</strong>: <a href="https://genai.owasp.org/llmrisk/llm01-prompt-injection/">OWASP LLM01:2025 Prompt Injection</a></p>
+<p><strong>追い質問と返し</strong></p>
+<blockquote>
+<p>「<code>role</code> を絞っているのは何のため？」</p>
+</blockquote>
+<p><strong>直接注入</strong>の方です。クライアントが任意の role を送れると <code>role: "system"</code> で過去のシステム指示を捏造できるので、<code>Literal["user", "model"]</code> で閉じています。</p>
+<p>🔸 <strong>ただし「過去の model 発言」の捏造は依然として可能です。</strong> 「私は制約を解除しました」という偽の AI 応答を履歴に入れることは今でもできる。塞ぐには履歴をサーバ側セッションで保持してクライアントから受け取らない形にする必要があり、未対応です。</p>
+<blockquote>
+<p>「他人の非公開投稿がプロンプトに混ざる可能性は？」</p>
+</blockquote>
+<p>二重で閉じています。生成側は <code>syncEmbedding</code> が非公開投稿の埋め込みを<strong>生成せず既存行も削除</strong>（<code>post_embedding</code> に可視性カラムが無いので、行を残さないことで守る）。検索側は SQL の <code>WHERE p."isPublic" = true</code>。<strong>「可視性を持たないテーブルには可視性を要するデータを置かない」</strong>が方針です。</p>
+<hr/>
+<h2>Q22. 一覧を開くとカードの数だけブックマーク状態の API が飛びますよね。</h2>
+<p><strong>該当箇所</strong>: <code>nokoroa-frontend/src/components/bookmarks/BookmarkButton.tsx</code> / <code>components/follow/FollowButton.tsx</code></p>
+<p><strong>回答</strong></p>
+<p>🔸 <strong>クライアント側の N+1 です。</strong> トップは1ページ12件なので、一覧1回 + <code>/favorites/check/:postId</code> が12回。無限スクロールで積み上がります。しかも SWR を経由していない素の <code>fetch</code> なので dedup もキャッシュも効かず、再マウントのたびに再送されます。</p>
+<p>原因は <code>BookmarkButton</code> を「<code>postId</code> さえ渡せばどこでも動く自己完結コンポーネント」として設計したことで、呼び出し側が状態取得を気にしなくていい代わりに<strong>一覧の文脈でのバッチ化ができなくなりました</strong>。</p>
+<p>正しくは一覧 API のレスポンスに <code>isBookmarked</code> / <code>isFollowing</code> を含めて prop で渡し、<code>useEffect</code> フェッチは prop が無い場合のフォールバックに格下げする。サーバ側では取得ユーザーが分かるので JOIN 1回で済みます。</p>
+<hr/>
+<h2>Q23. <code>NEXT_PUBLIC_API_URL</code> をビルド引数で渡していますね。1つのイメージを staging と本番で使い回せませんよね？</h2>
+<p><strong>該当箇所</strong>: <code>nokoroa-frontend/Dockerfile</code> / <code>.github/workflows/deploy.yml</code></p>
+<p><strong>回答</strong></p>
+<p><strong>使い回せません。</strong> <code>NEXT_PUBLIC_</code> は <code>next build</code> 時に JS バンドルへインライン展開され、公式も「if you build and deploy a single Docker image to multiple environments, all <code>NEXT_PUBLIC_</code> variables will be frozen with the value evaluated at build time」と明記しています。</p>
+<p>今回は環境が prod 1つだけなのでビルド時固定の単純さを取りました。代償は、環境が増えた瞬間に環境ごとのビルドが必要になり、<strong>「staging で検証したイメージをそのまま本番に昇格する」という一般的なリリース手順が取れなくなる</strong>ことです。</p>
+<p>公式が示す逃げ道は「set up your own API to provide them to the client」で、Route Handler で <code>/api/config</code> を生やしてクライアントが起動時に読む形。あるいは<strong>同一ドメイン運用に倒して API を相対パスにすれば、そもそも環境変数にする必要がなくなります</strong>。</p>
+<p><strong>根拠</strong>: <a href="https://nextjs.org/docs/app/guides/environment-variables">Next.js — Environment Variables</a></p>
+<hr/>
+<h2>Q24. GitHub Actions が長期 AWS アクセスキーを持っていますね。OIDC がベストプラクティスでは？</h2>
+<p><strong>該当箇所</strong>: <code>.github/workflows/deploy.yml</code></p>
+<p><strong>回答</strong></p>
+<p>🔸 <strong>おっしゃるとおりで、現状のままだと指摘を受ける箇所です。</strong> GitHub Secrets に無期限の IAM ユーザーキーが常駐しています。</p>
+<p>正しくは IAM OIDC Provider を作り、<code>sub</code> を <code>repo:&lt;owner&gt;/&lt;repo&gt;:ref:refs/heads/main</code> に絞った信頼ポリシーのロールを用意して、ジョブに <code>permissions: { id-token: write, contents: read }</code> を付け <code>role-to-assume</code> に切り替える。同 action は OIDC 対応済みなので<strong>差分は数行</strong>で、しかも main 以外のブランチや fork PR からは assume できなくなるので権限の粒度も上がります。</p>
+<p>コスト対効果は明らかに OIDC 側です。優先度を落としたのは判断ミスでした。</p>
+<p><strong>根拠</strong>: <a href="https://docs.github.com/en/actions/concepts/security/openid-connect">GitHub Actions — OpenID Connect</a></p>
+<hr/>
+<h2>Q25. FastAPI のストリーミングが同期ジェネレータですね。イベントループは大丈夫ですか？</h2>
+<p><strong>該当箇所</strong>: <code>nokoroa-ai/app/routers/chat.py</code></p>
+<p><strong>回答</strong></p>
+<p><strong>イベントループはブロックしません。</strong> Starlette は <code>StreamingResponse</code> に同期ジェネレータを渡すと <code>iterate_in_threadpool</code> でワーカースレッドに逃がします。埋め込み側では明示的に <code>asyncio.to_thread</code> を使っていて、方針は一貫しています。</p>
+<p>ただし問題は別にあって、🔸 <strong>スレッドプールの枠を長時間占有する</strong>ことです。1チャットが生成完了まで数十秒スレッドを保持するので、AnyIO の既定スレッド上限（40）に対して<strong>同時 40 チャットで頭打ち</strong>になります。backend 側のスロットルはユーザー単位なので同時接続数の上限にはなりません。</p>
+<p>正しくは <code>google-genai</code> の async クライアントを使って <code>async def generate()</code> + <code>async for</code> にすること。そうすればスレッドではなくコルーチンなので、同時接続数はメモリの許す限りスケールします。</p>
+<p><strong>根拠</strong>: <a href="https://fastapi.tiangolo.com/async/">FastAPI — Concurrency and async/await</a></p>
+<hr/>
+<h1>付録A — この資料を作る過程で見つけて直したバグ</h1>
+<p>面談で「レビューで何か見つかりましたか」と聞かれたら、この一覧が答えになる。</p>
+<p><strong>いずれも公式ドキュメントとの突き合わせ、または実測で発見している。</strong></p>
+<table><thead><tr><th>#</th><th>症状</th><th>原因</th><th>検証方法</th></tr></thead><tbody>
+<tr><td>1</td><td><code>PUT /users/profile</code> で現在のパスワード無しにパスワードを変更できた（<strong>アカウント乗っ取り</strong>）</td><td>DTO に <code>password</code> / <code>email</code> があり、サービスが DTO をそのまま Prisma の <code>data</code> に渡していた</td><td>OWASP API3:2023 との突き合わせ</td></tr>
+<tr><td>2</td><td><code>PrismaService</code> が3インスタンス生成され接続プールが3本</td><td><code>@Global()</code> な <code>PrismaModule</code> があるのに2モジュールが <code>providers</code> で再宣言</td><td>NestJS の DI スコープ仕様</td></tr>
+<tr><td>3</td><td><code>AuthenticatedRequest</code> が Express の型ではなく Fetch API の <code>Request</code> を継承していた</td><td><code>Request</code> を <code>@nestjs/common</code>（＝デコレータの値）から import</td><td><strong>tsc で実測</strong>（<code>r.params</code> がエラー、<code>r.bodyUsed</code> が通る）</td></tr>
+<tr><td>4</td><td>トーストが一切表示されていなかった</td><td>6ファイルが <code>react-hot-toast</code> を使うのに <code>&lt;Toaster /&gt;</code> が未マウント</td><td>grep で <code>&lt;Toaster</code> が 0 件</td></tr>
+<tr><td>5</td><td>同一 NAT 配下の別ユーザーが巻き添えで 429</td><td>グローバルの IP 単位ガードがコントローラの <code>@Throttle(20/分)</code> も読んでいた</td><td><strong>実 DB で e2e 実測</strong>（A が 21 回目で 429 → B が即 429）</td></tr>
+<tr><td>6</td><td>緯度0（赤道）・経度0が <code>null</code> に潰れる</td><td>`\</td><td>\</td><td>` で既定値に落としていた</td><td>コード読解</td></tr>
+<tr><td>7</td><td>ベクトル検索の <code>MAX_LIMIT=50</code> が実際には 40 までしか返らない</td><td><code>hnsw.ef_search</code> 既定 40 を超える契約</td><td>pgvector 公式ドキュメント</td></tr>
+<tr><td>8</td><td>長文投稿の後半が検索に効かない</td><td><code>MAX_TEXT_LEN=8000</code> がモデルの 2,048 トークン上限を超過</td><td>Gemini API 公式ドキュメント</td></tr>
+<tr><td>9</td><td>チャットのタイピング中に絵文字が化ける</td><td><code>split('')</code> が UTF-16 コードユニット単位でサロゲートペアを分断</td><td>コード読解</td></tr>
+<tr><td>10</td><td>地図の InfoWindow に未修正の HTML 文字列が残存</td><td>外部 API（ipapi.co）の応答をテンプレートリテラルで HTML に埋めていた</td><td>grep</td></tr>
+<tr><td>11</td><td>Google 連携のみのユーザーがパスワード変更で 500</td><td><code>password</code> が <code>null</code> の状態で <code>bcrypt.compare(x, null)</code> が throw</td><td>schema の <code>password String?</code></td></tr>
+</tbody></table>
+<hr/>
+<h1>付録B — 認識しているが未対応（🔸）</h1>
+<p><strong>聞かれたら即答できるようにしておく。聞かれなくても、終盤に自分から1〜2個出すと効く。</strong></p>
+<h2>セキュリティ</h2>
+<table><thead><tr><th>項目</th><th>なぜ後回しにしたか</th><th>正しい直し方</th></tr></thead><tbody>
+<tr><td>JWT を localStorage に保管</td><td>Cookie 化は CSRF 対策・CORS・OAuth コールバックの作り直しまで一続きになる</td><td>短命アクセストークン（メモリ）+ httpOnly refresh Cookie + CSRF トークン</td></tr>
+<tr><td>CSP 未設定</td><td>Google Maps と MUI のインラインスタイルに依存し nonce 化が別作業</td><td>Middleware で nonce 発行 → <code>AppRouterCacheProvider</code> に渡す</td></tr>
+<tr><td>トークン失効機構なし</td><td>Redis を増やす判断をせず、全リクエストの DB 往復も避けた</td><td><code>user.tokenVersion</code> を payload に入れて <code>validate</code> で突き合わせ</td></tr>
+<tr><td>OAuth コールバックで JWT を URL クエリに載せる</td><td>localStorage 方式の下流症状</td><td>一回限りの交換コード → <code>POST /auth/exchange</code>、または Cookie 化</td></tr>
+<tr><td>ログイン失敗カウンタが IP 単位</td><td>未認証なので IP しか鍵にできないと考えた</td><td>アカウント単位の失敗カウンタ + 段階的な遅延（ロックは DoS を生む）</td></tr>
+<tr><td><code>imageUrl</code> に内部宛先（127.0.0.1 / IMDS）を書ける</td><td>サーバ側で取得する経路が無いので SSRF にならない</td><td>許可リストではなく<strong>拒否リスト</strong>方式（既存データを壊さない）</td></tr>
+</tbody></table>
+<h2>設計・実装</h2>
+<table><thead><tr><th>項目</th><th>現状</th><th>正しい直し方</th></tr></thead><tbody>
+<tr><td><code>tsconfig</code> が <code>strict: true</code> を自分で打ち消している</td><td><code>strictNullChecks: false</code> / <code>noImplicitAny: false</code></td><td><code>strictNullChecks</code> を最優先で戻す（他の型バグの大半がこれに起因）</td></tr>
+<tr><td>Prisma 生成型を使わず手書き interface + <code>as</code> 8箇所</td><td>スキーマ変更が型に追随しない</td><td><code>satisfies</code> + <code>Prisma.PostGetPayload&lt;&gt;</code></td></tr>
+<tr><td><code>posts.service.ts</code> 710 行 / Haversine 3重複</td><td>関心事が4つ混在</td><td>サービス分割 + <code>Prisma.sql</code> で WHERE 句を共有</td></tr>
+<tr><td><code>@Res()</code> で Nest の抽象から降りている</td><td>上流 SSE をパススルーしたかった</td><td><code>@Sse()</code> + <code>Observable</code>、最低限 <code>res.on('close')</code> で上流を中断</td></tr>
+<tr><td><code>ThrottlerStorage</code> がインメモリ</td><td>1タスク運用なので顕在化しない</td><td>ElastiCache（Redis ストレージ）</td></tr>
+<tr><td>クライアント側 N+1（一覧12件 → 12リクエスト）</td><td>コンポーネントの自己完結性を優先</td><td>一覧レスポンスに <code>isBookmarked</code> を同梱</td></tr>
+<tr><td><code>getOrCreateTags</code> の N+1 と競合</td><td>—</td><td><code>createMany({ skipDuplicates: true })</code> + <code>findMany</code> の2クエリ</td></tr>
+<tr><td>タグ更新がトランザクション外</td><td>—</td><td><code>$transaction</code>（外部 I/O は外に出す）</td></tr>
+</tbody></table>
+<h2>運用・インフラ</h2>
+<table><thead><tr><th>項目</th><th>現状</th><th>正しい直し方</th></tr></thead><tbody>
+<tr><td>デプロイに <code>prisma migrate deploy</code> が無い</td><td>CI のテスト DB にしか当たっていない</td><td>ECS デプロイ前に <code>aws ecs run-task</code> でワンショット実行</td></tr>
+<tr><td>AI サービスのイメージが CD から漏れている</td><td>手動 build/push</td><td><code>deploy-ai</code> ジョブ追加 + フォールバックイメージを削除</td></tr>
+<tr><td>GitHub Actions が長期 AWS キー</td><td>優先度を落とした（判断ミス）</td><td>OIDC + <code>role-to-assume</code></td></tr>
+<tr><td>本番 PG 15.15 / ローカル PG 16</td><td><code>engine_version</code> の既定値を上書きしていない</td><td>揃える（<code>iterative_scan</code> は PG 16.5+ が必要）</td></tr>
+<tr><td><code>CREATE EXTENSION vector</code> がマイグレーションに埋まっている</td><td>RDS では <code>rds_superuser</code> が必要</td><td>インフラ側（Terraform）で先に張る</td></tr>
+<tr><td>埋め込みモデル変更時の再埋め込みが手順書止まり</td><td>—</td><td><code>post_embedding</code> に <code>model</code> 列を持たせ、不一致行を検索対象外に</td></tr>
+</tbody></table>
+<hr/>
+<h1>付録C — 数字で答えられるようにしておく</h1>
+<table><thead><tr><th>項目</th><th>値</th></tr></thead><tbody>
+<tr><td>単体テスト</td><td>108 件</td></tr>
+<tr><td>e2e テスト</td><td>54 件（実 DB / pgvector コンテナ）</td></tr>
+<tr><td>埋め込み次元</td><td>768（pgvector のインデックス上限 2,000 に収める）</td></tr>
+<tr><td><code>hnsw.ef_search</code></td><td>40（既定値、未設定）</td></tr>
+<tr><td>ベクトル検索の上限</td><td>40 件</td></tr>
+<tr><td>埋め込み入力長</td><td>2,000 文字（モデル上限 2,048 トークン）</td></tr>
+<tr><td>RAG のコンテキスト</td><td>上位5件 × 600 文字</td></tr>
+<tr><td>チャット履歴の転送上限</td><td>20 件 / 合計 20,000 文字</td></tr>
+<tr><td>レート制限</td><td>全体 100/分（IP）、ログイン・登録 5/分（IP）、チャット 20/分（ユーザー）</td></tr>
+<tr><td>JWT 有効期限</td><td>24 時間（失効機構なし）</td></tr>
+<tr><td>JWT 鍵の最小長</td><td>32 文字（HS256 の出力長 256 bit に対応）</td></tr>
+</tbody></table>
+<hr/>
+<h1>付録D — 参照した公式ドキュメント</h1>
+<h2>Prisma / PostgreSQL / pgvector</h2>
+<ul>
+<li><a href="https://www.prisma.io/docs/orm/prisma-client/using-raw-sql/raw-queries">Prisma — Raw queries</a></li>
+<li><a href="https://www.prisma.io/docs/orm/prisma-client/type-safety/operating-against-partial-structures-of-model-types">Prisma — Operating against partial structures of model types</a></li>
+<li><a href="https://www.prisma.io/docs/orm/v6/prisma-client/queries/transactions">Prisma — Transactions</a></li>
+<li><a href="https://www.prisma.io/docs/orm/v6/prisma-client/queries/crud">Prisma — CRUD</a></li>
+<li><a href="https://www.prisma.io/docs/orm/prisma-migrate/workflows/development-and-production">Prisma — Development and production workflows</a></li>
+<li><a href="https://www.prisma.io/docs/orm/prisma-schema/data-model/unsupported-database-features">Prisma — Unsupported database features</a></li>
+<li><a href="https://www.postgresql.org/docs/16/protocol-flow.html">PostgreSQL 16 — Frontend/Backend Protocol</a></li>
+<li><a href="https://www.postgresql.org/docs/16/sql-createextension.html">PostgreSQL 16 — CREATE EXTENSION</a></li>
+<li><a href="https://www.postgresql.org/docs/16/indexes-unique.html">PostgreSQL 16 — Unique Indexes</a></li>
+<li><a href="https://github.com/pgvector/pgvector/blob/master/README.md">pgvector — README</a> / <a href="https://github.com/pgvector/pgvector#filtering">Filtering</a></li>
+</ul>
+<h2>NestJS</h2>
+<ul>
+<li><a href="https://docs.nestjs.com/faq/request-lifecycle">Request lifecycle</a> / <a href="https://docs.nestjs.com/guards">Guards</a> / <a href="https://docs.nestjs.com/pipes">Pipes</a></li>
+<li><a href="https://docs.nestjs.com/exception-filters">Exception filters</a> / <a href="https://docs.nestjs.com/techniques/validation">Validation</a></li>
+<li><a href="https://docs.nestjs.com/security/rate-limiting">Rate limiting</a> / <a href="https://docs.nestjs.com/security/helmet">Helmet</a></li>
+<li><a href="https://docs.nestjs.com/recipes/passport">Passport recipe</a> / <a href="https://docs.nestjs.com/custom-decorators">Custom decorators</a></li>
+<li><a href="https://docs.nestjs.com/controllers">Controllers</a> / <a href="https://docs.nestjs.com/techniques/server-sent-events">Server-Sent Events</a></li>
+<li><a href="https://docs.nestjs.com/techniques/configuration">Configuration</a> / <a href="https://github.com/nestjs/jwt">@nestjs/jwt</a></li>
+</ul>
+<h2>OWASP</h2>
+<ul>
+<li><a href="https://owasp.github.io/API-Security/editions/2023/en/0x11-t10">API Security Top 10 2023</a>（<a href="https://owasp.github.io/API-Security/editions/2023/en/0xa1-broken-object-level-authorization">API1</a> / <a href="https://owasp.github.io/API-Security/editions/2023/en/0xa3-broken-object-property-level-authorization">API3</a> / <a href="https://owasp.github.io/API-Security/editions/2023/en/0xa4-unrestricted-resource-consumption">API4</a>）</li>
+<li><a href="https://cheatsheetseries.owasp.org/cheatsheets/HTML5_Security_Cheat_Sheet.html">HTML5 Security</a> / <a href="https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_Cheat_Sheet.html">JWT</a> / <a href="https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html">Authorization</a> / <a href="https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html">Authentication</a></li>
+<li><a href="https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html">CSRF Prevention</a> / <a href="https://cheatsheetseries.owasp.org/cheatsheets/DOM_based_XSS_Prevention_Cheat_Sheet.html">DOM based XSS Prevention</a> / <a href="https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html">SSRF Prevention</a></li>
+<li><a href="https://genai.owasp.org/llmrisk/llm01-prompt-injection/">LLM01:2025 Prompt Injection</a></li>
+</ul>
+<h2>Next.js / Gemini / AWS / その他</h2>
+<ul>
+<li><a href="https://nextjs.org/docs/app/getting-started/server-and-client-components">Next.js — Server and Client Components</a> / <a href="https://nextjs.org/docs/app/guides/environment-variables">Environment Variables</a> / <a href="https://nextjs.org/docs/app/api-reference/config/next-config-js/headers">headers()</a></li>
+<li><a href="https://ai.google.dev/gemini-api/docs/embeddings">Gemini API — Embeddings</a> / <a href="https://ai.google.dev/gemini-api/docs/deprecations">Deprecations</a> / <a href="https://ai.google.dev/gemini-api/docs/models">Models</a></li>
+<li><a href="https://docs.aws.amazon.com/AmazonECS/latest/developerguide/fargate-task-networking.html">AWS — Fargate task networking</a> / <a href="https://docs.aws.amazon.com/elasticloadbalancing/latest/application/x-forwarded-headers.html">ALB X-Forwarded-For</a></li>
+<li><a href="https://aws.amazon.com/about-aws/whats-new/2024/11/amazon-rds-for-postgresql-pgvector-080/">AWS — RDS pgvector 0.8.0</a></li>
+<li><a href="https://docs.github.com/en/actions/concepts/security/openid-connect">GitHub Actions — OpenID Connect</a></li>
+<li><a href="https://expressjs.com/en/guide/behind-proxies.html">Express — Behind proxies</a></li>
+<li><a href="https://fastapi.tiangolo.com/async/">FastAPI — Concurrency and async/await</a></li>
+<li><a href="https://html.spec.whatwg.org/multipage/server-sent-events.html">WHATWG HTML — Server-sent events</a></li>
+<li><a href="https://swr.vercel.app/docs/mutation">SWR — Mutation</a></li>
+</ul></body></html>
