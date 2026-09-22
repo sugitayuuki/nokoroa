@@ -26,6 +26,17 @@ export function trackedUserId(context: ExecutionContext): number | undefined {
  * 認証ガードより先に走ってしまう（実装: @nestjs/core の guards-context-creator）。
  * したがってこのガードは @UseGuards(JwtAuthGuard, UserThrottlerGuard) の形で
  * コントローラに適用する。
+ *
+ * この制約は getTracker だけの話ではなく、そのガードの canActivate 内で
+ * 呼ばれる全てのフック(shouldSkip / skipIf / generateKey)に等しく効く。
+ * 逆に言えば app.module の user throttler の skipIf が
+ * 「req.user が無ければ必ずスキップ」として機能するのは、
+ * グローバル段階では構造的に必ず undefined だと保証されているからで、偶然ではない。
+ *
+ * 補足: ThrottlerGuard は this.throttlers を全て評価するため、chat では
+ * default(100/分) もユーザーキーで二重に数えられる。20 < 100 である限り
+ * 発火しないので現状は無害だが、user 上限を 100 超に上げると
+ * 「見えない天井」に当たるので、そのときは評価対象を絞る必要がある。
  */
 @Injectable()
 export class UserThrottlerGuard extends ThrottlerGuard {

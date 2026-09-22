@@ -186,6 +186,12 @@ NestJS の `GuardsContextCreator` は `globalGuards.concat(scopedGuards)` を返
 
 **ここで一度実装を間違えて、テストで捕まえました。** 最初は「`shouldSkip` で `req.user` を見て分岐する」実装にしたのですが、同じ理由で `shouldSkip` の時点でも `req.user` は常に undefined。結果、認証済みでもスキップされず IP 単位の 20/分が復活し、**同一 IP の別ユーザーが巻き添えで 429 になる元の症状に戻っていました**。e2e が落ちて気づきました。
 
+**ここから引き出せる一般則がこの質問の本丸です。**
+
+> 「グローバルガードでは `req.user` が読めない」という制約は `getTracker` だけの話ではなく、**そのガードの `canActivate` 内で呼ばれる全てのフック（`shouldSkip` / `skipIf` / `generateKey`）に等しく効く**。
+
+そして逆向きに読むと設計が成立します。`user` throttler の `skipIf` が「`req.user` が無ければ必ずスキップ」として機能するのは、**グローバル段階では構造的に必ず undefined だと保証されているから**で、偶然ではありません。
+
 最終形は名前付き throttler です。
 
 | throttler | 上限 | 単位 | 評価するガード |
@@ -193,7 +199,7 @@ NestJS の `GuardsContextCreator` は `globalGuards.concat(scopedGuards)` を返
 | `default` | 100/分 | IP | グローバル（全経路） |
 | `user` | 20/分（chat で上書き） | ユーザー | `UserThrottlerGuard`（認証後） |
 
-`user` には `skipIf: ctx => isTestEnv() \|\| trackedUserId(ctx) === undefined` を付けているので、グローバルガードでは必ずスキップされ、認証後の `UserThrottlerGuard` だけが評価します。
+`user` には `skipIf: ctx => isTestEnv() || trackedUserId(ctx) === undefined` を付けているので、グローバルガードでは必ずスキップされ、認証後の `UserThrottlerGuard` だけが評価します。
 
 **根拠**
 
@@ -215,6 +221,14 @@ NestJS の `GuardsContextCreator` は `globalGuards.concat(scopedGuards)` を返
 > 「ECS を複数タスクにしたら？」
 
 🔸 **破綻します。** `ThrottlerModule` の既定ストレージはプロセス内 Map なので、N タスクで実効上限が N 倍になり、再起動でカウンタも消えます。スケールアウト前に Redis ストレージ（ElastiCache）へ寄せる必要があります。**現状 1 タスク運用なので顕在化していない、というだけです。**
+
+> 「`@SkipThrottle()` で済んだのでは？」
+
+**戻ります。** `@SkipThrottle()` も `reflector.getAllAndOverride` で読まれるので、グローバルガードと `UserThrottlerGuard` が**同じメタデータを読んで両方スキップ**します。「片方のガードにだけ効くスキップ」は表現できません。名前付き throttler + `skipIf` にしたのはそのためです。
+
+> 「チャットでは `default` も二重に評価されませんか？」
+
+されます。`ThrottlerGuard` は `this.throttlers` を全部回すので、チャット1リクエストでストレージ書き込みは3本（`default`×IP / `default`×ユーザー / `user`×ユーザー）。`generateKey` が `sha256(Class-handler-name-tracker)` なのでキー衝突は無く、**20 < 100 である限り余分な方は発火しない**ので現状は無害です。実害が出るのは「将来チャットの上限を 100 超に上げた時に、見えない 100/分 の天井に当たって原因不明の 429 になる」ケースだけで、コードにコメントで残しています。
 
 ---
 
@@ -737,6 +751,11 @@ PostgreSQL の `COUNT(*)` は `int8`（bigint）を返し、Prisma の raw ク�
 | クライアント側 N+1（一覧12件 → 12リクエスト） | コンポーネントの自己完結性を優先 | 一覧レスポンスに `isBookmarked` を同梱 |
 | `getOrCreateTags` の N+1 と競合 | — | `createMany({ skipDuplicates: true })` + `findMany` の2クエリ |
 | タグ更新がトランザクション外 | — | `$transaction`（外部 I/O は外に出す） |
+| チャットに `AbortController` が無い | — | ref に持って cleanup で `abort()`、backend 側も `res.on('close')` で上流を中断 |
+| 未ログインでもチャットのサジェストが押せる（必ず 401） | ガードとUIの表示条件が別管理 | ログイン誘導に差し替えるか、チャット自体を認証済みにのみ表示 |
+| 可視性フィルタが3箇所に分散（raw SQL 2 + Prisma API） | 各クエリで書く規約 + テストで担保 | Prisma の `$extends` か RLS で deny-by-default に |
+| フロントのテストが 0 件 | ロジックの大半が backend という判断 | SSE パースとキャッシュ破棄を純粋関数に切り出して Vitest |
+| AI サービスに lint / 型チェック / テストが無い | — | ruff + pyright + pytest を CI に追加 |
 
 ## 運用・インフラ
 
