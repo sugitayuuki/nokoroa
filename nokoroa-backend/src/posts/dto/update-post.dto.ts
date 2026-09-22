@@ -5,6 +5,8 @@ import {
   IsArray,
   IsBoolean,
   IsNumber,
+  MaxLength,
+  ArrayMaxSize,
 } from 'class-validator';
 
 export class UpdatePostDto {
@@ -14,6 +16,7 @@ export class UpdatePostDto {
   })
   @IsOptional()
   @IsString()
+  @MaxLength(200)
   title?: string;
 
   @ApiPropertyOptional({
@@ -22,6 +25,7 @@ export class UpdatePostDto {
   })
   @IsOptional()
   @IsString()
+  @MaxLength(10000)
   content?: string;
 
   @ApiPropertyOptional({
@@ -38,6 +42,7 @@ export class UpdatePostDto {
   })
   @IsOptional()
   @IsString()
+  @MaxLength(100)
   location?: string;
 
   @ApiPropertyOptional({
@@ -46,6 +51,7 @@ export class UpdatePostDto {
   })
   @IsOptional()
   @IsString()
+  @MaxLength(50)
   prefecture?: string;
 
   @ApiPropertyOptional({
@@ -71,7 +77,9 @@ export class UpdatePostDto {
   })
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(20)
   @IsString({ each: true })
+  @MaxLength(50, { each: true })
   tags?: string[];
 
   @ApiPropertyOptional({

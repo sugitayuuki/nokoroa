@@ -147,9 +147,13 @@ export class FavoritesService {
     limit: number = 10,
     offset: number = 0,
   ) {
+    // ブックマーク後に投稿が非公開化された場合、ブックマークは残るため
+    // ここで可視性を再評価しないと非公開投稿の本文が返り続ける
+    const where = { userId, post: { isPublic: true } };
+
     const [favorites, total] = await Promise.all([
       this.prisma.bookmark.findMany({
-        where: { userId },
+        where,
         include: {
           post: {
             include: postInclude,
@@ -159,7 +163,7 @@ export class FavoritesService {
         skip: offset,
         take: limit,
       }),
-      this.prisma.bookmark.count({ where: { userId } }),
+      this.prisma.bookmark.count({ where }),
     ]);
 
     return {

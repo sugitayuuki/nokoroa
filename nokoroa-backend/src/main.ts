@@ -12,8 +12,18 @@ async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   const isProduction = process.env.NODE_ENV === 'production';
 
+  // ALB 配下では req.ip が ALB ノードのIPになるため、これが無いと
+  // レート制限が「IPごと」ではなく「全ユーザー共有」になり、
+  // 1人の攻撃者が全員を 429 にできてしまう。ALBは1ホップ。
+  app.set('trust proxy', 1);
+
   // セキュリティヘッダ。他のミドルウェアより先に適用する。
-  app.use(helmet());
+  // 画像は別オリジン(フロント)から参照されるため CORP は緩める。
+  app.use(
+    helmet({
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
+    }),
+  );
   app.setGlobalPrefix('api');
 
   const config = new DocumentBuilder()

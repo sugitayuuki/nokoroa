@@ -13,7 +13,9 @@ services:
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/nokoroa_db
       - FRONTEND_URL=http://localhost:3000
-      - JWT_SECRET=${JWT_SECRET:-local-development-only-secret}
+      # 既定値を置かない。リポジトリに載った固定鍵で起動できてしまうため。
+      # 生成例: export JWT_SECRET=$(openssl rand -base64 32)
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
       - NODE_ENV=development
       - PORT=4000
       - AI_SERVICE_URL=http://ai:8000

@@ -43,6 +43,7 @@ export class CreatePostDto {
   })
   @IsOptional()
   @IsString()
+  @MaxLength(100)
   location?: string;
 
   @ApiPropertyOptional({
@@ -51,6 +52,7 @@ export class CreatePostDto {
   })
   @IsOptional()
   @IsString()
+  @MaxLength(50)
   prefecture?: string;
 
   @ApiPropertyOptional({
