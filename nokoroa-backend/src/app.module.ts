@@ -1,14 +1,13 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
-import { ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
 import { ChatModule } from './chat/chat.module';
 import { CommonModule } from './common/common.module';
-import { UserThrottlerGuard } from './common/user-throttler.guard';
 import { FavoritesModule } from './favorites/favorites.module';
 import { FollowsModule } from './follows/follows.module';
 import { LoggerMiddleware } from './middleware/logger.middleware';
@@ -31,7 +30,10 @@ import { UsersModule } from './users/users.module';
     ChatModule,
   ],
   controllers: [AppController],
-  providers: [AppService, { provide: APP_GUARD, useClass: UserThrottlerGuard }],
+  // グローバルガードはIP単位の基礎的な制限。
+  // ユーザー単位の制限はコントローラ側で JwtAuthGuard の後に適用する
+  // (グローバルガードは認証ガードより先に走るため req.user を読めない)。
+  providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
