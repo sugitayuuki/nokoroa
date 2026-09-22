@@ -7,6 +7,7 @@ import {
   ChatRequestDto,
   MAX_HISTORY_CONTENT_LENGTH,
   MAX_HISTORY_ITEMS,
+  MAX_HISTORY_TOTAL_LENGTH,
 } from './dto/chat-request.dto';
 import { RelatedPostsRequestDto } from './dto/related-posts-request.dto';
 import { SuggestionsRequestDto } from './dto/suggestions-request.dto';
@@ -44,10 +45,25 @@ export class ChatService {
     history: ChatRequestDto['history'],
   ): ChatRequestDto['history'] {
     if (!history) return [];
-    return history.slice(-MAX_HISTORY_ITEMS).map((msg) => ({
-      ...msg,
-      content: msg.content.slice(0, MAX_HISTORY_CONTENT_LENGTH),
-    }));
+
+    // DTOの上限(20件 × 8000文字)は「拒否」の境界なので、そのままだと
+    // 1リクエストで16万文字を外部AIへ転送できてしまう。
+    // 新しいターンから総文字数のバジェットを積み、超えた時点で打ち切る。
+    // 直近の会話はそのまま残り、古いターンから落ちる。
+    const trimmed: NonNullable<ChatRequestDto['history']> = [];
+    let budget = MAX_HISTORY_TOTAL_LENGTH;
+
+    for (const msg of history.slice(-MAX_HISTORY_ITEMS).reverse()) {
+      if (budget <= 0) break;
+      const content = msg.content.slice(
+        0,
+        Math.min(budget, MAX_HISTORY_CONTENT_LENGTH),
+      );
+      budget -= content.length;
+      trimmed.unshift({ ...msg, content });
+    }
+
+    return trimmed;
   }
 
   /** AIサービスは内部呼び出しのみを受け付けるため、全リクエストに内部トークンを付ける */

@@ -8,6 +8,7 @@ import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
 import { ChatModule } from './chat/chat.module';
 import { CommonModule } from './common/common.module';
+import { isTestEnv } from './common/environment';
 import { FavoritesModule } from './favorites/favorites.module';
 import { FollowsModule } from './follows/follows.module';
 import { LoggerMiddleware } from './middleware/logger.middleware';
@@ -23,7 +24,7 @@ import { UsersModule } from './users/users.module';
     // (skipIf は @Throttle による個別指定にも効く)。
     ThrottlerModule.forRoot({
       throttlers: [{ ttl: 60_000, limit: 100 }],
-      skipIf: () => process.env.NODE_ENV === 'test',
+      skipIf: () => isTestEnv(),
     }),
     CommonModule,
     UsersModule,

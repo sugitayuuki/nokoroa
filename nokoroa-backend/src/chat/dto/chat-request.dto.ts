@@ -15,6 +15,9 @@ export const MAX_HISTORY_ITEMS = 20;
 // 履歴にはAIの応答も積まれる。max_output_tokens=2048 の生成文は
 // 日本語で2000文字を超えうるため、ユーザー入力より緩い上限にする。
 export const MAX_HISTORY_CONTENT_LENGTH = 8000;
+// 1リクエストで外部AIへ転送する履歴の総量。件数×1件長の組み合わせに
+// 依存しないハードな上限として、転送直前に適用する。
+export const MAX_HISTORY_TOTAL_LENGTH = 20000;
 
 class MessageDto {
   @IsString()

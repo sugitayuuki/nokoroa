@@ -6,10 +6,13 @@ import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import helmet from 'helmet';
 
 import { AppModule } from './app.module';
-import { isDevelopmentEnv } from './common/environment';
+import { assertKnownEnv, isDevelopmentEnv } from './common/environment';
 import { PrismaExceptionFilter } from './common/prisma-exception.filter';
 
 async function bootstrap() {
+  // NODE_ENV の打ち間違いは「無言で防御が緩む」形で効くため、起動前に弾く
+  assertKnownEnv();
+
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   const isDevelopment = isDevelopmentEnv();
 

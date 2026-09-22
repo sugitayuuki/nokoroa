@@ -99,8 +99,13 @@ describe('ChatService', () => {
       history: { content: string }[];
     };
 
-    expect(sent.history).toHaveLength(20);
-    expect(sent.history[0].content).toHaveLength(8000);
+    // 総文字数バジェット(20000)で打ち切るため、8000文字のターンは
+    // 2件フルに入り3件目が端数になる
+    const total = sent.history.reduce((n, m) => n + m.content.length, 0);
+    expect(total).toBe(20000);
+    expect(sent.history.length).toBeLessThan(20);
+    // 直近のターンが末尾に残っている(古い側から落ちる)
+    expect(sent.history[sent.history.length - 1].content).toHaveLength(8000);
   });
 
   it('ベクトル検索ヒット0件ならキーワード検索を呼ぶ', async () => {
