@@ -12,7 +12,9 @@ from app.services.gemini_service import EMBEDDING_DIM, GeminiService
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+# chat 側と同じく router 単位で内部認証を必須にする。関数単位だけにすると、
+# 新しいエンドポイントを足したときに既定で無防備になる。
+router = APIRouter(dependencies=[Depends(verify_internal_token)])
 
 
 @lru_cache
@@ -45,7 +47,6 @@ class EmbeddingResponse(BaseModel):
 async def create_embedding(
     request: EmbeddingRequest,
     gemini: GeminiService = Depends(get_gemini_service),
-    _: None = Depends(verify_internal_token),
 ):
     try:
         vector = await asyncio.to_thread(

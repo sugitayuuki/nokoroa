@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Literal
 
@@ -20,6 +21,10 @@ MAX_MESSAGE_LENGTH = 2000
 MAX_HISTORY_ITEMS = 20
 # 履歴にはAIの応答も積まれるため、ユーザー入力より緩い上限にする
 MAX_HISTORY_CONTENT_LENGTH = 8000
+# backend は関連投稿を5件に絞って送るが、呼び出し元が壊れた場合に
+# Gemini への課金が青天井にならないようサービス側でも上限を持つ
+MAX_CONTEXT_POSTS = 10
+MAX_CONTEXT_FIELD_LENGTH = 2000
 
 
 def _sse_event(payload: str) -> str:
@@ -40,16 +45,18 @@ class Message(BaseModel):
 
 
 class ContextPost(BaseModel):
-    title: str
-    content: str
-    location: str
-    author: str
+    title: str = Field(..., max_length=MAX_CONTEXT_FIELD_LENGTH)
+    content: str = Field(..., max_length=MAX_CONTEXT_FIELD_LENGTH)
+    location: str = Field(..., max_length=MAX_CONTEXT_FIELD_LENGTH)
+    author: str = Field(..., max_length=MAX_CONTEXT_FIELD_LENGTH)
 
 
 class ChatRequest(BaseModel):
     message: str = Field(..., max_length=MAX_MESSAGE_LENGTH)
     history: list[Message] | None = Field(default=None, max_length=MAX_HISTORY_ITEMS)
-    context_posts: list[ContextPost] | None = None
+    context_posts: list[ContextPost] | None = Field(
+        default=None, max_length=MAX_CONTEXT_POSTS
+    )
 
 
 class ChatResponse(BaseModel):
@@ -58,10 +65,7 @@ class ChatResponse(BaseModel):
 
 
 @router.post("/", response_model=ChatResponse)
-async def chat(
-    request: ChatRequest,
-    _: None = Depends(verify_internal_token),
-):
+async def chat(request: ChatRequest):
     try:
         history = None
         if request.history:
@@ -82,10 +86,7 @@ async def chat(
 
 
 @router.post("/stream")
-async def chat_stream(
-    request: ChatRequest,
-    _: None = Depends(verify_internal_token),
-):
+async def chat_stream(request: ChatRequest):
     def generate():
         try:
             history = None
@@ -121,8 +122,9 @@ async def chat_stream(
 
 
 class SuggestionsRequest(BaseModel):
-    message: str
-    ai_response: str
+    message: str = Field(..., max_length=MAX_MESSAGE_LENGTH)
+    # AIの生成結果が入るため、ユーザー入力より緩い上限にする
+    ai_response: str = Field(..., max_length=MAX_HISTORY_CONTENT_LENGTH)
 
 
 class SuggestionsResponse(BaseModel):
@@ -130,8 +132,8 @@ class SuggestionsResponse(BaseModel):
 
 
 class RelatedKeywordsRequest(BaseModel):
-    message: str
-    ai_response: str
+    message: str = Field(..., max_length=MAX_MESSAGE_LENGTH)
+    ai_response: str = Field(..., max_length=MAX_HISTORY_CONTENT_LENGTH)
 
 
 class RelatedKeywordsResponse(BaseModel):
@@ -139,12 +141,11 @@ class RelatedKeywordsResponse(BaseModel):
 
 
 @router.post("/suggestions", response_model=SuggestionsResponse)
-async def get_suggestions(
-    request: SuggestionsRequest,
-    _: None = Depends(verify_internal_token),
-):
+async def get_suggestions(request: SuggestionsRequest):
     try:
-        result = gemini_service.generate_suggestions(
+        # generate_suggestions は同期ブロッキングのため別スレッドへ逃がす
+        result = await asyncio.to_thread(
+            gemini_service.generate_suggestions,
             user_message=request.message,
             ai_response=request.ai_response,
         )
@@ -155,12 +156,11 @@ async def get_suggestions(
 
 
 @router.post("/related-keywords", response_model=RelatedKeywordsResponse)
-async def get_related_keywords(
-    request: RelatedKeywordsRequest,
-    _: None = Depends(verify_internal_token),
-):
+async def get_related_keywords(request: RelatedKeywordsRequest):
     try:
-        result = gemini_service.extract_search_keywords(
+        # extract_search_keywords は同期ブロッキングのため別スレッドへ逃がす
+        result = await asyncio.to_thread(
+            gemini_service.extract_search_keywords,
             user_message=request.message,
             ai_response=request.ai_response,
         )
