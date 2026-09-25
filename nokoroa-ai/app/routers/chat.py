@@ -4,7 +4,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.config import settings
 from app.deps import verify_internal_token
@@ -21,8 +21,9 @@ MAX_MESSAGE_LENGTH = 2000
 MAX_HISTORY_ITEMS = 20
 # 履歴にはAIの応答も積まれるため、ユーザー入力より緩い上限にする
 MAX_HISTORY_CONTENT_LENGTH = 8000
-# backend は関連投稿を5件に絞って送るが、呼び出し元が壊れた場合に
-# Gemini への課金が青天井にならないようサービス側でも上限を持つ
+# backend は関連投稿を5件に絞って送る (chat.service.ts の posts.length = 5) が、
+# 呼び出し元が壊れた場合に Gemini への課金が青天井にならないよう上限を持つ。
+# 各フィールドは拒否ではなく切り詰め (ContextPost._truncate)。
 MAX_CONTEXT_POSTS = 10
 MAX_CONTEXT_FIELD_LENGTH = 2000
 
@@ -45,10 +46,21 @@ class Message(BaseModel):
 
 
 class ContextPost(BaseModel):
-    title: str = Field(..., max_length=MAX_CONTEXT_FIELD_LENGTH)
-    content: str = Field(..., max_length=MAX_CONTEXT_FIELD_LENGTH)
-    location: str = Field(..., max_length=MAX_CONTEXT_FIELD_LENGTH)
-    author: str = Field(..., max_length=MAX_CONTEXT_FIELD_LENGTH)
+    title: str
+    content: str
+    location: str
+    author: str
+
+    # backend は投稿本文を最大 10000 字まで許可し (create-post.dto.ts の MaxLength(10000))、
+    # 切り詰めずに送ってくる。ここで max_length を課すと長い投稿が 1 件混ざるだけで
+    # チャット全体が 422 になるため、拒否せず切り詰める。
+    # message / history と違い、これは backend 側に対応する上限が存在しない。
+    @field_validator("title", "content", "location", "author", mode="before")
+    @classmethod
+    def _truncate(cls, value: object) -> object:
+        if isinstance(value, str) and len(value) > MAX_CONTEXT_FIELD_LENGTH:
+            return value[:MAX_CONTEXT_FIELD_LENGTH]
+        return value
 
 
 class ChatRequest(BaseModel):
