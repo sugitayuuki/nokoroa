@@ -120,6 +120,8 @@ class GeminiService:
 
         # generate_content は同期ブロッキング。async 関数から直接呼ぶと応答が返るまで
         # イベントループ全体が止まり、同居する /health や他リクエストも応答しなくなる。
+        # SDK の client.aio.* も 1.x では内部で asyncio.to_thread しているだけなので
+        # ここでの退避と等価。2.x へ上げる際は .aio (httpx の真の非同期) へ寄せる。
         response = await asyncio.to_thread(
             self.client.models.generate_content,
             model=self.model,
