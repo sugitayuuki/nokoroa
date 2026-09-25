@@ -1,0 +1,34 @@
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle
+    "F",    # pyflakes
+    "I",    # isort (import 順)
+    "UP",   # pyupgrade (古い書き方の検出)
+    "B",    # flake8-bugbear (バグになりやすい書き方)
+    "ASYNC", # async 固有の落とし穴 (イベントループを塞ぐ呼び出し等)
+    "RUF",
+]
+ignore = [
+    # 日本語のプロンプト・コメントで全角括弧を使うのは正しい表記であり、
+    # 半角への置換を促す指摘は本プロジェクトでは常に誤検知になる。
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# テストでは長いリテラルやフィクスチャの都合で行長を超えることがある
+"tests/*" = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.pyright]
+venvPath = "."
+venv = "venv"
+typeCheckingMode = "standard"
