@@ -267,27 +267,32 @@ class GeminiService:
         return contents
 
     def _extract_grounding(self, response: Any) -> GroundingMetadata | None:
+        # grounding は付加情報なので、SDK のレスポンス形が想定と違っても
+        # チャット本体を失敗させない。フィールドの有無は SDK のバージョンで
+        # 変わりうるため、個別アクセスまで含めて try で包む。
         try:
             metadata = response.candidates[0].grounding_metadata
+            if not metadata:
+                return None
+
+            rendered = (
+                metadata.search_entry_point.rendered_content
+                if metadata.search_entry_point
+                else None
+            )
+            sources = (
+                [
+                    GroundingSource(
+                        title=chunk.web.title if chunk.web else None,
+                        uri=chunk.web.uri if chunk.web else None,
+                    )
+                    for chunk in metadata.grounding_chunks
+                ]
+                if metadata.grounding_chunks
+                else None
+            )
         except (AttributeError, IndexError):
             return None
-        if not metadata:
-            return None
-
-        rendered = (
-            metadata.search_entry_point.rendered_content if metadata.search_entry_point else None
-        )
-        sources = (
-            [
-                GroundingSource(
-                    title=chunk.web.title if chunk.web else None,
-                    uri=chunk.web.uri if chunk.web else None,
-                )
-                for chunk in metadata.grounding_chunks
-            ]
-            if metadata.grounding_chunks
-            else None
-        )
 
         if rendered is None and sources is None:
             return None

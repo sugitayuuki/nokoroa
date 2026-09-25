@@ -28,7 +28,9 @@ async def create_embedding(
     # 次元が合わないベクトルを DB (vector(768)) へ入れると検索結果が壊れるため、
     # 保存前にここで弾く。
     if len(vector) != EMBEDDING_DIM:
+        # 自サービスの不変条件違反なので 5xx は 500 (502 は上流起因の意味になる)。
+        # 実際の次元は内部情報なのでレスポンスには載せずログへ回す。
         logger.error("unexpected embedding dim: got %d, expected %d", len(vector), EMBEDDING_DIM)
-        raise HTTPException(status_code=502, detail="unexpected embedding dimension")
+        raise HTTPException(status_code=500, detail="unexpected embedding dimension")
 
     return EmbeddingResponse(embedding=vector, dim=EMBEDDING_DIM)

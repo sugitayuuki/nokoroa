@@ -16,10 +16,14 @@ def test_returns_vector_with_expected_dimension(client, auth, models):
 
 
 def test_rejects_wrong_dimension(client, auth, models):
-    """次元が合わないベクトルを DB (vector(768)) へ入れると検索結果が壊れる。"""
+    """次元が合わないベクトルを DB (vector(768)) へ入れると検索結果が壊れる。
+
+    自サービスの不変条件違反なので 500 (502 は上流起因の意味)。
+    実際の次元は内部情報なのでレスポンスに載せない。"""
     models.embed_values = [0.5] * 512
     response = client.post("/api/embeddings/", json={"text": "京都"}, headers=auth)
-    assert response.status_code == 502
+    assert response.status_code == 500
+    assert "512" not in response.text
 
 
 def test_maps_upstream_failure_to_502(client, auth, models):

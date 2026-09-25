@@ -148,3 +148,92 @@ def test_braces_in_user_input_do_not_break_prompt_formatting(client, auth, model
         headers=auth,
     )
     assert response.status_code == 200
+
+
+class _Web:
+    def __init__(self, title=None, uri=None):
+        self.title = title
+        self.uri = uri
+
+
+class _Chunk:
+    def __init__(self, web):
+        self.web = web
+
+
+class _EntryPoint:
+    def __init__(self, rendered_content):
+        self.rendered_content = rendered_content
+
+
+class _Grounding:
+    def __init__(self, entry_point=None, chunks=None):
+        self.search_entry_point = entry_point
+        self.grounding_chunks = chunks
+
+
+class _Candidate:
+    def __init__(self, grounding):
+        self.grounding_metadata = grounding
+
+
+def test_grounding_metadata_is_returned_when_present(client, auth, models):
+    models.generate_content_result = FakeResponse(
+        text="京都です",
+        candidates=[
+            _Candidate(
+                _Grounding(
+                    entry_point=_EntryPoint("<div>検索</div>"),
+                    chunks=[_Chunk(_Web(title="観光案内", uri="https://example.com"))],
+                )
+            )
+        ],
+    )
+    body = client.post("/api/chat/", json={"message": "x"}, headers=auth).json()
+    assert body["grounding_metadata"]["rendered_content"] == "<div>検索</div>"
+    assert body["grounding_metadata"]["sources"][0]["uri"] == "https://example.com"
+
+
+def test_grounding_absent_yields_null(client, auth, models):
+    models.generate_content_result = FakeResponse(text="x", candidates=[_Candidate(None)])
+    body = client.post("/api/chat/", json={"message": "x"}, headers=auth).json()
+    assert body["grounding_metadata"] is None
+
+
+def test_malformed_grounding_does_not_fail_the_chat(client, auth, models):
+    """grounding は付加情報。SDK のレスポンス形が想定と違っても本体は成功させる。
+
+    フィールド欠落は SDK のバージョン差で起こりうるため、個別アクセスまで
+    含めて握る必要がある (ここを狭めると 502 になる回帰が入る)。
+    """
+
+    class _BrokenGrounding:
+        @property
+        def search_entry_point(self):
+            raise AttributeError("field removed in this SDK version")
+
+    models.generate_content_result = FakeResponse(
+        text="京都です", candidates=[_Candidate(_BrokenGrounding())]
+    )
+    response = client.post("/api/chat/", json={"message": "x"}, headers=auth)
+    assert response.status_code == 200
+    assert response.json()["response"] == "京都です"
+    assert response.json()["grounding_metadata"] is None
+
+
+def test_empty_candidates_yield_null_grounding(client, auth, models):
+    models.generate_content_result = FakeResponse(text="x", candidates=[])
+    body = client.post("/api/chat/", json={"message": "x"}, headers=auth).json()
+    assert body["grounding_metadata"] is None
+
+
+def test_related_keywords_degrade_on_upstream_failure(client, auth, models):
+    """補助機能なので、上流が落ちても 500 にせず None を返す。"""
+    models.generate_content_error = RuntimeError("quota exceeded")
+    response = client.post(
+        "/api/chat/related-keywords",
+        json={"message": "a", "ai_response": "b"},
+        headers=auth,
+    )
+    assert response.status_code == 200
+    assert response.json()["keywords"] is None
