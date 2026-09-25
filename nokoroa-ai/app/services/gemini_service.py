@@ -1,7 +1,12 @@
+import asyncio
+import logging
+
 from google import genai
 from google.genai import types
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """あなたは「Sora AI」です。Nokoroaの旅行アシスタントAIです。
 Nokoroaは旅行体験を共有するSNSプラットフォームです。
@@ -77,7 +82,11 @@ class GeminiService:
     ) -> dict:
         contents = self._build_contents(message, history)
 
-        response = self.client.models.generate_content(
+        # generate_content は同期ブロッキング。async 関数から直接呼ぶと応答が返るまで
+        # イベントループ全体が止まり、同居する /health や他リクエストも応答しなくなる。
+        # embed 側 (routers/embeddings.py) と同じく別スレッドへ逃がす。
+        response = await asyncio.to_thread(
+            self.client.models.generate_content,
             model=self.model,
             contents=contents,
             config=self.config,
@@ -86,7 +95,9 @@ class GeminiService:
         grounding_metadata = self._extract_grounding(response)
 
         return {
-            "response": response.text,
+            # safety block や finish_reason が STOP 以外のとき text は None になる。
+            # ChatResponse.response は非 Optional なのでここで空文字に倒す。
+            "response": response.text or "",
             "grounding_metadata": grounding_metadata,
         }
 
@@ -157,6 +168,9 @@ class GeminiService:
 
             return result
         except Exception:
+            # 呼び出し元 (routers/chat.py) も同じ例外を握るが、ここで返すのは None なので
+            # ログを出さないと失敗が痕跡なく消える (クォータ超過時の調査が不能になる)。
+            logger.exception("keyword extraction failed")
             return None
 
     def generate_suggestions(
@@ -190,6 +204,7 @@ class GeminiService:
                 return []
             return [s.strip() for s in text.split("|") if s.strip()]
         except Exception:
+            logger.exception("suggestion generation failed")
             return []
 
     def _build_contents(

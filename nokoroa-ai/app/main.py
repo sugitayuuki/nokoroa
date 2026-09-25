@@ -16,12 +16,15 @@ app = FastAPI(
     version="0.1.0",
 )
 
+# backend からのサーバー間呼び出し専用サービスだが、ローカル開発でブラウザから
+# 直接叩けるよう CORS は残す。認証は X-Internal-Token ヘッダで行い Cookie は使わないため
+# allow_credentials は有効にしない (有効だと origin 設定ミスが即座に資格情報の露出になる)。
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins.split(","),
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "X-Internal-Token"],
 )
 
 
