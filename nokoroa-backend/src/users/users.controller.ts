@@ -27,6 +27,10 @@ import { memoryStorage } from 'multer';
 
 import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import {
+  ALLOWED_IMAGE_EXTENSIONS,
+  hasAllowedImageExtension,
+} from '../common/image-upload';
 import { S3Service } from '../common/s3.service';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -161,9 +165,13 @@ export class UsersController {
     FileInterceptor('file', {
       storage: memoryStorage(),
       fileFilter: (req, file, cb) => {
-        if (!file.originalname.match(/\.(jpg|jpeg|png|gif|webp)$/)) {
+        // 早期リジェクトのみ。実体の検証は S3Service 側で行う
+        // (拡張子は偽装できるため、ここを通っても安全とは限らない)。
+        if (!hasAllowedImageExtension(file.originalname)) {
           return cb(
-            new BadRequestException('Only image files are allowed!'),
+            new BadRequestException(
+              `対応していない画像形式です (${ALLOWED_IMAGE_EXTENSIONS.join(', ')})`,
+            ),
             false,
           );
         }
