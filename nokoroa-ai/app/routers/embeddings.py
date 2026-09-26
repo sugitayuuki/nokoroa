@@ -1,14 +1,11 @@
 import asyncio
 import logging
-from functools import lru_cache
-from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
 
-from app.config import settings
-from app.deps import verify_internal_token
-from app.services.gemini_service import EMBEDDING_DIM, GeminiService
+from app.deps import GeminiDep, verify_internal_token
+from app.schemas import EmbeddingRequest, EmbeddingResponse
+from app.services.gemini_service import EMBEDDING_DIM
 
 logger = logging.getLogger(__name__)
 
@@ -17,49 +14,23 @@ logger = logging.getLogger(__name__)
 router = APIRouter(dependencies=[Depends(verify_internal_token)])
 
 
-@lru_cache
-def get_gemini_service() -> GeminiService:
-    return GeminiService(api_key=settings.gemini_api_key)
-
-
-TaskType = Literal[
-    "RETRIEVAL_DOCUMENT",
-    "RETRIEVAL_QUERY",
-    "SEMANTIC_SIMILARITY",
-    "CLASSIFICATION",
-    "CLUSTERING",
-]
-
-
-class EmbeddingRequest(BaseModel):
-    # gemini-embedding-001 の入力上限は 2,048 トークン。
-    # backend 側の MAX_TEXT_LEN と揃える。
-    text: str = Field(..., min_length=1, max_length=2000)
-    task_type: TaskType = "RETRIEVAL_DOCUMENT"
-
-
-class EmbeddingResponse(BaseModel):
-    embedding: list[float]
-    dim: int
-
-
 @router.post("/", response_model=EmbeddingResponse)
 async def create_embedding(
     request: EmbeddingRequest,
-    gemini: GeminiService = Depends(get_gemini_service),
-):
+    gemini: GeminiDep,
+) -> EmbeddingResponse:
     try:
-        vector = await asyncio.to_thread(
-            gemini.embed, request.text, request.task_type
-        )
+        vector = await asyncio.to_thread(gemini.embed, request.text, request.task_type)
     except Exception:
         logger.exception("embedding failed")
-        raise HTTPException(status_code=502, detail="embedding failed")
+        raise HTTPException(status_code=502, detail="embedding failed") from None
 
+    # 次元が合わないベクトルを DB (vector(768)) へ入れると検索結果が壊れるため、
+    # 保存前にここで弾く。
     if len(vector) != EMBEDDING_DIM:
-        raise HTTPException(
-            status_code=500,
-            detail=f"unexpected embedding dim: {len(vector)} (expected {EMBEDDING_DIM})",
-        )
+        # 自サービスの不変条件違反なので 5xx は 500 (502 は上流起因の意味になる)。
+        # 実際の次元は内部情報なのでレスポンスには載せずログへ回す。
+        logger.error("unexpected embedding dim: got %d, expected %d", len(vector), EMBEDDING_DIM)
+        raise HTTPException(status_code=500, detail="unexpected embedding dimension")
 
     return EmbeddingResponse(embedding=vector, dim=EMBEDDING_DIM)
