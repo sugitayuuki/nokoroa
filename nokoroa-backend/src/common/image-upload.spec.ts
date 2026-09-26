@@ -35,6 +35,27 @@ describe('detectImageContentType', () => {
     expect(detectImageContentType(Buffer.alloc(0))).toBeNull();
   });
 
+  // 判定を緩めても気づけるよう、シグネチャの「惜しい」バイト列を固定する。
+  // (ミューテーションテストで GIF/PNG の判定を短縮しても検知できなかったため追加)
+  it('GIF8 まで一致しないものは gif と誤認しない', () => {
+    expect(detectImageContentType(Buffer.from('GIFxxx', 'binary'))).toBeNull();
+    expect(detectImageContentType(Buffer.from('GIF', 'binary'))).toBeNull();
+  });
+
+  it('PNG は 8 バイト全一致を要求する', () => {
+    // 先頭 4 バイトだけ PNG で、残りが異なるもの
+    const nearPng = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x00, 0x00, 0x00, 0x00,
+    ]);
+    expect(detectImageContentType(nearPng)).toBeNull();
+  });
+
+  it('シグネチャより短いバッファでも例外を出さず null を返す', () => {
+    for (const len of [0, 1, 2, 3, 7]) {
+      expect(detectImageContentType(Buffer.alloc(len, 0x89))).toBeNull();
+    }
+  });
+
   it('RIFF だけで WEBP が続かないものは webp と誤認しない', () => {
     const riffWave = Buffer.concat([
       Buffer.from('RIFF', 'binary'),

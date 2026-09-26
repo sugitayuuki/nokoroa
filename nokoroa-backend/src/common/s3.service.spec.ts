@@ -91,12 +91,12 @@ describe('S3Service.uploadFile', () => {
     expect(url).toContain('.jpg');
   });
 
-  it('MIME スニッフィング抑止のメタデータを付ける', async () => {
+  it('S3 単体では付けられないヘッダをメタデータで偽装しない', async () => {
+    // x-amz-meta-* 接頭辞付きで返るためブラウザは無視する。付けても効かない
+    // ものを付けると「対策済み」と誤認される。
     await service.uploadFile(makeFile('photo.jpg', JPEG));
 
-    expect(lastPutInput().Metadata).toEqual({
-      'x-content-type-options': 'nosniff',
-    });
+    expect(lastPutInput().Metadata).toBeUndefined();
   });
 
   it('ファイル名は推測できない値に置き換える', async () => {

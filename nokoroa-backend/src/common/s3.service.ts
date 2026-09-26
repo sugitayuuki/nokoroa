@@ -84,10 +84,13 @@ export class S3Service {
       Key: key,
       Body: file.buffer,
       // file.mimetype はクライアント申告なので使わない。許可リスト由来の値のみ。
+      //
+      // なお X-Content-Type-Options: nosniff は S3 単体では付けられない。
+      // PutObject の Metadata は x-amz-meta-* 接頭辞付きで返るためブラウザは
+      // 無視する。付けるなら CloudFront のレスポンスヘッダーポリシーが必要。
+      // 現状は Content-Type が image/* に固定されるためスニッフィングで
+      // HTML 化されることはなく、必須ではない。
       ContentType: contentType,
-      // 万一 Content-Type の判定を誤っても、ブラウザの MIME スニッフィングで
-      // HTML として解釈されないようにする。
-      Metadata: { 'x-content-type-options': 'nosniff' },
     });
 
     await this.s3Client?.send(command);
