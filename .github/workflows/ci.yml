@@ -130,6 +130,21 @@ jobs:
       - name: Test
         run: pytest -q
 
+      # deploy.yml が本番へ push するのと同じ条件 (ARM64) でビルドし、
+      # Dockerfile の破損を PR の時点で検知する。push はしない。
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./nokoroa-ai
+          platforms: linux/arm64
+          push: false
+
   terraform:
     name: Terraform CI
     runs-on: ubuntu-latest
