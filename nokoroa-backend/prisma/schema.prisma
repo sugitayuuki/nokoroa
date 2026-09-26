@@ -50,6 +50,12 @@ model Post {
   bookmarks Bookmark[]
   embedding PostEmbedding?
 
+  // 一覧は where isPublic + order by createdAt desc で引く (posts.service.ts findAll)。
+  // 複合にすることで絞り込みと並び順の両方をインデックスで賄う。
+  @@index([isPublic, createdAt])
+  // プロフィールとマイ投稿は author 単位 + createdAt 降順 (users.service.ts)。
+  // PostgreSQL は外部キーに自動でインデックスを張らないため明示する。
+  @@index([authorId, createdAt])
   @@map("post")
 }
 
@@ -58,6 +64,13 @@ model Post {
 /// *Unsafe 系は文字列連結の余地が残り、レビューで毎回「安全か」の確認コストが発生する。
 /// Post削除時は onDelete: Cascade で自動削除されるため、明示的な削除は不要。
 /// 次元数 768 は nokoroa-ai/app/services/gemini_service.py の EMBEDDING_DIM と整合させること。
+///
+/// 注意: embedding 列の HNSW インデックス (post_embedding_embedding_idx) は
+/// マイグレーションの生 SQL で作っており、Unsupported 型のため schema.prisma では
+/// 宣言できない (Prisma 6.13 は @@index での指定を拒否する)。
+/// そのため `prisma migrate dev` / `migrate diff` は必ずこの索引の DROP INDEX を
+/// 生成する。生成されたマイグレーションからその行を削除すること。
+/// 消すとベクトル類似検索が全件走査になり、無言で劣化する。
 model PostEmbedding {
   id          Int                        @id @default(autoincrement())
   postId      Int                        @unique
@@ -90,7 +103,10 @@ model PostTag {
   post   Post @relation(fields: [postId], references: [id], onDelete: Cascade)
   tag    Tag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
 
+  // タグ絞り込み (posts.service.ts の postTags.some) とタグ別件数の集計は
+  // tagId 単独で引く。@@unique([postId, tagId]) は postId が先頭のため使えない。
   @@unique([postId, tagId])
+  @@index([tagId])
   @@map("post_tag")
 }
 
@@ -118,7 +134,13 @@ model Bookmark {
   user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
   post   Post @relation(fields: [postId], references: [id], onDelete: Cascade)
 
+  // 一覧は userId 絞り込み + createdAt 降順 (favorites.service.ts)。
+  // unique は並び順を賄えないため複合を足す。
   @@unique([userId, postId])
+  @@index([userId, createdAt])
+  // 投稿ごとのブックマーク数は postId 単独で数える (posts.service.ts)。
+  // unique は userId が先頭のため使えない。
+  @@index([postId])
   @@map("bookmark")
 }
 
@@ -131,6 +153,12 @@ model Follow {
   follower    User @relation("Following", fields: [followerId], references: [id], onDelete: Cascade)
   following   User @relation("Followers", fields: [followingId], references: [id], onDelete: Cascade)
 
+  // フォロワー一覧は followingId 絞り込み + createdAt 降順 (follows.service.ts)。
+  // unique は followerId が先頭のため followingId 単独の絞り込みに使えない。
   @@unique([followerId, followingId])
+  @@index([followingId, createdAt])
+  // フォロー中一覧は followerId 絞り込み + createdAt 降順。unique で絞り込みは
+  // できるが並び順は賄えない。
+  @@index([followerId, createdAt])
   @@map("follow")
 }
