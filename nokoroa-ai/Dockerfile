@@ -8,8 +8,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 
 # root 実行を避ける。ECS タスクが侵害された際の影響範囲を絞る。
-# frontend/Dockerfile と同じ方針。アプリは /app へ書き込まないため chown は不要。
-RUN useradd --system --create-home --uid 10001 appuser
+# アプリは /app へ書き込まないため chown は不要。
+# --system は付けない: UID < SYS_UID_MAX(999) を前提とするため、ホスト側の
+# UID と衝突しにくい高い UID を明示する方針と噛み合わず警告が出る。
+RUN useradd --create-home --uid 10001 appuser
 USER appuser
 
 EXPOSE 8000
