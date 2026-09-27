@@ -55,6 +55,7 @@ https://github.com/user-attachments/assets/f07d74f1-8a48-466a-92bb-30d0cdebf994
 ## 触ってみる
 
 ログインからやると手間だと思うので、そのまま使えるアカウントを用意しました。どうぞご自由に！
+（本番環境は停止中のため、[ローカルで起動](#ローカルで動かす)してシードを投入するとこのアカウントが作られます）
 
 | メールアドレス | パスワード |
 |---------------|-----------|
@@ -112,7 +113,7 @@ Fargate はサーバーの面倒を見なくていい分、アプリ側に時間
 
 ## ローカルで動かす
 
-手元で動かせるところまで、なるべく短い手順にしました。4ステップです！
+手元で動かせるところまで、なるべく短い手順にしました。5ステップです！
 
 ### 用意するもの
 
@@ -141,7 +142,10 @@ docker compose up -d
 # 3. マイグレーション適用
 docker compose exec backend npx prisma migrate deploy
 
-# 4. フロントエンド
+# 4. シードデータ投入（上の「触ってみる」のアカウントが作られます）
+docker compose exec backend npm run seed
+
+# 5. フロントエンド
 cd ../nokoroa-frontend
 cp .env.example .env.local   # NEXT_PUBLIC_API_URL などを設定
 npm ci
