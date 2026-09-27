@@ -2,10 +2,11 @@ import { randomBytes } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import { isProductionLikeEnv } from './environment';
+import { InvalidImageUploadError, resolveImageUpload } from './image-upload';
 
 @Injectable()
 export class S3Service {
@@ -44,8 +45,21 @@ export class S3Service {
     file: Express.Multer.File,
     folder: string = 'public/images',
   ): Promise<string> {
+    // 拡張子と Content-Type はここで確定する。コントローラの fileFilter は
+    // 早期リジェクト用であり、保存経路の検証をここへ集約しないと
+    // 呼び出し元が増えたときに素通りする。
+    let extension: string;
+    let contentType: string;
+    try {
+      ({ extension, contentType } = resolveImageUpload(file));
+    } catch (err) {
+      if (err instanceof InvalidImageUploadError) {
+        throw new BadRequestException(err.message);
+      }
+      throw err;
+    }
+
     const uniqueSuffix = `${Date.now()}-${randomBytes(8).toString('hex')}`;
-    const extension = file.originalname.split('.').pop();
     const filename = `${uniqueSuffix}.${extension}`;
 
     // 開発環境: ローカルファイルシステムに保存
@@ -69,7 +83,14 @@ export class S3Service {
       Bucket: this.bucketName,
       Key: key,
       Body: file.buffer,
-      ContentType: file.mimetype,
+      // file.mimetype はクライアント申告なので使わない。許可リスト由来の値のみ。
+      //
+      // なお X-Content-Type-Options: nosniff は S3 単体では付けられない。
+      // PutObject の Metadata は x-amz-meta-* 接頭辞付きで返るためブラウザは
+      // 無視する。付けるなら CloudFront のレスポンスヘッダーポリシーが必要。
+      // 現状は Content-Type が image/* に固定されるためスニッフィングで
+      // HTML 化されることはなく、必須ではない。
+      ContentType: contentType,
     });
 
     await this.s3Client?.send(command);

@@ -28,6 +28,11 @@ import {
   ApiQuery,
 } from '@nestjs/swagger';
 import { memoryStorage } from 'multer';
+
+import {
+  ALLOWED_IMAGE_EXTENSIONS,
+  hasAllowedImageExtension,
+} from '../common/image-upload';
 import { S3Service } from '../common/s3.service';
 import { CreatePostDto } from './dto/create-post.dto';
 import { SearchPostsByLocationDto } from './dto/search-posts-by-location.dto';
@@ -73,9 +78,13 @@ export class PostsController {
     FileInterceptor('image', {
       storage: memoryStorage(),
       fileFilter: (req, file, callback) => {
-        if (!file.originalname.match(/\.(jpg|jpeg|png|gif|webp)$/)) {
+        // 早期リジェクトのみ。実体の検証は S3Service 側で行う
+        // (拡張子は偽装できるため、ここを通っても安全とは限らない)。
+        if (!hasAllowedImageExtension(file.originalname)) {
           return callback(
-            new BadRequestException('Only image files are allowed!'),
+            new BadRequestException(
+              `対応していない画像形式です (${ALLOWED_IMAGE_EXTENSIONS.join(', ')})`,
+            ),
             false,
           );
         }
