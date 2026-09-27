@@ -39,14 +39,55 @@ describe('ChatService', () => {
     jest.clearAllMocks();
   });
 
-  function makeRes(): Response {
-    return {
+  // res をそのまま expect に渡すと Response のメソッド型を unbound で参照して
+  // しまうため、アサーション用の jest.Mock は個別に返す。
+  interface ResHarness {
+    res: Response;
+    write: jest.Mock;
+    end: jest.Mock;
+    json: jest.Mock;
+    status: jest.Mock;
+    /** クライアント切断をシミュレートする */
+    disconnect: () => void;
+  }
+
+  function makeRes(): ResHarness {
+    const listeners: Record<string, Array<() => void>> = {};
+    const state = { destroyed: false, writableEnded: false };
+    const write = jest.fn();
+    const end = jest.fn();
+    const json = jest.fn();
+    const status = jest.fn().mockReturnThis();
+    const on = jest.fn((event: string, cb: () => void) => {
+      (listeners[event] ??= []).push(cb);
+    });
+
+    const res = {
       setHeader: jest.fn(),
-      status: jest.fn().mockReturnThis(),
-      json: jest.fn(),
-      write: jest.fn(),
-      end: jest.fn(),
+      status,
+      json,
+      write,
+      end,
+      on,
+      get destroyed() {
+        return state.destroyed;
+      },
+      get writableEnded() {
+        return state.writableEnded;
+      },
     } as unknown as Response;
+
+    return {
+      res,
+      write,
+      end,
+      json,
+      status,
+      disconnect: () => {
+        state.destroyed = true;
+        listeners.close?.forEach((cb) => cb());
+      },
+    };
   }
 
   function makeStreamFetch(body = 'data: hi\n\n') {
@@ -55,11 +96,13 @@ describe('ChatService', () => {
         .fn()
         .mockResolvedValueOnce({ done: false, value: Buffer.from(body) })
         .mockResolvedValueOnce({ done: true, value: undefined }),
+      cancel: jest.fn().mockResolvedValue(undefined),
     };
     global.fetch = jest.fn().mockResolvedValue({
       ok: true,
       body: { getReader: () => reader },
     }) as unknown as typeof fetch;
+    return reader;
   }
 
   it('ベクトル検索でヒットがあればキーワード検索を呼ばない', async () => {
@@ -77,7 +120,7 @@ describe('ChatService', () => {
     ]);
     makeStreamFetch();
 
-    await service.streamChat({ message: 'test' }, makeRes());
+    await service.streamChat({ message: 'test' }, makeRes().res);
 
     expect(mockEmbeddings.searchSimilar).toHaveBeenCalledWith('test', 5);
     expect(mockPosts.findManyByIds).toHaveBeenCalledWith([1]);
@@ -94,7 +137,7 @@ describe('ChatService', () => {
       content: 'x'.repeat(20000),
     }));
 
-    await service.streamChat({ message: 'test', history }, makeRes());
+    await service.streamChat({ message: 'test', history }, makeRes().res);
 
     const streamCall = (
       global.fetch as jest.Mock<unknown, [string, { body: string }]>
@@ -123,7 +166,7 @@ describe('ChatService', () => {
       { role: 'model', content: 'ok' },
     ];
 
-    await service.streamChat({ message: 'test', history }, makeRes());
+    await service.streamChat({ message: 'test', history }, makeRes().res);
 
     const streamCall = (
       global.fetch as jest.Mock<unknown, [string, { body: string }]>
@@ -153,7 +196,7 @@ describe('ChatService', () => {
     mockPosts.search.mockResolvedValue({ posts: [], total: 0, hasMore: false });
     makeStreamFetch();
 
-    await service.streamChat({ message: 'test' }, makeRes());
+    await service.streamChat({ message: 'test' }, makeRes().res);
 
     const streamCall = (
       global.fetch as jest.Mock<unknown, [string, { body: string }]>
@@ -173,7 +216,7 @@ describe('ChatService', () => {
       { role: 'model', content: 'こんにちは。ご旅行のご相談ですか？' },
     ];
 
-    await service.streamChat({ message: 'test', history }, makeRes());
+    await service.streamChat({ message: 'test', history }, makeRes().res);
 
     const streamCall = (
       global.fetch as jest.Mock<unknown, [string, { body: string }]>
@@ -202,7 +245,7 @@ describe('ChatService', () => {
     });
     makeStreamFetch();
 
-    await service.streamChat({ message: 'test' }, makeRes());
+    await service.streamChat({ message: 'test' }, makeRes().res);
 
     expect(mockEmbeddings.searchSimilar).toHaveBeenCalled();
     expect(mockPosts.search).toHaveBeenCalledWith({
@@ -226,7 +269,7 @@ describe('ChatService', () => {
       .mockResolvedValueOnce({ posts: fiveHits, total: 5, hasMore: false });
     makeStreamFetch();
 
-    await service.streamChat({ message: '札幌 ラーメン' }, makeRes());
+    await service.streamChat({ message: '札幌 ラーメン' }, makeRes().res);
 
     expect(mockPosts.search).toHaveBeenCalledTimes(2);
   });
@@ -240,7 +283,7 @@ describe('ChatService', () => {
     });
     makeStreamFetch();
 
-    await service.streamChat({ message: 'hello' }, makeRes());
+    await service.streamChat({ message: 'hello' }, makeRes().res);
 
     const calls = (
       global.fetch as jest.Mock<
@@ -253,5 +296,86 @@ describe('ChatService', () => {
     const init = chatStreamCall[1];
     expect(init.headers['X-Internal-Token']).toBe('test-token');
     expect(init.headers['Content-Type']).toBe('application/json');
+  });
+
+  describe('クライアント切断時の後始末', () => {
+    // 切断を検知しないと、タブを閉じた後も AI サービス経由で Gemini の
+    // 生成が最後まで走り課金が続く。
+    function setupPosts() {
+      mockEmbeddings.searchSimilar.mockResolvedValue([]);
+      mockPosts.search.mockResolvedValue({ posts: [] });
+    }
+
+    it('切断後はクライアントへ write しない', async () => {
+      setupPosts();
+      const { res, write, disconnect } = makeRes();
+      // 1 回目の読み取り中に切断が起き、2 回目以降は done を返す。
+      // 無限に done:false を返すと、修正前コードでは無限ループになり
+      // テストがクラッシュして「失敗」として観測できなくなる。
+      const reader = {
+        read: jest
+          .fn()
+          .mockImplementationOnce(() => {
+            disconnect();
+            return Promise.resolve({
+              done: false,
+              value: Buffer.from('data: x\n\n'),
+            });
+          })
+          .mockResolvedValue({ done: true, value: undefined }),
+        cancel: jest.fn().mockResolvedValue(undefined),
+      };
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        body: { getReader: () => reader },
+      }) as unknown as typeof fetch;
+
+      await service.streamChat({ message: 'test' }, res);
+
+      expect(write).not.toHaveBeenCalled();
+    });
+
+    it('上流の body を必ず cancel する', async () => {
+      setupPosts();
+      const reader = makeStreamFetch();
+
+      await service.streamChat({ message: 'test' }, makeRes().res);
+
+      expect(reader.cancel).toHaveBeenCalled();
+    });
+
+    it('切断で fetch の signal が abort される', async () => {
+      setupPosts();
+      makeStreamFetch();
+      const { res, disconnect } = makeRes();
+
+      await service.streamChat({ message: 'test' }, res);
+
+      const streamCall = (
+        global.fetch as jest.Mock<unknown, [string, RequestInit]>
+      ).mock.calls.find(([url]) => url.includes('/api/chat/stream'));
+      const signal = streamCall[1].signal;
+      expect(signal?.aborted).toBe(false);
+      disconnect();
+      expect(signal?.aborted).toBe(true);
+    });
+
+    it('読み取りが失敗しても end される', async () => {
+      setupPosts();
+      const reader = {
+        read: jest.fn().mockRejectedValue(new Error('aborted')),
+        cancel: jest.fn().mockResolvedValue(undefined),
+      };
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        body: { getReader: () => reader },
+      }) as unknown as typeof fetch;
+      const { res, end } = makeRes();
+
+      await expect(
+        service.streamChat({ message: 'test' }, res),
+      ).resolves.toBeUndefined();
+      expect(end).toHaveBeenCalled();
+    });
   });
 });
