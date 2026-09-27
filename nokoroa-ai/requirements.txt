@@ -1,6 +1,16 @@
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
-google-genai>=1.0.0
 python-dotenv==1.0.1
 pydantic==2.9.2
 pydantic-settings==2.5.2
+
+# google-genai だけ範囲指定だったが、pydantic==2.9.2 と両立する版まで pip が
+# 後退解決するため、実際には >=1.0.0 が効かず 1.2.0 が入っていた (最新は 2.x)。
+# しかもこの解決結果は新バージョンの公開で変わりうるので再現性が無い。
+# 現に動いている版を明示して固定する。
+#
+# 2.x への更新は pydantic>=2.12.5 が前提。更新する場合は GeminiService の
+# asyncio.to_thread を client.aio.models.* へ置き換えること。1.x の .aio は
+# 内部で to_thread しているだけなので利得が無いが、2.x は httpx による
+# 真の非同期になり、スレッドを消費せずキャンセルも効くようになる。
+google-genai==1.2.0

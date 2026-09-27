@@ -9,6 +9,8 @@ env:
   AWS_REGION: ap-northeast-1
   ECR_BACKEND_REPOSITORY: nokoroa-backend
   ECR_FRONTEND_REPOSITORY: nokoroa-frontend
+  # AI はバックエンドタスク内のサイドカーなので、専用の service / task definition は無い
+  ECR_AI_REPOSITORY: nokoroa-ai
   ECS_CLUSTER: nokoroa-prod-cluster
   ECS_BACKEND_SERVICE: nokoroa-prod-backend
   ECS_FRONTEND_SERVICE: nokoroa-prod-frontend
@@ -58,19 +60,43 @@ jobs:
             ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_BACKEND_REPOSITORY }}:${{ github.sha }}
             ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_BACKEND_REPOSITORY }}:latest
 
+      # AI は backend と同一タスクのサイドカー。ここでビルドしないと、
+      # nokoroa-ai/ の変更が永久に本番へ反映されない。
+      - name: Build and push AI image
+        id: build-ai
+        uses: docker/build-push-action@v5
+        with:
+          context: ./nokoroa-ai
+          platforms: linux/arm64
+          push: true
+          no-cache: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_AI_REPOSITORY }}:${{ github.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_AI_REPOSITORY }}:latest
+
       - name: Download task definition
         run: |
           aws ecs describe-task-definition \
             --task-definition ${{ env.ECS_BACKEND_TASK_DEFINITION }} \
             --query taskDefinition > task-definition.json
 
-      - name: Update task definition with new image
-        id: task-def
+      # 1 タスクに 2 コンテナあるため、レンダリングを 2 段に連鎖させる。
+      # 1 回だけだと更新しなかった側のイメージが古いまま残る。
+      - name: Update task definition with new backend image
+        id: task-def-backend
         uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
           task-definition: task-definition.json
           container-name: backend
           image: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_BACKEND_REPOSITORY }}:${{ github.sha }}
+
+      - name: Update task definition with new AI image
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: ${{ steps.task-def-backend.outputs.task-definition }}
+          container-name: ai
+          image: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_AI_REPOSITORY }}:${{ github.sha }}
 
       - name: Deploy to ECS
         uses: aws-actions/amazon-ecs-deploy-task-definition@v1
