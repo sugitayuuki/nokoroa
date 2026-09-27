@@ -264,7 +264,7 @@ erDiagram
 
     PostEmbedding {
         int id PK
-        int postId FK_UK
+        int postId FK, UK
         string contentText
         vector embedding "vector(768) / pgvector"
         datetime createdAt
