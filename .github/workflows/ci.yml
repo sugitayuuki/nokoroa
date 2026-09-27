@@ -96,6 +96,19 @@ jobs:
       - name: Apply migrations
         run: npx prisma migrate deploy
 
+      # pgvector の HNSW インデックスは Unsupported 型のため schema.prisma で
+      # 宣言できず、prisma migrate diff は常にその DROP INDEX を生成する。
+      # 誤って取り込むとエラーは出ないまま類似度検索が全件走査に落ちるため、
+      # マイグレーション適用後に実在を確認する。
+      - name: Verify pgvector HNSW index survives migrations
+        run: |
+          count=$(psql "$DATABASE_URL" -tAc \
+            "SELECT count(*) FROM pg_indexes WHERE indexname = 'post_embedding_embedding_idx'")
+          if [ "$count" != "1" ]; then
+            echo "::error::post_embedding_embedding_idx が存在しません。マイグレーションに DROP INDEX が紛れ込んでいないか確認してください"
+            exit 1
+          fi
+
       - name: E2E test
         run: npm run test:e2e
 

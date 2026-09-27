@@ -26,6 +26,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 
 import { API_CONFIG } from '@/lib/apiConfig';
+import { isComposingEvent } from '@/utils/ime';
 
 import { CreatePostData } from '../../types/post';
 import { getToken } from '../../utils/auth';
@@ -249,6 +250,8 @@ export const PostForm = ({
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
+    // keypress の IME 挙動はブラウザ差があるため、念のため同じガードを入れる
+    if (isComposingEvent(e)) return;
     if (e.key === 'Enter') {
       e.preventDefault();
       handleAddTag();

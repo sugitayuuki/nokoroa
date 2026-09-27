@@ -172,6 +172,11 @@ export class ChatService {
       );
     }
 
+    // クライアントが切断したら上流 (AIサービス → Gemini) も畳む。
+    // これが無いとタブを閉じた後も生成が最後まで走り、課金され続ける。
+    const clientGone = new AbortController();
+    res.on('close', () => clientGone.abort());
+
     let response: globalThis.Response;
     try {
       response = await fetch(`${this.aiServiceUrl}/api/chat/stream`, {
@@ -182,9 +187,14 @@ export class ChatService {
           history: this.trimHistory(dto.history),
           context_posts: contextPosts,
         }),
-        signal: AbortSignal.timeout(AI_STREAM_TIMEOUT_MS),
+        signal: AbortSignal.any([
+          clientGone.signal,
+          AbortSignal.timeout(AI_STREAM_TIMEOUT_MS),
+        ]),
       });
     } catch (err) {
+      // 切断が先に起きた場合はエラーではないので、レスポンスも触らない
+      if (clientGone.signal.aborted) return;
       this.logger.error(
         `AI chat fetch failed: ${err instanceof Error ? err.message : 'unknown'}`,
       );
@@ -206,17 +216,28 @@ export class ChatService {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        // 切断後に write すると ERR_STREAM_DESTROYED になる
+        if (res.destroyed) break;
         res.write(Buffer.from(value));
       }
-      if (relatedPostsRaw.length > 0) {
+      if (relatedPostsRaw.length > 0 && !res.destroyed) {
         const relatedPostsEvent = JSON.stringify({
           type: 'related_posts',
           posts: relatedPostsRaw,
         });
         res.write(`data: ${relatedPostsEvent}\n\n`);
       }
+    } catch (err) {
+      // 切断・タイムアウトによる中断は異常ではない。ヘッダは送出済みで
+      // ステータスを変えられないため、ログに残して終了する。
+      this.logger.warn(
+        `AI chat stream interrupted: ${err instanceof Error ? err.message : 'unknown'}`,
+      );
     } finally {
-      res.end();
+      // 上流の body を明示的に閉じる。放置すると AI サービス側の
+      // ストリームが残り Gemini の生成が続く。
+      await reader.cancel().catch(() => undefined);
+      if (!res.writableEnded) res.end();
     }
   }
 

@@ -181,12 +181,27 @@ export class PostsService {
         const existing = await this.prisma.tag.findUnique({ where: { name } });
         if (existing) return existing;
 
-        return this.prisma.tag.create({
-          data: {
-            name,
-            slug: slugify(name) || name.toLowerCase(),
-          },
-        });
+        try {
+          return await this.prisma.tag.create({
+            data: {
+              name,
+              slug: slugify(name) || name.toLowerCase(),
+            },
+          });
+        } catch (err) {
+          // findUnique と create の間に別リクエストが同じタグを作ると
+          // tag.name / tag.slug の unique 制約で P2002 になる。
+          // competing insert は成功しているので取り直せばよい
+          // (getOrCreateLocation と同じ方針)。
+          if (
+            err instanceof Prisma.PrismaClientKnownRequestError &&
+            err.code === 'P2002'
+          ) {
+            const retry = await this.prisma.tag.findUnique({ where: { name } });
+            if (retry) return retry;
+          }
+          throw err;
+        }
       }),
     );
     return tags;
@@ -425,25 +440,35 @@ export class PostsService {
       }
     }
 
-    if (tags !== undefined) {
-      await this.prisma.postTag.deleteMany({ where: { postId: id } });
-
-      if (tags.length > 0) {
-        const tagRecords = await this.getOrCreateTags(tags);
-        await this.prisma.postTag.createMany({
-          data: tagRecords.map((tag) => ({ postId: id, tagId: tag.id })),
-        });
-      }
-    }
+    // タグの解決は削除より前に済ませる。後ろに置くと、解決に失敗した時点で
+    // 既存の postTag だけが消えた投稿が残る。tag 行は投稿間で共有され余分に
+    // 作られても無害なので、トランザクションの外に出してロック時間も縮める。
+    const tagRecords =
+      tags !== undefined && tags.length > 0
+        ? await this.getOrCreateTags(tags)
+        : [];
 
     const [updatedPost, favoritesCount] = await Promise.all([
-      this.prisma.post.update({
-        where: { id },
-        data: {
-          ...postData,
-          ...(locationId !== undefined && { locationId }),
-        },
-        include: postInclude,
+      // 張り替えと本体更新を不可分にする。分割すると途中で失敗したときに
+      // タグだけ消えた投稿が残る。
+      this.prisma.$transaction(async (tx) => {
+        if (tags !== undefined) {
+          await tx.postTag.deleteMany({ where: { postId: id } });
+          if (tagRecords.length > 0) {
+            await tx.postTag.createMany({
+              data: tagRecords.map((tag) => ({ postId: id, tagId: tag.id })),
+            });
+          }
+        }
+
+        return tx.post.update({
+          where: { id },
+          data: {
+            ...postData,
+            ...(locationId !== undefined && { locationId }),
+          },
+          include: postInclude,
+        });
       }),
       this.prisma.bookmark.count({ where: { postId: id } }),
     ]);

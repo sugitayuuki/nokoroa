@@ -35,6 +35,12 @@ describe('PostsService', () => {
       count: jest.fn(),
     },
     $queryRaw: jest.fn(),
+    // インタラクティブトランザクション。コールバックへ同じモックを渡して
+    // 実行することで、tx 経由の呼び出しも同じ jest.fn() で観測できる。
+    $transaction: jest.fn(
+      (fn: (tx: typeof mockPrismaService) => unknown): Promise<unknown> =>
+        Promise.resolve(fn(mockPrismaService)),
+    ),
   };
 
   const mockPost = {
@@ -387,6 +393,79 @@ describe('PostsService', () => {
 
       expect(mockPrismaService.postTag.deleteMany).toHaveBeenCalledWith({
         where: { postId: 1 },
+      });
+    });
+
+    describe('タグ張り替えの不可分性', () => {
+      // 削除だけがコミットされてタグが消えた投稿が残る事故を防ぐ。
+      function setupOwner() {
+        mockPrismaService.post.findUnique.mockResolvedValue({ authorId: 1 });
+        mockPrismaService.bookmark.count.mockResolvedValue(0);
+      }
+
+      it('タグ解決に失敗したら既存タグを削除しない', async () => {
+        setupOwner();
+        // findUnique が null -> create が P2002 以外で落ちる = 解決不能
+        mockPrismaService.tag.findUnique.mockResolvedValue(null);
+        mockPrismaService.tag.create.mockRejectedValue(new Error('db down'));
+
+        await expect(
+          service.update(1, { tags: ['newtag'] }, 1),
+        ).rejects.toThrow('db down');
+
+        expect(mockPrismaService.postTag.deleteMany).not.toHaveBeenCalled();
+      });
+
+      it('削除・作成・本体更新を同一トランザクションで行う', async () => {
+        setupOwner();
+        mockPrismaService.tag.findUnique.mockResolvedValue({
+          id: 2,
+          name: 'newtag',
+          slug: 'newtag',
+        });
+        mockPrismaService.postTag.deleteMany.mockResolvedValue({ count: 1 });
+        mockPrismaService.postTag.createMany.mockResolvedValue({ count: 1 });
+        mockPrismaService.post.update.mockResolvedValue(mockPost);
+
+        await service.update(1, { tags: ['newtag'], title: 'T' }, 1);
+
+        expect(mockPrismaService.$transaction).toHaveBeenCalledTimes(1);
+        // トランザクション外で先に走ってよいのはタグ解決だけ
+        const txCallOrder =
+          mockPrismaService.$transaction.mock.invocationCallOrder[0];
+        expect(
+          mockPrismaService.tag.findUnique.mock.invocationCallOrder[0],
+        ).toBeLessThan(txCallOrder);
+        expect(
+          mockPrismaService.postTag.deleteMany.mock.invocationCallOrder[0],
+        ).toBeGreaterThan(txCallOrder);
+        expect(
+          mockPrismaService.post.update.mock.invocationCallOrder[0],
+        ).toBeGreaterThan(txCallOrder);
+      });
+
+      it('同名タグの競合(P2002)は取り直して継続する', async () => {
+        setupOwner();
+        const conflict = new Prisma.PrismaClientKnownRequestError(
+          'Unique constraint failed',
+          { code: 'P2002', clientVersion: 'test' },
+        );
+        // 1回目: 未存在 -> create が競合 -> 取り直しで見つかる
+        mockPrismaService.tag.findUnique
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce({ id: 9, name: 'race', slug: 'race' });
+        mockPrismaService.tag.create.mockRejectedValue(conflict);
+        mockPrismaService.postTag.deleteMany.mockResolvedValue({ count: 0 });
+        mockPrismaService.postTag.createMany.mockResolvedValue({ count: 1 });
+        mockPrismaService.post.update.mockResolvedValue(mockPost);
+
+        await expect(
+          service.update(1, { tags: ['race'] }, 1),
+        ).resolves.toBeDefined();
+
+        expect(mockPrismaService.postTag.createMany).toHaveBeenCalledWith({
+          data: [{ postId: 1, tagId: 9 }],
+        });
       });
     });
   });
