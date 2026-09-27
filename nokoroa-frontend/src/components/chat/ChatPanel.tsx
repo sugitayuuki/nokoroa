@@ -20,6 +20,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { PostData } from '@/types/post';
+import { isComposingEvent } from '@/utils/ime';
 
 import ChatPostCard from './ChatPostCard';
 
@@ -377,6 +378,8 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // 日本語入力の変換確定 Enter で送信してしまうのを防ぐ
+    if (isComposingEvent(e)) return;
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();

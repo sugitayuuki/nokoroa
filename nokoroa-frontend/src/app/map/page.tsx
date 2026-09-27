@@ -30,6 +30,7 @@ import { toast } from 'react-toastify';
 
 import { API_CONFIG } from '@/lib/apiConfig';
 import { formatDistanceToNow } from '@/utils/dateFormat';
+import { isComposingEvent } from '@/utils/ime';
 
 import { GoogleMap } from '../../components/map/GoogleMap';
 import { PostDetail } from '../../components/post/PostDetail';
@@ -280,6 +281,8 @@ export default function MapPage() {
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             onKeyPress={(e) => {
+              // keypress の IME 挙動はブラウザ差があるため、念のため同じガードを入れる
+              if (isComposingEvent(e)) return;
               if (e.key === 'Enter') {
                 handleSearch();
               }
