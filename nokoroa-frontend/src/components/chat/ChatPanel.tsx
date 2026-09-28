@@ -8,7 +8,6 @@ import StopIcon from '@mui/icons-material/Stop';
 import {
   Avatar,
   Box,
-  Button,
   Chip,
   IconButton,
   Paper,
@@ -19,21 +18,13 @@ import {
   useTheme,
 } from '@mui/material';
 import { AnimatePresence, motion } from 'framer-motion';
-import NextLink from 'next/link';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 
-import { PostData } from '@/types/post';
+import { MAX_INPUT_LENGTH, useChatStream } from '@/hooks/useChatStream';
 import { isComposingEvent } from '@/utils/ime';
 
-import ChatPostCard from './ChatPostCard';
-
-interface Message {
-  role: 'user' | 'assistant';
-  content: string;
-  id: string;
-  relatedPosts?: PostData[];
-  needsLogin?: boolean;
-}
+import ChatMessageBubble from './ChatMessageBubble';
+import TypingIndicator from './TypingIndicator';
 
 interface ChatPanelProps {
   isOpen: boolean;
@@ -41,45 +32,10 @@ interface ChatPanelProps {
 
 type PanelSize = 'small' | 'medium' | 'large';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
-
 const MotionPaper = motion.create(Paper);
 const MotionBox = motion.create(Box);
 
 const SUGGESTIONS = ['京都 2泊3日', '沖縄 おすすめ', '温泉旅行', '週末旅行'];
-const MAX_MESSAGES = 100;
-// サーバー側 ChatRequestDto の上限と揃える
-const MAX_HISTORY_SENT = 20;
-const MAX_HISTORY_CONTENT_LENGTH = 8000;
-// 送信メッセージ本文の上限（ChatRequestDto.message と同じ）
-const MAX_INPUT_LENGTH = 2000;
-
-function TypingIndicator() {
-  return (
-    <Box sx={{ display: 'flex', gap: 0.5, p: 0.5, pl: 1 }}>
-      {[0, 1, 2].map((i) => (
-        <motion.div
-          key={i}
-          style={{
-            width: 6,
-            height: 6,
-            borderRadius: '50%',
-            backgroundColor: '#888',
-          }}
-          animate={{
-            y: [0, -4, 0],
-          }}
-          transition={{
-            duration: 0.6,
-            repeat: Infinity,
-            delay: i * 0.15,
-            ease: 'easeInOut',
-          }}
-        />
-      ))}
-    </Box>
-  );
-}
 
 export default function ChatPanel({ isOpen }: ChatPanelProps) {
   const theme = useTheme();
@@ -104,77 +60,23 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
     [isMobile],
   );
 
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      role: 'assistant',
-      content: 'こんにちは！Sora AIです。旅行の相談があればお気軽にどうぞ！',
-      id: 'initial',
-    },
-  ]);
-  const [input, setInput] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [isResponding, setIsResponding] = useState(false);
   const [panelSize, setPanelSize] = useState<PanelSize>('medium');
-  const [dynamicSuggestions, setDynamicSuggestions] = useState<string[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const charQueueRef = useRef<string[]>([]);
-  const typingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const isRespondingRef = useRef(false);
-  const abortControllerRef = useRef<AbortController | null>(null);
-  const mountedRef = useRef(true);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
 
-  const startTyping = useCallback(() => {
-    if (typingTimerRef.current) return;
-    typingTimerRef.current = setInterval(() => {
-      if (charQueueRef.current.length === 0) {
-        if (typingTimerRef.current) {
-          clearInterval(typingTimerRef.current);
-          typingTimerRef.current = null;
-        }
-        return;
-      }
-      const char = charQueueRef.current.shift()!;
-      setMessages((prev) => {
-        const lastMessage = prev[prev.length - 1];
-        if (lastMessage?.role === 'assistant') {
-          return [
-            ...prev.slice(0, -1),
-            { ...lastMessage, content: lastMessage.content + char },
-          ];
-        }
-        return prev;
-      });
-      scrollToBottom();
-    }, 20);
-  }, [scrollToBottom]);
-
-  const stopTyping = useCallback(() => {
-    if (typingTimerRef.current) {
-      clearInterval(typingTimerRef.current);
-      typingTimerRef.current = null;
-    }
-  }, []);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      if (typingTimerRef.current) {
-        clearInterval(typingTimerRef.current);
-      }
-      abortControllerRef.current?.abort();
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!isOpen && isRespondingRef.current) {
-      abortControllerRef.current?.abort();
-    }
-  }, [isOpen]);
+  const {
+    messages,
+    input,
+    setInput,
+    isLoading,
+    isResponding,
+    dynamicSuggestions,
+    sendMessage,
+    stopResponding,
+  } = useChatStream({ isOpen, scrollToBottom });
 
   const handleToggleSize = () => {
     setPanelSize((prev) => {
@@ -184,313 +86,17 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
     });
   };
 
-  const handleStop = useCallback(() => {
-    abortControllerRef.current?.abort();
-  }, []);
-
-  const handleSend = async (messageText?: string) => {
-    const textToSend = messageText || input.trim();
-    if (!textToSend || isRespondingRef.current) return;
-
-    isRespondingRef.current = true;
-    setIsResponding(true);
-
-    const controller = new AbortController();
-    abortControllerRef.current = controller;
-
-    const userMessage = textToSend;
-    setInput('');
-    setDynamicSuggestions([]);
-    const userMsgId = `user-${Date.now()}`;
-    setMessages((prev) => {
-      const updated = [
-        ...prev,
-        { role: 'user' as const, content: userMessage, id: userMsgId },
-      ];
-      return updated.length > MAX_MESSAGES
-        ? updated.slice(-MAX_MESSAGES)
-        : updated;
-    });
-    setIsLoading(true);
-
-    setTimeout(scrollToBottom, 100);
-
-    let responseStatus = 0;
-
-    try {
-      // サーバー側の上限(履歴20件 / 1メッセージ8000文字)に合わせて送信分を絞る。
-      // 全件送ると会話が伸びるほど入力トークンが増え、上限超過で400になる。
-      const history = messages.slice(-MAX_HISTORY_SENT).map((msg) => ({
-        role: msg.role === 'assistant' ? 'model' : 'user',
-        content: msg.content.slice(0, MAX_HISTORY_CONTENT_LENGTH),
-      }));
-
-      let token: string | null = null;
-      try {
-        token = localStorage.getItem('jwt');
-      } catch (storageErr) {
-        console.warn(
-          '[ChatPanel] localStorage access failed, sending without token',
-          storageErr,
-        );
-      }
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-      };
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
-
-      const response = await fetch(`${API_URL}/api/chat/stream`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          message: userMessage,
-          history,
-        }),
-        signal: controller.signal,
-      });
-
-      responseStatus = response.status;
-
-      if (!response.ok) {
-        throw new Error(`HTTP_${response.status}`);
-      }
-
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-
-      if (!reader) {
-        throw new Error('No reader available');
-      }
-
-      const assistantMsgId = `assistant-${Date.now()}`;
-      setMessages((prev) => [
-        ...prev,
-        { role: 'assistant', content: '', id: assistantMsgId },
-      ]);
-      setIsLoading(false);
-      charQueueRef.current = [];
-
-      let buffer = '';
-      let fullResponse = '';
-      let receivedRelatedPosts: PostData[] | null = null;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const events = buffer.split('\n\n');
-        buffer = events.pop() || '';
-
-        for (const event of events) {
-          // SSEは1イベントが複数の data: 行を持ちうる。仕様どおり改行で結合する
-          // (1行目だけ見ると、改行を含む生成テキストの2行目以降が欠落する)
-          const dataLines = event
-            .split('\n')
-            .filter((line) => line.startsWith('data: '))
-            .map((line) => line.slice(6));
-
-          if (dataLines.length > 0) {
-            const data = dataLines.join('\n');
-            if (data === '[DONE]') {
-              continue;
-            }
-            if (data.startsWith('[ERROR]')) {
-              throw new Error(data);
-            }
-
-            if (data.startsWith('{')) {
-              try {
-                const parsed = JSON.parse(data);
-                if (parsed.type === 'related_posts' && parsed.posts) {
-                  receivedRelatedPosts = parsed.posts as PostData[];
-                  setMessages((prev) => {
-                    const lastMsg = prev[prev.length - 1];
-                    if (lastMsg?.role === 'assistant') {
-                      return [
-                        ...prev.slice(0, -1),
-                        { ...lastMsg, relatedPosts: parsed.posts },
-                      ];
-                    }
-                    return prev;
-                  });
-                  continue;
-                }
-              } catch {}
-            }
-
-            fullResponse += data;
-            // split('') はサロゲートペアを分断して絵文字が化けるため
-            // コードポイント単位で分割する
-            charQueueRef.current.push(...Array.from(data));
-            startTyping();
-          }
-        }
-      }
-
-      if (charQueueRef.current.length > 0) {
-        const remaining = charQueueRef.current.join('');
-        charQueueRef.current = [];
-        stopTyping();
-        setMessages((prev) => {
-          const lastMsg = prev[prev.length - 1];
-          if (lastMsg?.role === 'assistant') {
-            return [
-              ...prev.slice(0, -1),
-              { ...lastMsg, content: lastMsg.content + remaining },
-            ];
-          }
-          return prev;
-        });
-      }
-
-      if (receivedRelatedPosts) {
-        setMessages((prev) => {
-          const lastMsg = prev[prev.length - 1];
-          if (lastMsg?.role === 'assistant') {
-            return [
-              ...prev.slice(0, -1),
-              { ...lastMsg, relatedPosts: receivedRelatedPosts as PostData[] },
-            ];
-          }
-          return prev;
-        });
-      }
-
-      if (fullResponse.trim()) {
-        try {
-          const suggestionsHeaders: Record<string, string> = {
-            'Content-Type': 'application/json',
-          };
-          if (token) {
-            suggestionsHeaders['Authorization'] = `Bearer ${token}`;
-          }
-          const suggestionsRes = await fetch(
-            `${API_URL}/api/chat/suggestions`,
-            {
-              method: 'POST',
-              headers: suggestionsHeaders,
-              body: JSON.stringify({
-                message: userMessage,
-                ai_response: fullResponse,
-              }),
-              signal: controller.signal,
-            },
-          );
-          if (suggestionsRes.ok) {
-            const suggestionsData = await suggestionsRes.json();
-            if (suggestionsData?.suggestions?.length > 0) {
-              setDynamicSuggestions(suggestionsData.suggestions);
-            }
-          } else {
-            console.warn(
-              '[ChatPanel] suggestions request returned non-ok',
-              suggestionsRes.status,
-            );
-          }
-        } catch (suggestionsErr) {
-          if ((suggestionsErr as Error)?.name !== 'AbortError') {
-            console.warn(
-              '[ChatPanel] suggestions fetch failed',
-              suggestionsErr,
-            );
-          }
-        }
-      }
-    } catch (err) {
-      const remaining =
-        charQueueRef.current.length > 0 ? charQueueRef.current.join('') : '';
-      charQueueRef.current = [];
-      stopTyping();
-
-      if ((err as Error)?.name === 'AbortError') {
-        if (remaining && mountedRef.current) {
-          setMessages((prev) => {
-            const lastIdx = prev.length - 1;
-            const lastMessage = prev[lastIdx];
-            if (
-              lastMessage?.role === 'assistant' &&
-              lastMessage.id !== 'initial'
-            ) {
-              return [
-                ...prev.slice(0, -1),
-                { ...lastMessage, content: lastMessage.content + remaining },
-              ];
-            }
-            return prev;
-          });
-        }
-        return;
-      }
-
-      console.error('[ChatPanel] handleSend failed', err);
-
-      const isNetworkError =
-        responseStatus === 0 &&
-        (err instanceof TypeError ||
-          (typeof navigator !== 'undefined' && navigator.onLine === false));
-
-      const errorContent = isNetworkError
-        ? 'ネットワーク接続を確認してください。'
-        : responseStatus === 401
-          ? 'ログインの有効期限が切れている可能性があります。再ログインしてお試しください。'
-          : responseStatus === 429
-            ? 'リクエストが集中しています。少し待ってから再度お試しください。'
-            : responseStatus >= 500
-              ? 'サーバーで問題が発生しました。時間を置いてお試しください。'
-              : '申し訳ありません。エラーが発生しました。もう一度お試しください。';
-
-      if (!mountedRef.current) return;
-
-      setMessages((prev) => {
-        const errorMessage: Message = {
-          role: 'assistant',
-          content: errorContent,
-          id: `error-${Date.now()}`,
-          needsLogin: responseStatus === 401,
-        };
-        const lastIdx = prev.length - 1;
-        const lastMessage = prev[lastIdx];
-        const isStreamingAssistant =
-          lastMessage?.role === 'assistant' && lastMessage.id !== 'initial';
-        if (isStreamingAssistant) {
-          const merged = lastMessage.content + remaining;
-          if (merged.length === 0) {
-            return [...prev.slice(0, -1), errorMessage];
-          }
-          return [
-            ...prev.slice(0, -1),
-            { ...lastMessage, content: merged },
-            errorMessage,
-          ];
-        }
-        return [...prev, errorMessage];
-      });
-    } finally {
-      if (abortControllerRef.current === controller) {
-        abortControllerRef.current = null;
-      }
-      if (mountedRef.current) {
-        setIsLoading(false);
-        setIsResponding(false);
-      }
-      isRespondingRef.current = false;
-    }
-  };
-
   const handleKeyDown = (e: React.KeyboardEvent) => {
     // 日本語入力の変換確定 Enter で送信してしまうのを防ぐ
     if (isComposingEvent(e)) return;
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      handleSend();
+      sendMessage();
     }
   };
 
   const handleSuggestionClick = (suggestion: string) => {
-    handleSend(suggestion);
+    sendMessage(suggestion);
   };
 
   const currentSize = panelSizes[panelSize];
@@ -620,70 +226,7 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
                       <AutoAwesomeIcon sx={{ fontSize: 16 }} />
                     </Avatar>
                   )}
-                  <Box sx={{ maxWidth: '80%' }}>
-                    <Paper
-                      variant="outlined"
-                      sx={{
-                        p: 1.5,
-                        bgcolor:
-                          message.role === 'user'
-                            ? 'primary.main'
-                            : 'background.paper',
-                        color:
-                          message.role === 'user'
-                            ? 'primary.contrastText'
-                            : 'text.primary',
-                        borderRadius: 2,
-                        borderColor:
-                          message.role === 'user' ? 'primary.main' : 'divider',
-                      }}
-                    >
-                      <Typography
-                        variant="body2"
-                        sx={{
-                          whiteSpace: 'pre-wrap',
-                          wordBreak: 'break-word',
-                          lineHeight: 1.5,
-                        }}
-                      >
-                        {message.content}
-                      </Typography>
-                      {message.needsLogin && (
-                        <Button
-                          component={NextLink}
-                          href="/login"
-                          size="small"
-                          variant="contained"
-                          color="primary"
-                          sx={{ mt: 1, textTransform: 'none' }}
-                        >
-                          ログインページへ
-                        </Button>
-                      )}
-                    </Paper>
-                    {message.relatedPosts &&
-                      message.relatedPosts.length > 0 && (
-                        <Box
-                          sx={{
-                            mt: 1,
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: 0.5,
-                          }}
-                        >
-                          <Typography
-                            variant="caption"
-                            color="text.secondary"
-                            sx={{ pl: 0.5 }}
-                          >
-                            関連する投稿
-                          </Typography>
-                          {message.relatedPosts.map((post) => (
-                            <ChatPostCard key={post.id} post={post} />
-                          ))}
-                        </Box>
-                      )}
-                  </Box>
+                  <ChatMessageBubble message={message} />
                 </MotionBox>
               ))}
             </AnimatePresence>
@@ -788,7 +331,7 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
                 <Tooltip title="停止">
                   <IconButton
                     color="primary"
-                    onClick={handleStop}
+                    onClick={stopResponding}
                     aria-label="応答を停止"
                     sx={{
                       bgcolor: 'primary.main',
@@ -804,7 +347,7 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
               ) : (
                 <IconButton
                   color="primary"
-                  onClick={() => handleSend()}
+                  onClick={() => sendMessage()}
                   disabled={!input.trim()}
                   aria-label="送信"
                   sx={{
