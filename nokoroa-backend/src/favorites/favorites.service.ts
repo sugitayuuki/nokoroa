@@ -3,78 +3,11 @@ import {
   NotFoundException,
   ConflictException,
 } from '@nestjs/common';
-import { publicAuthorSelect } from '../common/public-author.select';
+import {
+  formatPostWithFavoritesCount,
+  postWithFavoritesCountInclude,
+} from '../posts/post-format';
 import { PrismaService } from '../prisma/prisma.service';
-
-const postInclude = {
-  author: {
-    select: publicAuthorSelect,
-  },
-  location: true,
-  postTags: {
-    include: {
-      tag: true,
-    },
-  },
-  _count: {
-    select: { bookmarks: true },
-  },
-};
-
-interface PostWithRelations {
-  id: number;
-  title: string;
-  content: string;
-  imageUrl: string | null;
-  isPublic: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-  authorId: number;
-  locationId: number | null;
-  author: {
-    id: number;
-    name: string;
-    avatar: string | null;
-  };
-  location: {
-    id: number;
-    name: string;
-    country: string;
-    prefecture: string | null;
-    latitude: number | null;
-    longitude: number | null;
-  } | null;
-  postTags: {
-    tag: {
-      id: number;
-      name: string;
-      slug: string;
-    };
-  }[];
-  _count: {
-    bookmarks: number;
-  };
-}
-
-function formatPost(post: PostWithRelations) {
-  return {
-    id: post.id,
-    title: post.title,
-    content: post.content,
-    imageUrl: post.imageUrl,
-    isPublic: post.isPublic,
-    createdAt: post.createdAt,
-    updatedAt: post.updatedAt,
-    authorId: post.authorId,
-    author: post.author,
-    tags: post.postTags.map((pt) => pt.tag.name),
-    location: post.location?.name || null,
-    latitude: post.location?.latitude || null,
-    longitude: post.location?.longitude || null,
-    prefecture: post.location?.prefecture || null,
-    favoritesCount: post._count.bookmarks,
-  };
-}
 
 @Injectable()
 export class FavoritesService {
@@ -109,7 +42,7 @@ export class FavoritesService {
       },
       include: {
         post: {
-          include: postInclude,
+          include: postWithFavoritesCountInclude,
         },
       },
     });
@@ -117,7 +50,7 @@ export class FavoritesService {
     return {
       id: bookmark.id,
       createdAt: bookmark.createdAt,
-      post: formatPost(bookmark.post as PostWithRelations),
+      post: formatPostWithFavoritesCount(bookmark.post),
     };
   }
 
@@ -160,7 +93,7 @@ export class FavoritesService {
         where,
         include: {
           post: {
-            include: postInclude,
+            include: postWithFavoritesCountInclude,
           },
         },
         orderBy: { createdAt: 'desc' },
@@ -174,7 +107,7 @@ export class FavoritesService {
       favorites: favorites.map((fav) => ({
         id: fav.id,
         createdAt: fav.createdAt,
-        post: formatPost(fav.post as PostWithRelations),
+        post: formatPostWithFavoritesCount(fav.post),
       })),
       total,
       hasMore: offset + limit < total,
