@@ -10,10 +10,10 @@ Nokoroa の AWS インフラを Terraform で管理しています。
 
 ```
 $ terraform plan
-Plan: 77 to add, 0 to change, 0 to destroy.
+Plan: 78 to add, 0 to change, 0 to destroy.
 ```
 
-この 77 件は「停止によって削除された分」ではなく「定義されている全量」です。停止中も残しているリソース（下記）が state に載っていないため、現状の `plan` はそれらも新規作成として数えます。実際に再構築で作られるのは、それらを `import` で取り込んだあとの差分になります。
+この 78 件は「停止によって削除された分」ではなく「定義されている全量」です。停止中も残しているリソース（下記）が state に載っていないため、現状の `plan` はそれらも新規作成として数えます。実際に再構築で作られるのは、それらを `import` で取り込んだあとの差分になります。
 
 | モジュール | 作成されるリソース数 |
 |---|---:|
@@ -22,9 +22,9 @@ Plan: 77 to add, 0 to change, 0 to destroy.
 | `modules/ecs` | 13 |
 | `envs/prod`（ECR・ACM・Route53 等） | 13 |
 | `modules/s3` | 11 |
-| `modules/alb` | 6 |
+| `modules/alb` | 7 |
 | `modules/rds` | 3 |
-| **合計** | **77** |
+| **合計** | **78** |
 
 CI が毎コミットで `terraform fmt -check` / `init` / `validate` を実行しており、構文エラー・型の不整合・存在しない参照は検出されます。ただし `plan` は認証情報が必要なため CI では実行しておらず、**apply 時にしか現れない問題は検出できません**。プロバイダのバージョンは `.terraform.lock.hcl` をコミットして固定しているため、いつ誰が実行しても同じバージョンで解決されます。
 
@@ -77,11 +77,27 @@ ECS タスクはプライベートサブネットではなく**パブリック�
 
 ```
 インターネット → ALB        (80 / 443 のみ開放)
-ALB SG        → ECS タスク  (SG 参照。CIDR では開けない)
+ALB SG        → ECS タスク  (3000 / 3001 のみ。SG 参照。CIDR では開けない)
 ECS SG        → RDS         (5432。SG 参照)
 ```
 
+ECS 側の受け口はフロントエンド（3000）とバックエンド（3001）の 2 ポートだけに絞っています（`modules/vpc` の `frontend_port` / `backend_port`）。
+
 サブネットは public / private / database の 3 層に分けており、RDS は専用の database サブネットに置いています。外向き通信を必要としないため NAT がなくても問題ありません。
+
+### ドメインは apex（`nokoroa.com`）に寄せる
+
+`www.nokoroa.com` にも A レコードと ACM の SAN がありますが、バックエンドの CORS 許可オリジンは apex 単独です。www のまま到達すると API がすべて CORS で失敗するため、**ALB の HTTPS リスナールール（優先度 10）で www → apex へ 301 リダイレクト**しています（`modules/alb` の `apex_domain`）。優先度は `/api/*` の転送ルール（100）より小さく、全パスに先に効きます。
+
+ドメイン名は `envs/prod` の `app_domain`（既定 `nokoroa.com`）に一本化し、Route 53・ACM・S3 の CORS・ECS の `FRONTEND_URL` / `GOOGLE_CALLBACK_URL` がこれを参照します。
+
+フロントエンドの `NEXT_PUBLIC_API_URL` は **ECS のタスク定義には持たせていません**。Next.js は `NEXT_PUBLIC_*` をビルド時にバンドルへ埋め込むため、ランタイムの環境変数では上書きできないからです。値の指定は `.github/workflows/deploy.yml` のビルド引数に一本化しています。
+
+HTTPS リスナーの TLS ポリシーは TLS 1.3 に対応した `ELBSecurityPolicy-TLS13-1-2-2021-06` を使っています。
+
+### データベースのログは絞る
+
+`log_statement = all` は全 SQL をパラメータごと CloudWatch Logs へ流すため、ログ課金・書き込み負荷・個人情報の残留という 3 つの問題があります。スキーマ変更の監査だけ残す `log_statement = ddl` とし、性能調査は `log_min_duration_statement = 1000`（1 秒以上のクエリのみ）で代替しています。
 
 ### Secrets Manager を使う
 
@@ -158,6 +174,8 @@ terraform apply
 
 backend タスクは 1 つのタスク定義に `backend` と `ai` の 2 コンテナを持つため、**タスク定義のレンダリングを 2 段に連鎖させています**。1 回で済ませると、更新しなかった側のコンテナのイメージが古いまま残ります。
 
+デプロイが登録する `:sha` タグ付きのタスク定義と Terraform が管理するタスク定義は常に食い違うため、**ECS サービスには `lifecycle { ignore_changes = [task_definition] }` を入れています**。これがないと次の `apply` で稼働中のイメージが古いリビジョンへ巻き戻ります。裏返しとして、タスク定義そのもの（環境変数・CPU/メモリ等）を Terraform で変更した場合は、サービスへ反映するためにデプロイを流すか `aws ecs update-service --task-definition <新リビジョン>` を実行してください。
+
 ### 5. データベースをマイグレーションする
 
 NAT を置かない構成のため、**パブリックサブネットを指定し `assignPublicIp=ENABLED` にします**。これを `DISABLED` にすると ECR や Secrets Manager に到達できず起動しません。
@@ -206,4 +224,4 @@ terraform destroy \
 
 - **state が S3 に置かれていない**: `versions.tf` の S3 backend がコメントアウトされたままで、state はローカル管理です。保管先のバケットと DynamoDB ロックテーブルは `modules/s3` に定義済みですが、state を置くバケット自身を同じ設定で作る循環があるため、ブートストラップを分ける必要があります。
 - **残しているリソースが state に載っていない**: 上記の「停止中も残しているもの」は AWS 上に実在する一方、現在の state には記録されていません。このため今のまま `terraform apply` を実行すると、ECR・S3・Secrets Manager が既存と衝突します。再構築の前に `terraform import` で state に取り込む必要があります。
-- **変数の `validation` が未設定**: 89 個の変数すべてに `description` と `type` はありますが、値域の検証は入れていません。
+- **変数の `validation` が未設定**: 93 個の変数すべてに `description` と `type` はありますが、値域の検証は入れていません。

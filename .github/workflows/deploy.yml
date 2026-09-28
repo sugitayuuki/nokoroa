@@ -143,6 +143,9 @@ jobs:
           tags: |
             ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_FRONTEND_REPOSITORY }}:${{ github.sha }}
             ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_FRONTEND_REPOSITORY }}:latest
+          # NEXT_PUBLIC_* は Next.js がビルド時にバンドルへ埋め込むため、
+          # ECS のランタイム env では上書きできない。値の指定はここに一本化している
+          # （Terraform 側のタスク定義には意図的に持たせていない）。
           build-args: |
             NEXT_PUBLIC_API_URL=https://nokoroa.com
             NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=${{ secrets.GOOGLE_MAPS_API_KEY }}

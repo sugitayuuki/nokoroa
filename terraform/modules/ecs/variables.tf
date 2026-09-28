@@ -53,8 +53,8 @@ variable "frontend_port" {
   type        = number
 }
 
-variable "api_domain" {
-  description = "API domain"
+variable "app_domain" {
+  description = "Public domain that serves both the frontend and the /api/* backend routes (must match the ACM certificate). Used for GOOGLE_CALLBACK_URL and FRONTEND_URL."
   type        = string
 }
 

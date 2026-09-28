@@ -25,7 +25,7 @@ output "vpc_id" {
 
 output "domain_name" {
   description = "Domain name"
-  value       = "https://nokoroa.com"
+  value       = "https://${var.app_domain}"
 }
 
 output "ecr_backend_repository_url" {

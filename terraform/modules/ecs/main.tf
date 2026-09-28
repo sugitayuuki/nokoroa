@@ -152,13 +152,17 @@ resource "aws_ecs_task_definition" "backend" {
           name  = "AWS_REGION"
           value = var.aws_region
         },
+        # 環境ごとのドメインは app_domain に一本化している。
+        # 以前は非 prod 分岐で ALB の DNS 名を直接使っていたが、ACM 証明書の
+        # ドメインと一致せず HTTPS で疎通できないため、必ず証明書と同じ
+        # ドメインを渡すこと。
         {
           name  = "GOOGLE_CALLBACK_URL"
-          value = var.environment == "prod" ? "https://nokoroa.com/api/auth/google/callback" : "https://${var.api_domain}/api/auth/google/callback"
+          value = "https://${var.app_domain}/api/auth/google/callback"
         },
         {
           name  = "FRONTEND_URL"
-          value = var.environment == "prod" ? "https://nokoroa.com" : "http://localhost:3000"
+          value = "https://${var.app_domain}"
         },
         {
           name  = "AI_SERVICE_URL"
@@ -282,14 +286,15 @@ resource "aws_ecs_task_definition" "frontend" {
         }
       ]
 
+      # NEXT_PUBLIC_API_URL はここに置かない。
+      # Next.js は NEXT_PUBLIC_* をビルド時にバンドルへ埋め込むため、
+      # ランタイム env で渡しても効かない（実際に ALB の DNS 名を注入していたが、
+      # ACM 証明書と一致せず疎通不能な死に設定だった）。
+      # 値の指定は .github/workflows/deploy.yml のビルド引数側に一本化している。
       environment = [
         {
           name  = "NODE_ENV"
           value = var.environment == "prod" ? "production" : var.environment
-        },
-        {
-          name  = "NEXT_PUBLIC_API_URL"
-          value = "https://${var.api_domain}"
         }
       ]
 
@@ -333,6 +338,13 @@ resource "aws_ecs_service" "backend" {
     container_port   = var.backend_port
   }
 
+  # デプロイ（GitHub Actions）が :sha タグ付きの新しいタスク定義を登録してサービスへ
+  # 適用するため、Terraform が管理する task_definition とは常に差分が出る。
+  # 無視しないと次の apply でイメージが古いリビジョンへ巻き戻る。
+  lifecycle {
+    ignore_changes = [task_definition]
+  }
+
   depends_on = [var.backend_lb_listener_arn]
 }
 
@@ -354,6 +366,11 @@ resource "aws_ecs_service" "frontend" {
     target_group_arn = var.frontend_target_group_arn
     container_name   = "frontend"
     container_port   = var.frontend_port
+  }
+
+  # backend サービスと同じ理由（deploy.yml が :sha のタスク定義を適用するため）。
+  lifecycle {
+    ignore_changes = [task_definition]
   }
 
   depends_on = [var.frontend_lb_listener_arn]

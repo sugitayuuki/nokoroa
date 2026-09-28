@@ -110,16 +110,16 @@ resource "random_password" "db_password" {
 
 # Route 53 Hosted Zone
 data "aws_route53_zone" "main" {
-  name = "nokoroa.com"
+  name = var.app_domain
 }
 
 # SSL Certificate
 resource "aws_acm_certificate" "main" {
-  domain_name       = "nokoroa.com"
+  domain_name       = var.app_domain
   validation_method = "DNS"
 
   subject_alternative_names = [
-    "*.nokoroa.com"
+    "*.${var.app_domain}"
   ]
 
   lifecycle {
@@ -163,6 +163,8 @@ module "vpc" {
   environment        = var.environment
   availability_zones = var.availability_zones
   enable_nat_gateway = false
+  frontend_port      = var.frontend_port
+  backend_port       = var.backend_port
 }
 
 # RDS Module
@@ -204,9 +206,10 @@ module "secrets" {
 module "s3" {
   source = "../../modules/s3"
 
-  project_name                  = var.project_name
-  environment                   = var.environment
-  allowed_origins               = ["http://localhost:3000", "https://nokoroa.com", "https://www.nokoroa.com"]
+  project_name = var.project_name
+  environment  = var.environment
+  # 本番バケットにローカル開発用オリジンは許可しない
+  allowed_origins               = ["https://${var.app_domain}", "https://www.${var.app_domain}"]
   create_terraform_state_bucket = true
 }
 
@@ -224,6 +227,7 @@ module "alb" {
   certificate_arn       = aws_acm_certificate_validation.main.certificate_arn
   enable_https          = true
   deletion_protection   = false
+  apex_domain           = var.app_domain
 }
 
 # ECS Module
@@ -246,7 +250,7 @@ module "ecs" {
   ai_image       = var.ai_image
   backend_port   = var.backend_port
   frontend_port  = var.frontend_port
-  api_domain     = module.alb.alb_dns_name
+  app_domain     = var.app_domain
 
   # Secrets (from Secrets Manager)
   database_url_secret_arn     = module.secrets.database_url_arn
@@ -275,7 +279,7 @@ module "ecs" {
 # Route 53 A Record for ALB
 resource "aws_route53_record" "alb" {
   zone_id = data.aws_route53_zone.main.zone_id
-  name    = "nokoroa.com"
+  name    = var.app_domain
   type    = "A"
 
   alias {
@@ -286,9 +290,10 @@ resource "aws_route53_record" "alb" {
 }
 
 # Route 53 A Record for www subdomain
+# www で来たリクエストは ALB のリスナールールで apex へ 301 リダイレクトする
 resource "aws_route53_record" "www" {
   zone_id = data.aws_route53_zone.main.zone_id
-  name    = "www.nokoroa.com"
+  name    = "www.${var.app_domain}"
   type    = "A"
 
   alias {

@@ -88,12 +88,45 @@ resource "aws_lb_listener" "https" {
   load_balancer_arn = aws_lb.main.arn
   port              = "443"
   protocol          = "HTTPS"
-  ssl_policy        = "ELBSecurityPolicy-TLS-1-2-2017-01"
-  certificate_arn   = var.certificate_arn
+  # TLS 1.3 に対応した現行の推奨ポリシー。旧 ELBSecurityPolicy-TLS-1-2-2017-01 は
+  # TLS 1.3 を含まず、利用できる暗号スイートも古い。
+  ssl_policy      = "ELBSecurityPolicy-TLS13-1-2-2021-06"
+  certificate_arn = var.certificate_arn
 
   default_action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.frontend.arn
+  }
+}
+
+# www -> apex への 301 リダイレクト
+# www.<apex> にも A レコードと ACM の SAN があるため www でも到達できてしまうが、
+# backend の CORS 許可オリジンは apex 単独のため、www のままだと全 API が CORS で失敗する。
+# ALB 側で apex に寄せることで www で来たユーザーも正常に利用できる。
+# 優先度は API 転送ルール（100）より小さくし、/api/* を含む全パスに先に効かせる。
+resource "aws_lb_listener_rule" "www_redirect" {
+  count = var.enable_https && var.apex_domain != "" ? 1 : 0
+
+  listener_arn = aws_lb_listener.https[0].arn
+  priority     = 10
+
+  action {
+    type = "redirect"
+
+    redirect {
+      host        = var.apex_domain
+      path        = "/#{path}" # #{path} には先頭の "/" が含まれない
+      query       = "#{query}"
+      port        = "443"
+      protocol    = "HTTPS"
+      status_code = "HTTP_301"
+    }
+  }
+
+  condition {
+    host_header {
+      values = ["www.${var.apex_domain}"]
+    }
   }
 }
 

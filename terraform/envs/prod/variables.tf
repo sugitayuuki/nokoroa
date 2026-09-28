@@ -16,6 +16,12 @@ variable "project_name" {
   default     = "nokoroa"
 }
 
+variable "app_domain" {
+  description = "Public apex domain (Route 53 hosted zone / ACM certificate / application URLs)"
+  type        = string
+  default     = "nokoroa.com"
+}
+
 variable "availability_zones" {
   description = "Availability zones"
   type        = list(string)

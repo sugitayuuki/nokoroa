@@ -45,6 +45,12 @@ variable "enable_https" {
   default     = false
 }
 
+variable "apex_domain" {
+  description = "Apex domain served by this ALB. When set (and HTTPS is enabled), www.<apex_domain> is 301-redirected to the apex. Empty disables the redirect rule."
+  type        = string
+  default     = ""
+}
+
 variable "deletion_protection" {
   description = "Enable deletion protection"
   type        = bool

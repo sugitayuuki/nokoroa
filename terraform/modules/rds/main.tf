@@ -19,14 +19,24 @@ resource "aws_db_parameter_group" "main" {
     apply_method = "pending-reboot"
   }
 
+  # log_statement = "all" + log_duration = 1 は全 SQL をパラメータ込みで CloudWatch Logs へ
+  # 永続化するため、(1) ログ量に比例した課金、(2) 書き込み負荷、(3) 個人情報が
+  # ログに残る、の 3 点で本番運用に耐えない。スキーマ変更の監査だけを残し、
+  # 性能調査は「遅いクエリのみ」に絞る方針へ変更した。
   parameter {
     name  = "log_statement"
-    value = "all"
+    value = "ddl"
   }
 
   parameter {
     name  = "log_duration"
-    value = "1"
+    value = "0"
+  }
+
+  # 1 秒以上かかったクエリだけを記録する（全文ログの代替）
+  parameter {
+    name  = "log_min_duration_statement"
+    value = "1000"
   }
 
   tags = {

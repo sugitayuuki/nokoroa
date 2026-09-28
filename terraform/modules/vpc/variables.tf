@@ -19,6 +19,18 @@ variable "availability_zones" {
   type        = list(string)
 }
 
+variable "frontend_port" {
+  description = "Frontend container port allowed from the ALB security group"
+  type        = number
+  default     = 3000
+}
+
+variable "backend_port" {
+  description = "Backend container port allowed from the ALB security group"
+  type        = number
+  default     = 3001
+}
+
 variable "enable_nat_gateway" {
   description = "Enable NAT Gateway for private subnets"
   type        = bool
