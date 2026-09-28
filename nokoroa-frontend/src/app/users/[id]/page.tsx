@@ -24,7 +24,7 @@ import { toast } from 'react-toastify';
 
 import FollowButton from '@/components/follow/FollowButton';
 import { useUser } from '@/hooks/useUser';
-import { API_CONFIG } from '@/lib/apiConfig';
+import { API_CONFIG, createApiRequest } from '@/lib/apiConfig';
 import { UserProfile } from '@/types/user';
 import { getTagColor } from '@/utils/tagColors';
 
@@ -75,35 +75,15 @@ export default function UserProfilePage() {
 
   const fetchUserData = React.useCallback(async () => {
     try {
-      const token = localStorage.getItem('jwt');
-      const headers: HeadersInit = {
-        'Content-Type': 'application/json',
-      };
-
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
-
-      const response = await fetch(`${API_CONFIG.BASE_URL}/users/${userId}`, {
-        headers,
-      });
+      const endpoint = API_CONFIG.endpoints.userById(String(userId));
+      const response = await createApiRequest(endpoint);
 
       if (response.ok) {
         const data = await response.json();
         setUserData(data);
-      } else if (response.status === 401) {
-        // 認証エラーの場合は、認証なしで再度取得を試みる
-        const publicResponse = await fetch(
-          `${API_CONFIG.BASE_URL}/users/${userId}`,
-        );
-        if (publicResponse.ok) {
-          const data = await publicResponse.json();
-          setUserData(data);
-        } else {
-          // ユーザー情報の取得に失敗した場合の処理
-        }
-      } else {
-        // ユーザー情報の取得に失敗した場合の処理
+      } else if (response.status !== 404) {
+        // 404 は下部の「ユーザーが見つかりません」表示に任せ、それ以外のみ通知する
+        toast.error('ユーザー情報の取得に失敗しました');
       }
     } catch {
       // ユーザーデータの取得でエラーが発生した場合の処理

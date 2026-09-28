@@ -7,7 +7,7 @@ export class CreateUserDto {
     example: 'user@example.com',
   })
   @IsEmail()
-  email: string;
+  email!: string;
 
   @ApiProperty({
     description: 'パスワード（8文字以上）',
@@ -16,12 +16,12 @@ export class CreateUserDto {
   })
   @IsString()
   @MinLength(8)
-  password: string;
+  password!: string;
 
   @ApiProperty({
     description: 'ユーザー名',
     example: '山田太郎',
   })
   @IsString()
-  name: string;
+  name!: string;
 }

@@ -105,6 +105,27 @@ describe('ChatService', () => {
     return reader;
   }
 
+  /** streamChat が AI サービスへ送る fetch の第2引数のうち、検証に使う部分 */
+  interface StreamFetchInit {
+    body: string;
+    headers: Record<string, string>;
+    signal?: AbortSignal;
+  }
+
+  /**
+   * /api/chat/stream への fetch 呼び出しを取り出す。
+   * 呼ばれていなければ以降のアサーションが成立しないため、ここで落とす。
+   */
+  function findStreamCall(): [string, StreamFetchInit] {
+    const call = (
+      global.fetch as jest.Mock<unknown, [string, StreamFetchInit]>
+    ).mock.calls.find(([url]) => url.endsWith('/api/chat/stream'));
+    if (!call) {
+      throw new Error('fetch was not called with /api/chat/stream');
+    }
+    return call;
+  }
+
   it('ベクトル検索でヒットがあればキーワード検索を呼ばない', async () => {
     mockEmbeddings.searchSimilar.mockResolvedValue([
       { postId: 1, distance: 0.1 },
@@ -139,9 +160,7 @@ describe('ChatService', () => {
 
     await service.streamChat({ message: 'test', history }, makeRes().res);
 
-    const streamCall = (
-      global.fetch as jest.Mock<unknown, [string, { body: string }]>
-    ).mock.calls.find(([url]) => url.includes('/api/chat/stream'));
+    const streamCall = findStreamCall();
     const sent = JSON.parse(streamCall[1].body) as {
       history: { content: string }[];
     };
@@ -168,9 +187,7 @@ describe('ChatService', () => {
 
     await service.streamChat({ message: 'test', history }, makeRes().res);
 
-    const streamCall = (
-      global.fetch as jest.Mock<unknown, [string, { body: string }]>
-    ).mock.calls.find(([url]) => url.includes('/api/chat/stream'));
+    const streamCall = findStreamCall();
     const sent = JSON.parse(streamCall[1].body) as {
       history: { content: string }[];
     };
@@ -198,9 +215,7 @@ describe('ChatService', () => {
 
     await service.streamChat({ message: 'test' }, makeRes().res);
 
-    const streamCall = (
-      global.fetch as jest.Mock<unknown, [string, { body: string }]>
-    ).mock.calls.find(([url]) => url.includes('/api/chat/stream'));
+    const streamCall = findStreamCall();
     const sent = JSON.parse(streamCall[1].body) as { history: unknown[] };
 
     expect(sent.history).toEqual([]);
@@ -218,9 +233,7 @@ describe('ChatService', () => {
 
     await service.streamChat({ message: 'test', history }, makeRes().res);
 
-    const streamCall = (
-      global.fetch as jest.Mock<unknown, [string, { body: string }]>
-    ).mock.calls.find(([url]) => url.includes('/api/chat/stream'));
+    const streamCall = findStreamCall();
     const sent = JSON.parse(streamCall[1].body) as {
       history: { role: string; content: string }[];
     };
@@ -285,14 +298,7 @@ describe('ChatService', () => {
 
     await service.streamChat({ message: 'hello' }, makeRes().res);
 
-    const calls = (
-      global.fetch as jest.Mock<
-        unknown,
-        [string, { headers: Record<string, string> }]
-      >
-    ).mock.calls;
-    const chatStreamCall = calls.find((c) => c[0].endsWith('/api/chat/stream'));
-    expect(chatStreamCall).toBeDefined();
+    const chatStreamCall = findStreamCall();
     const init = chatStreamCall[1];
     expect(init.headers['X-Internal-Token']).toBe('test-token');
     expect(init.headers['Content-Type']).toBe('application/json');
@@ -351,9 +357,7 @@ describe('ChatService', () => {
 
       await service.streamChat({ message: 'test' }, res);
 
-      const streamCall = (
-        global.fetch as jest.Mock<unknown, [string, RequestInit]>
-      ).mock.calls.find(([url]) => url.includes('/api/chat/stream'));
+      const streamCall = findStreamCall();
       const signal = streamCall[1].signal;
       expect(signal?.aborted).toBe(false);
       disconnect();

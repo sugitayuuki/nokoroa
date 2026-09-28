@@ -23,7 +23,7 @@ import { z } from 'zod';
 
 import { useUpdateUser } from '@/hooks/useUpdateUser';
 import { useUser } from '@/hooks/useUser';
-import { API_CONFIG } from '@/lib/apiConfig';
+import { API_CONFIG, createFormDataRequest } from '@/lib/apiConfig';
 
 // email とパスワードはこのフォームでは扱わない（専用エンドポイントを使う）
 const schema = z.object({
@@ -95,23 +95,19 @@ export default function ProfileEditForm() {
     formData.append('file', file);
 
     try {
-      const token = localStorage.getItem('jwt');
-      const response = await fetch(
-        `${API_CONFIG.BASE_URL}/users/upload-avatar`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-          body: formData,
-        },
+      const response = await createFormDataRequest(
+        API_CONFIG.endpoints.uploadAvatar,
+        formData,
       );
 
       if (!response.ok) {
         throw new Error('アバターのアップロードに失敗しました');
       }
 
+      // 本文は使わないが、応答が JSON として成立しているかはここで検証する
+      // (不正な応答なら throw され、catch でプレビューが巻き戻る)
       await response.json();
+
       toast.success('アバターを更新しました');
       await refetch(); // ユーザー情報を再取得
     } catch {
