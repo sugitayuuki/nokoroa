@@ -33,7 +33,7 @@ import { toast } from 'react-toastify';
 import { LazyImage } from '@/components/common/LazyImage';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useUser } from '@/hooks/useUser';
-import { API_CONFIG } from '@/lib/apiConfig';
+import { API_CONFIG, createApiRequest } from '@/lib/apiConfig';
 import { formatDistanceToNow } from '@/utils/dateFormat';
 import { getTagColor } from '@/utils/tagColors';
 
@@ -90,15 +90,10 @@ const MyPostCard = ({
 
   const handleDeleteConfirm = async () => {
     try {
-      const token = localStorage.getItem('jwt');
-      const response = await fetch(
-        `${API_CONFIG.BASE_URL}/posts/${localPost.id}`,
+      const response = await createApiRequest(
+        API_CONFIG.endpoints.postById(String(localPost.id)),
         {
           method: 'DELETE',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
         },
       );
 
@@ -135,14 +130,10 @@ const MyPostCard = ({
         return;
       }
 
-      const response = await fetch(
-        `${API_CONFIG.BASE_URL}/posts/${localPost.id}`,
+      const response = await createApiRequest(
+        API_CONFIG.endpoints.postById(String(localPost.id)),
         {
           method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
           body: JSON.stringify({ isPublic }),
         },
       );
@@ -158,7 +149,7 @@ const MyPostCard = ({
           isPublic ? '投稿を公開しました' : '投稿を非公開にしました',
         );
       } else {
-        await response.text();
+        const errorData = await response.json().catch(() => ({}));
         if (response.status === 401) {
           // 認証エラー: トークンが無効
           toast.error('認証エラー: 再度ログインしてください');
@@ -167,7 +158,7 @@ const MyPostCard = ({
           toast.error('権限エラー: 自分の投稿のみ編集できます');
         } else {
           // その他のエラー
-          toast.error('公開設定の変更に失敗しました');
+          toast.error(errorData.message || '公開設定の変更に失敗しました');
         }
       }
     } catch {
