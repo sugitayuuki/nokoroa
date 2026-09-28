@@ -134,8 +134,13 @@ docker compose exec backend npx prisma migrate deploy
 docker compose exec backend npm run seed
 
 # 5. フロントエンド
+#    .env.local はリポジトリに含めていないため、その場で作ります。
+#    地図を使わないなら NEXT_PUBLIC_GOOGLE_MAPS_API_KEY は空のままでも起動します。
 cd ../nokoroa-frontend
-cp .env.example .env.local   # NEXT_PUBLIC_API_URL などを設定
+cat > .env.local <<'EOF'
+NEXT_PUBLIC_API_URL=http://localhost:4000
+NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=your-google-maps-api-key
+EOF
 npm ci
 npm run dev
 ```
@@ -187,14 +192,14 @@ npm run purge:private-embeddings
 | --- | --- |
 | **バックエンド** | Node.js 22 / NestJS 11 / TypeScript 5 / Prisma 6 / PostgreSQL |
 | **フロントエンド** | TypeScript 5 / React 19 / Next.js 15 (App Router) / Material-UI v7 |
-| **主要パッケージ** | SWR / React Hook Form / Zod / react-hot-toast / date-fns |
+| **主要パッケージ** | SWR / React Hook Form / Zod / react-toastify / date-fns / Framer Motion |
 | **AI / RAG** | Python 3.12 / FastAPI / Google Gemini（チャット + 埋め込み）/ pgvector (HNSW) |
 | **インフラ** | AWS（Route53 / ACM / ALB / VPC / ECR / ECS Fargate / RDS PostgreSQL / S3 / CloudWatch） |
 | **IaC / 環境構築** | Terraform / Docker / Docker Compose |
 | **CI / CD** | GitHub Actions |
 | **認証** | JWT / Google OAuth 2.0 |
 | **外部API** | Google Maps JavaScript API |
-| **テスト** | Jest / SuperTest（ユニット + E2E） |
+| **テスト** | Jest / SuperTest（バックエンド: ユニット + E2E）/ Vitest（フロントエンド: ユニット）/ pytest（AI） |
 | **静的解析** | ESLint / Prettier（フロント・バックとも） |
 
 ## ER図
