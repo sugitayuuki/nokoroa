@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useInfiniteScroll } from './useInfiniteScroll';
 
@@ -20,9 +20,10 @@ interface UsePaginatedPostsOptions<T> {
   /** 次ページを要求する。hasMore かつ読み込み中でないときだけ呼ばれる */
   onPageChange: (nextPage: number) => void;
   /**
-   * 取得側のエラー。真になったら isLoadingMore を解除する。
-   * 渡さないと、次ページ取得が失敗した場合に読み込み中のまま固着し
-   * リトライ不能になる。
+   * 取得側のエラー。真の間は observer 経由の自動読み込みを止め、
+   * isLoadingMore を解除する。再取得自体は SWR の自動リトライ
+   * (指数バックオフ)に委ねる — ここで page を進めると失敗ページを
+   * 飛ばした欠落や、失敗リクエストの連打ループになる。
    */
   error?: unknown;
 }
@@ -59,6 +60,10 @@ export function usePaginatedPosts<T extends { id: number }>({
   const [posts, setPosts] = useState<T[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+  // 最後に「取り込みに成功した」ページ。loadMore はこの +1 を要求する。
+  // page prop 基準にすると、取得失敗後の再試行が失敗ページを飛ばして
+  // そのページの投稿が黙って欠落する
+  const lastLoadedPageRef = useRef(-1);
   // reset 後に同一データ (SWR キャッシュヒットで参照が変わらない) が
   // 再適用されるよう、世代カウンタを取り込みの依存に含める
   const [generation, setGeneration] = useState(0);
@@ -75,6 +80,7 @@ export function usePaginatedPosts<T extends { id: number }>({
       ];
     });
     setHasMore(data.hasMore);
+    lastLoadedPageRef.current = page;
     setIsLoadingMore(false);
   }, [data, page, generation]);
 
@@ -89,18 +95,21 @@ export function usePaginatedPosts<T extends { id: number }>({
   const loadMore = useCallback(() => {
     if (!hasMore || isLoadingMore) return;
     setIsLoadingMore(true);
-    onPageChange(page + 1);
-  }, [hasMore, isLoadingMore, onPageChange, page]);
+    onPageChange(lastLoadedPageRef.current + 1);
+  }, [hasMore, isLoadingMore, onPageChange]);
 
   const reset = useCallback(() => {
     setPosts([]);
     setHasMore(false);
     setIsLoadingMore(false);
+    lastLoadedPageRef.current = -1;
     setGeneration((prev) => prev + 1);
   }, []);
 
   const { lastElementRef } = useInfiniteScroll({
-    hasMore,
+    // エラー中は自動読み込みを止める(SWR のリトライ成功で error が消えれば再開)。
+    // 止めないと「解除 → observer 再発火 → 失敗」の連打ループになる
+    hasMore: hasMore && !error,
     isLoading: isLoadingMore,
     onLoadMore: loadMore,
   });
