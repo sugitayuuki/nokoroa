@@ -135,11 +135,13 @@ docker compose exec backend npm run seed
 
 # 5. フロントエンド
 #    .env.local はリポジトリに含めていないため、その場で作ります。
-#    地図を使わないなら NEXT_PUBLIC_GOOGLE_MAPS_API_KEY は空のままでも起動します。
+#    地図を使わないなら NEXT_PUBLIC_GOOGLE_MAPS_API_KEY は空のままで OK
+#    (空ならアプリ側が地図なし表示にフォールバックします。
+#     ダミー文字列を入れると壊れた地図が表示されるので注意)。
 cd ../nokoroa-frontend
 cat > .env.local <<'EOF'
 NEXT_PUBLIC_API_URL=http://localhost:4000
-NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=your-google-maps-api-key
+NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=
 EOF
 npm ci
 npm run dev

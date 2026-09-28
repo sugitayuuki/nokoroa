@@ -130,6 +130,34 @@ resource "aws_lb_listener_rule" "www_redirect" {
   }
 }
 
+# HTTP 側にも同じ www -> apex ルールを置く。
+# 無いと http://www は「80→443(www) → 443 で apex」と 301 が 2 ホップになる。
+resource "aws_lb_listener_rule" "www_redirect_http" {
+  count = var.enable_https && var.apex_domain != "" ? 1 : 0
+
+  listener_arn = aws_lb_listener.http.arn
+  priority     = 10
+
+  action {
+    type = "redirect"
+
+    redirect {
+      host        = var.apex_domain
+      path        = "/#{path}" # #{path} には先頭の "/" が含まれない
+      query       = "#{query}"
+      port        = "443"
+      protocol    = "HTTPS"
+      status_code = "HTTP_301"
+    }
+  }
+
+  condition {
+    host_header {
+      values = ["www.${var.apex_domain}"]
+    }
+  }
+}
+
 # Listener Rule for Backend API
 resource "aws_lb_listener_rule" "backend_api" {
   count = var.enable_https ? 1 : 0

@@ -103,18 +103,22 @@ export default function EditPostPage() {
   const resolveCoordinates = async (
     currentPost: PostData,
     nextLocation: string,
-  ): Promise<{ latitude: number | null; longitude: number | null }> => {
+  ): Promise<{ latitude?: number; longitude?: number }> => {
+    // 座標が確定しない場合は undefined を返してフィールドごと送らない。
+    // null を明示送信すると backend の getOrCreateLocation が
+    // {name, latitude:null, longitude:null} で検索し、同名で座標を持つ
+    // 既存 Location を再利用できず座標なしの重複行を作ってしまう。
     const previousLocation = (currentPost.location ?? '').trim();
 
     if (nextLocation === previousLocation) {
       return {
-        latitude: currentPost.latitude ?? null,
-        longitude: currentPost.longitude ?? null,
+        latitude: currentPost.latitude ?? undefined,
+        longitude: currentPost.longitude ?? undefined,
       };
     }
 
     if (!nextLocation) {
-      return { latitude: null, longitude: null };
+      return {};
     }
 
     try {
@@ -123,7 +127,7 @@ export default function EditPostPage() {
         toast.warn(
           '場所の位置情報が見つかりませんでした（地図には表示されません）',
         );
-        return { latitude: null, longitude: null };
+        return {};
       }
       return {
         latitude: geocoded.latitude,
@@ -131,7 +135,7 @@ export default function EditPostPage() {
       };
     } catch {
       toast.warn('位置情報の取得に失敗しました（地図には表示されません）');
-      return { latitude: null, longitude: null };
+      return {};
     }
   };
 

@@ -55,16 +55,24 @@ const toAuthUser = (raw: unknown): AuthUser | undefined => {
   };
 };
 
-/** プロフィール API からユーザー情報を取得する。取得できない場合は undefined。 */
-const fetchAuthUser = async (): Promise<AuthUser | undefined> => {
+/**
+ * プロフィール API からユーザー情報を取得する。
+ * 「認証が無効(非 2xx / 通信失敗)」と「200 だが形が想定外」を区別して返す。
+ * 後者でトークンを消すと、API 側の一時的な応答形不良だけで強制ログアウトになるため。
+ */
+type FetchAuthUserResult =
+  | { status: 'ok'; user: AuthUser | undefined }
+  | { status: 'invalid' };
+
+const fetchAuthUser = async (): Promise<FetchAuthUserResult> => {
   try {
     const response = await createApiRequest(API_CONFIG.endpoints.userProfile);
     if (!response.ok) {
-      return undefined;
+      return { status: 'invalid' };
     }
-    return toAuthUser(await response.json());
+    return { status: 'ok', user: toAuthUser(await response.json()) };
   } catch {
-    return undefined;
+    return { status: 'invalid' };
   }
 };
 
@@ -85,11 +93,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       // トークンの有効性を確認するため、プロフィールAPIを呼び出し
-      const authUser = await fetchAuthUser();
+      const result = await fetchAuthUser();
 
-      if (authUser) {
+      if (result.status === 'ok') {
+        // 200 なら認証は有効。形が想定外で user が取れなくても認証状態は維持する
         setIsAuthenticated(true);
-        setUser(authUser);
+        setUser(result.user);
       } else {
         // トークンが無効な場合は削除
         removeToken();
@@ -134,7 +143,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // ログイン後、プロフィールAPIを呼び出してユーザー情報を取得。
       // 取得できなければログインレスポンスの user を使い、それも無ければ undefined のままにする。
       // (取得失敗時に偽のユーザーを置くと、他人の名前でログインしたように見えてしまう)
-      setUser((await fetchAuthUser()) ?? toAuthUser(result.user));
+      const fetched = await fetchAuthUser();
+      setUser(
+        (fetched.status === 'ok' ? fetched.user : undefined) ??
+          toAuthUser(result.user),
+      );
 
       setIsAuthenticated(true);
       toast.success('ログインしました');

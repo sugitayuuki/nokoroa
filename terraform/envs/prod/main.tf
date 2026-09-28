@@ -208,7 +208,9 @@ module "s3" {
 
   project_name = var.project_name
   environment  = var.environment
-  # 本番バケットにローカル開発用オリジンは許可しない
+  # 本番バケットにローカル開発用オリジンは許可しない。
+  # www は ALB で apex へ 301 されるため通常到達しないが、リダイレクト設定が
+  # 外れた場合に画像表示まで巻き添えにしない保険として残している。
   allowed_origins               = ["https://${var.app_domain}", "https://www.${var.app_domain}"]
   create_terraform_state_bucket = true
 }

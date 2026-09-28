@@ -424,6 +424,25 @@ describe('PostsService', () => {
         expect(result.location).toBeNull();
       });
 
+      it('location に null を送っても場所の紐付けを外す(編集画面の実運用値)', async () => {
+        // frontend の編集フォームは解除時に '' ではなく null を送る
+        mockPrismaService.post.update.mockResolvedValue({
+          ...mockPost,
+          locationId: null,
+          location: null,
+        });
+
+        const result = await service.update(
+          1,
+          { location: null as unknown as string },
+          1,
+        );
+
+        const [args] = updateMock.mock.calls[0];
+        expect(args.data.locationId).toBeNull();
+        expect(result.location).toBeNull();
+      });
+
       it('location を送らない更新では場所に触れない', async () => {
         mockPrismaService.post.update.mockResolvedValue(mockPost);
 

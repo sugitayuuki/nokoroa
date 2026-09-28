@@ -23,6 +23,8 @@ resource "aws_db_parameter_group" "main" {
   # 永続化するため、(1) ログ量に比例した課金、(2) 書き込み負荷、(3) 個人情報が
   # ログに残る、の 3 点で本番運用に耐えない。スキーマ変更の監査だけを残し、
   # 性能調査は「遅いクエリのみ」に絞る方針へ変更した。
+  # 注意: log_min_duration_statement は遅いクエリの SQL 全文(リテラル込み)を出力するため、
+  # 個人情報の残留は「全クエリ → 1秒以上のクエリのみ」への縮小であって根絶ではない。
   parameter {
     name  = "log_statement"
     value = "ddl"

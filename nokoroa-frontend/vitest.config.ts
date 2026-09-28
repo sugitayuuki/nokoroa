@@ -12,6 +12,6 @@ export default defineConfig({
   test: {
     // 対象は純ロジックのみ。DOM を触るテストは含めないため node で足りる
     environment: 'node',
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.{ts,tsx}'],
   },
 });

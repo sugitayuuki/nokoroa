@@ -7,6 +7,8 @@ import request from 'supertest';
 
 import {
   MAX_PAGE_LIMIT,
+  MAX_PAGE_NUMBER,
+  MAX_PAGE_OFFSET,
   OffsetPaginationDto,
   PagePaginationDto,
 } from './pagination.dto';
@@ -106,6 +108,46 @@ describe('PagePaginationDto (follows)', () => {
         .errors.length,
     ).toBeGreaterThan(0);
   });
+
+  it('巨大な page / offset は 64bit 超過で Prisma 500 になる前に弾く', () => {
+    // Number.isInteger は 1e20 でも true を返すため @Max が無いと素通りする
+    expect(
+      parseQuery(PagePaginationDto, { page: '99999999999999999999999' }).errors
+        .length,
+    ).toBeGreaterThan(0);
+    expect(
+      parseQuery(OffsetPaginationDto, { offset: '99999999999999999999999' })
+        .errors.length,
+    ).toBeGreaterThan(0);
+    // 上限ちょうどは通す
+    expect(
+      parseQuery(PagePaginationDto, { page: String(MAX_PAGE_NUMBER) }).errors,
+    ).toHaveLength(0);
+    expect(
+      parseQuery(OffsetPaginationDto, { offset: String(MAX_PAGE_OFFSET) })
+        .errors,
+    ).toHaveLength(0);
+  });
+
+  it('空文字クエリ(?limit=)は旧実装と同じく既定値へフォールバックする', () => {
+    const offset = parseQuery(OffsetPaginationDto, { limit: '', offset: '' });
+    expect(offset.errors).toHaveLength(0);
+    expect(offset.dto.limit).toBe(10);
+    expect(offset.dto.offset).toBe(0);
+
+    const page = parseQuery(PagePaginationDto, { page: '', limit: '' });
+    expect(page.errors).toHaveLength(0);
+    expect(page.dto.page).toBe(1);
+    expect(page.dto.limit).toBe(20);
+  });
+
+  it('重複指定(?limit=10&limit=20 → 配列)は 400 にせず既定値へ倒す', () => {
+    const { dto, errors } = parseQuery(PagePaginationDto, {
+      limit: ['10', '20'],
+    });
+    expect(errors).toHaveLength(0);
+    expect(dto.limit).toBe(20);
+  });
 });
 
 // DTO 単体ではなく、main.ts と同じ ValidationPipe を通した実際の HTTP 応答まで
@@ -177,5 +219,11 @@ describe('FollowsController のページネーション (HTTP)', () => {
       .expect(200);
 
     expect(mockFollowsService.getFollowers).toHaveBeenCalledWith(1, 2, 30);
+  });
+
+  it('空値クエリ(?page=&limit=)は旧実装と同じく 200 + 既定値で通る', async () => {
+    await request(server).get('/follows/1/followers?page=&limit=').expect(200);
+
+    expect(mockFollowsService.getFollowers).toHaveBeenCalledWith(1, 1, 20);
   });
 });

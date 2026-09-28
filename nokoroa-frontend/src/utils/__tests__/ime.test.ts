@@ -82,9 +82,8 @@ describe('isComposingEvent', () => {
   });
 
   it('nativeEvent に isComposing / keyCode が無い環境でも変換中とは判定しない', () => {
-    // 戻り値型は boolean だが、isComposing が欠けた実装では undefined が返る。
-    // 「送信をブロックしない」ことだけが保証される点を明示しておく
+    // undefined || false || false は最後のオペランドに短絡するため false が返る
     const event = { key: 'Enter', nativeEvent: {} } as unknown as KeyboardEvent;
-    expect(isComposingEvent(event)).toBeFalsy();
+    expect(isComposingEvent(event)).toBe(false);
   });
 });

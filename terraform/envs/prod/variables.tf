@@ -17,7 +17,10 @@ variable "project_name" {
 }
 
 variable "app_domain" {
-  description = "Public apex domain (Route 53 hosted zone / ACM certificate / application URLs)"
+  # 注意: frontend バンドルが叩く API オリジンはビルド時に焼き込まれる
+  # (.github/workflows/deploy.yml と ci.yml の NEXT_PUBLIC_API_URL)。
+  # このドメインを変更する場合は両ワークフローの値も併せて変更すること。
+  description = "Public apex domain (Route 53 hosted zone / ACM certificate / application URLs). Changing this also requires updating NEXT_PUBLIC_API_URL in .github/workflows/{deploy,ci}.yml"
   type        = string
   default     = "nokoroa.com"
 }

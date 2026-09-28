@@ -126,7 +126,7 @@ describe('API_CONFIG.endpoints', () => {
     expect(endpoints.userFollowers('3')).not.toBe(endpoints.followers('3'));
   });
 
-  it('空の ID でもパス区切りを壊さない', () => {
+  it('空の ID では不正なパスになる(呼び出し側で弾く必要がある既知の性質)', () => {
     expect(endpoints.postById('')).toBe('/posts/');
     expect(endpoints.followStats('')).toBe('/follows//stats');
   });

@@ -146,6 +146,8 @@ jobs:
           # NEXT_PUBLIC_* は Next.js がビルド時にバンドルへ埋め込むため、
           # ECS のランタイム env では上書きできない。値の指定はここに一本化している
           # （Terraform 側のタスク定義には意図的に持たせていない）。
+          # terraform の app_domain を変更する場合はこの値も併せて変更すること
+          # (ci.yml の build ジョブにも同じ値がある)
           build-args: |
             NEXT_PUBLIC_API_URL=https://nokoroa.com
             NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=${{ secrets.GOOGLE_MAPS_API_KEY }}
