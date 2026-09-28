@@ -1,29 +1,15 @@
 'use client';
 
 import { Box, CircularProgress, Typography } from '@mui/material';
-import { useRouter } from 'next/navigation';
-import { useEffect } from 'react';
 
 import ProfileEditForm from '@/components/profile/ProfileEditForm';
-import { useAuth } from '@/providers/AuthProvider';
+import { useRequireAuth } from '@/hooks/useRequireAuth';
 
 export default function ProfileEditPage() {
-  const router = useRouter();
-  const { isAuthenticated, isLoading: authLoading } = useAuth();
+  const { isAuthLoading, isReady } = useRequireAuth();
 
-  useEffect(() => {
-    if (!authLoading && !isAuthenticated) {
-      router.push('/login');
-    }
-  }, [authLoading, isAuthenticated, router]);
-
-  // 認証されていない場合は即座にnullを返す
-  if (!isAuthenticated) {
-    return null;
-  }
-
-  if (authLoading) {
-    return (
+  if (!isReady) {
+    return isAuthLoading ? (
       <Box
         sx={{
           display: 'flex',
@@ -34,7 +20,7 @@ export default function ProfileEditPage() {
       >
         <CircularProgress />
       </Box>
-    );
+    ) : null;
   }
 
   return (

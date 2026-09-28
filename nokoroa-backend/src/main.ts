@@ -1,5 +1,5 @@
 import { join } from 'path';
-import { Logger, ValidationPipe } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import { HttpAdapterHost, NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
@@ -8,6 +8,7 @@ import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { assertKnownEnv, isDevelopmentEnv } from './common/environment';
 import { PrismaExceptionFilter } from './common/prisma-exception.filter';
+import { createValidationPipe } from './common/validation';
 
 async function bootstrap() {
   // NODE_ENV の打ち間違いは「無言で防御が緩む」形で効くため、起動前に弾く
@@ -59,13 +60,7 @@ async function bootstrap() {
     SwaggerModule.setup('api/docs', app, document);
   }
 
-  app.useGlobalPipes(
-    new ValidationPipe({
-      transform: true,
-      whitelist: true,
-      forbidNonWhitelisted: true,
-    }),
-  );
+  app.useGlobalPipes(createValidationPipe());
 
   const { httpAdapter } = app.get(HttpAdapterHost);
   app.useGlobalFilters(new PrismaExceptionFilter(httpAdapter));

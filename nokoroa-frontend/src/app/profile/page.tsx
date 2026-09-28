@@ -15,30 +15,22 @@ import {
   useTheme,
 } from '@mui/material';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
 import { MyPostList } from '@/components/post/MyPostCard';
+import { useRequireAuth } from '@/hooks/useRequireAuth';
 import { useUser } from '@/hooks/useUser';
-import { useAuth } from '@/providers/AuthProvider';
 import { PostData } from '@/types/post';
 
 import ProfileCard from './components/ProfileCard';
 
 export default function ProfilePage() {
-  const router = useRouter();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
-  const { isAuthenticated, isLoading: authLoading } = useAuth();
+  const { isAuthLoading, isReady } = useRequireAuth();
   const { user, isLoading, error, refetch } = useUser();
   const [activeTab, setActiveTab] = useState(0);
   const [localPosts, setLocalPosts] = useState<PostData[]>([]);
-
-  useEffect(() => {
-    if (!authLoading && !isAuthenticated) {
-      router.push('/login');
-    }
-  }, [authLoading, isAuthenticated, router]);
 
   // user.postsが更新されたら、localPostsも更新
   useEffect(() => {
@@ -77,12 +69,11 @@ export default function ProfilePage() {
     );
   };
 
-  // 認証されていない場合は即座にnullを返す
-  if (!isAuthenticated) {
+  if (!isReady && !isAuthLoading) {
     return null;
   }
 
-  if (authLoading || isLoading) {
+  if (isAuthLoading || isLoading) {
     return (
       <Box
         sx={{

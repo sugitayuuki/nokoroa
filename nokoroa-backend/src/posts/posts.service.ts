@@ -5,7 +5,6 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { publicAuthorSelect } from '../common/public-author.select';
 import {
   EmbeddingsService,
   SimilarPostHit,
@@ -16,6 +15,7 @@ import { SearchPostsByLocationDto } from './dto/search-posts-by-location.dto';
 import { SearchPostsSemanticDto } from './dto/search-posts-semantic.dto';
 import { SearchPostsDto } from './dto/search-posts.dto';
 import { UpdatePostDto } from './dto/update-post.dto';
+import { formatPost, postInclude } from './post-format';
 
 const MAX_PAGE_SIZE = 50;
 
@@ -36,37 +36,6 @@ function slugify(text: string): string {
     .replace(/[^\w\s-]/g, '')
     .replace(/[\s_-]+/g, '-')
     .replace(/^-+|-+$/g, '');
-}
-
-const postInclude = {
-  author: {
-    select: publicAuthorSelect,
-  },
-  location: true,
-  postTags: {
-    include: {
-      tag: true,
-    },
-  },
-} satisfies Prisma.PostInclude;
-
-// 手書きすると schema.prisma の変更に追随できず、実体と食い違ったまま
-// キャストで通ってしまう。include から導出して常に一致させる。
-type PostWithRelations = Prisma.PostGetPayload<{ include: typeof postInclude }>;
-
-/** PostsService が外部に返す投稿の形。呼び出し側が再定義せずに済むよう公開する */
-export type FormattedPost = ReturnType<typeof formatPost>;
-
-function formatPost(post: PostWithRelations) {
-  return {
-    ...post,
-    tags: post.postTags.map((pt) => pt.tag.name),
-    // ?? を使う。|| だと緯度0(赤道)・経度0(本初子午線)・空文字が null に潰れる
-    location: post.location?.name ?? null,
-    latitude: post.location?.latitude ?? null,
-    longitude: post.location?.longitude ?? null,
-    prefecture: post.location?.prefecture ?? null,
-  };
 }
 
 @Injectable()
@@ -106,8 +75,11 @@ export class PostsService {
 
   private async getOrCreateLocation(
     locationName: string,
-    latitude?: number,
-    longitude?: number,
+    // null は「座標なしの行に一致させる」明示値(Prisma は null を IS NULL に落とす)。
+    // undefined は「名前のみで検索」。この区別を !== undefined 判定が担っているため、
+    // != null に「整理」してはいけない(null 明示のケースが名前のみ一致に化ける)
+    latitude?: number | null,
+    longitude?: number | null,
     prefecture?: string,
   ) {
     const whereClause = {
@@ -396,7 +368,9 @@ export class PostsService {
       ...postData
     } = updatePostDto;
 
-    let locationId: number | undefined;
+    // undefined は「場所を触らない」、空文字は「場所を外す」。
+    // 空文字を undefined に潰すと、一度設定した場所を二度と外せなくなる。
+    let locationId: number | null | undefined;
     if (locationName !== undefined) {
       if (locationName) {
         const location = await this.getOrCreateLocation(
@@ -407,7 +381,7 @@ export class PostsService {
         );
         locationId = location.id;
       } else {
-        locationId = undefined;
+        locationId = null;
       }
     }
 
@@ -635,18 +609,20 @@ export class PostsService {
       },
     });
 
+    // total は返した件数と一致させる。フィルタ前の件数を返すと
+    // 投稿0件の location の分だけ水増しされ、getTags と挙動も食い違う。
+    const filteredLocations = locations.filter((loc) => loc._count.posts > 0);
+
     return {
-      locations: locations
-        .filter((loc) => loc._count.posts > 0)
-        .map((loc) => ({
-          id: loc.id,
-          name: loc.name,
-          prefecture: loc.prefecture,
-          latitude: loc.latitude,
-          longitude: loc.longitude,
-          count: loc._count.posts,
-        })),
-      total: locations.length,
+      locations: filteredLocations.map((loc) => ({
+        id: loc.id,
+        name: loc.name,
+        prefecture: loc.prefecture,
+        latitude: loc.latitude,
+        longitude: loc.longitude,
+        count: loc._count.posts,
+      })),
+      total: filteredLocations.length,
     };
   }
 }

@@ -31,9 +31,12 @@ import React, { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 
 import { LazyImage } from '@/components/common/LazyImage';
+import { GRID_LAYOUT } from '@/constants/theme';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useUser } from '@/hooks/useUser';
 import { API_CONFIG, createApiRequest } from '@/lib/apiConfig';
+import { useAuth } from '@/providers/AuthProvider';
+import { getToken } from '@/utils/auth';
 import { formatDistanceToNow } from '@/utils/dateFormat';
 import { getTagColor } from '@/utils/tagColors';
 
@@ -59,7 +62,12 @@ const MyPostCard = ({
   onDelete?: (postId: number) => void;
 }) => {
   const router = useRouter();
-  const { user } = useUser();
+  // 認証セッションの本人情報はアプリ全体で 1 回だけ取得済み。
+  // ログイン直後の取得失敗等で authUser が無いときだけ useUser() に
+  // フォールバックする(SWR キャッシュ共有のため N+1 にはならない)。
+  const { user: authUser } = useAuth();
+  const { user: profileUser } = useUser();
+  const user = authUser ?? profileUser;
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [visibilityMenuAnchor, setVisibilityMenuAnchor] =
     useState<null | HTMLElement>(null);
@@ -122,9 +130,7 @@ const MyPostCard = ({
 
   const handleVisibilityChange = async (isPublic: boolean) => {
     try {
-      const token = localStorage.getItem('jwt');
-
-      if (!token) {
+      if (!getToken()) {
         // 認証トークンが見つからない場合の処理
         toast.error('ログインが必要です');
         return;
@@ -432,13 +438,7 @@ export const MyPostList = ({
     <Box
       sx={{
         display: 'grid',
-        gridTemplateColumns: {
-          xs: '1fr',
-          sm: 'repeat(2, 1fr)',
-          md: 'repeat(3, 1fr)',
-          lg: 'repeat(3, 1fr)',
-          xl: 'repeat(3, 1fr)',
-        },
+        gridTemplateColumns: GRID_LAYOUT,
         gap: { xs: 2, sm: 3, md: 4 },
         maxWidth: '1400px',
         mx: 'auto',

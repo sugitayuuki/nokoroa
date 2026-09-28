@@ -13,15 +13,13 @@ import {
   Typography,
 } from '@mui/material';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
 import { useChangePassword } from '@/hooks/useChangePassword';
-import { useAuth } from '@/providers/AuthProvider';
+import { useRequireAuth } from '@/hooks/useRequireAuth';
 
 export default function ChangePasswordPage() {
-  const router = useRouter();
-  const { isAuthenticated, isLoading: authLoading } = useAuth();
+  const { isAuthLoading, isReady } = useRequireAuth();
   const { changePassword, isLoading, error, success } = useChangePassword();
 
   const [formData, setFormData] = useState({
@@ -32,14 +30,8 @@ export default function ChangePasswordPage() {
 
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
-  // 認証チェック
-  if (!authLoading && !isAuthenticated) {
-    router.push('/login');
-    return null;
-  }
-
-  if (authLoading) {
-    return (
+  if (!isReady) {
+    return isAuthLoading ? (
       <Box
         sx={{
           display: 'flex',
@@ -50,7 +42,7 @@ export default function ChangePasswordPage() {
       >
         <CircularProgress />
       </Box>
-    );
+    ) : null;
   }
 
   const validateForm = () => {

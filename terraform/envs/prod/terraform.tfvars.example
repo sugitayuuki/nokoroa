@@ -1,3 +1,7 @@
+# Public domain (Route 53 hosted zone / ACM / application URLs)
+# 既定値は nokoroa.com。別ドメインで立てる場合のみ指定する。
+# app_domain = "nokoroa.com"
+
 # Docker Images (ECR URLs)
 backend_image  = "YOUR_AWS_ACCOUNT_ID.dkr.ecr.ap-northeast-1.amazonaws.com/nokoroa-backend:latest"
 frontend_image = "YOUR_AWS_ACCOUNT_ID.dkr.ecr.ap-northeast-1.amazonaws.com/nokoroa-frontend:latest"

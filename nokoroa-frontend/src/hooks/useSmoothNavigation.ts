@@ -17,12 +17,10 @@ export function useSmoothNavigation() {
         return;
       }
 
+      // プログレスバーを出してから即座に遷移する
+      // (遷移完了時に NavigationProvider が pathname 変化で false に戻す)
       setIsNavigating(true);
-
-      // 少し遅延を加えてからナビゲーション実行
-      setTimeout(() => {
-        router.push(href, { scroll: options?.scroll ?? false });
-      }, 100);
+      router.push(href, { scroll: options?.scroll ?? false });
     },
     [router, pathname, setIsNavigating],
   );
@@ -35,20 +33,14 @@ export function useSmoothNavigation() {
       }
 
       setIsNavigating(true);
-
-      setTimeout(() => {
-        router.replace(href, { scroll: options?.scroll ?? false });
-      }, 100);
+      router.replace(href, { scroll: options?.scroll ?? false });
     },
     [router, pathname, setIsNavigating],
   );
 
   const back = useCallback(() => {
     setIsNavigating(true);
-
-    setTimeout(() => {
-      router.back();
-    }, 100);
+    router.back();
   }, [router, setIsNavigating]);
 
   // スクロールを有効にして遷移するヘルパー関数

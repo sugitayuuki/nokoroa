@@ -1,30 +1,19 @@
 'use client';
 
-import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
-import LocationOnIcon from '@mui/icons-material/LocationOn';
 import {
   Alert,
-  Avatar,
   Box,
-  Card,
-  CardContent,
-  CardMedia,
-  Chip,
   CircularProgress,
   Divider,
-  Stack,
   Typography,
 } from '@mui/material';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 
-import { formatDistanceToNow } from '@/utils/dateFormat';
-import { getTagColor } from '@/utils/tagColors';
+import PostCard from '@/components/post/PostCard';
+import { GRID_LAYOUT } from '@/constants/theme';
 
 import { useInfiniteScroll } from '../../hooks/useInfiniteScroll';
 import { SearchFetchError } from '../../hooks/useSearchPosts';
-import { Post, SearchMode, SearchResponse } from '../../types/search';
-import BookmarkButton from '../bookmarks/BookmarkButton';
+import { SearchMode, SearchResponse } from '../../types/search';
 
 interface SearchResultsProps {
   data?: SearchResponse;
@@ -36,169 +25,6 @@ interface SearchResultsProps {
   onLoadMore: () => void;
   mode?: SearchMode;
 }
-
-const SearchPostCard = ({ post }: { post: Post }) => {
-  const router = useRouter();
-  return (
-    <Box>
-      <Card
-        component={Link}
-        href={`/posts/${post.id}`}
-        sx={{
-          height: '100%',
-          display: 'flex',
-          flexDirection: 'column',
-          borderRadius: 2,
-          overflow: 'hidden',
-          minWidth: 320,
-          maxWidth: 400,
-          mx: 'auto',
-          transition: 'transform 0.2s, box-shadow 0.2s',
-          textDecoration: 'none',
-          color: 'inherit',
-          cursor: 'pointer',
-          '&:hover': {
-            transform: 'translateY(-4px)',
-            boxShadow: '0 8px 16px rgba(0, 0, 0, 0.1)',
-          },
-        }}
-      >
-        <Box sx={{ position: 'relative' }}>
-          <CardMedia
-            component="img"
-            height="280"
-            image={post.imageUrl || '/top.jpg'}
-            alt={post.title}
-          />
-          {typeof post.similarity === 'number' && (
-            <Chip
-              icon={<AutoAwesomeIcon fontSize="small" />}
-              label={`類似度 ${Math.round(post.similarity * 100)}%`}
-              size="small"
-              sx={{
-                position: 'absolute',
-                top: 8,
-                right: 8,
-                bgcolor:
-                  post.similarity >= 0.3
-                    ? 'rgba(255, 152, 0, 0.95)'
-                    : 'rgba(120, 120, 120, 0.85)',
-                color: '#fff',
-                fontWeight: 600,
-              }}
-            />
-          )}
-        </Box>
-        <CardContent sx={{ flexGrow: 1, bgcolor: 'background.paper' }}>
-          <Stack spacing={2}>
-            <Box>
-              <Typography
-                variant="h6"
-                component="h2"
-                gutterBottom
-                sx={{
-                  fontWeight: 600,
-                  color: 'text.primary',
-                }}
-              >
-                {post.title}
-              </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                {formatDistanceToNow(post.createdAt)}
-              </Typography>
-            </Box>
-
-            <Typography
-              variant="body2"
-              color="text.secondary"
-              sx={{
-                display: '-webkit-box',
-                WebkitLineClamp: 3,
-                WebkitBoxOrient: 'vertical',
-                overflow: 'hidden',
-              }}
-            >
-              {post.content}
-            </Typography>
-
-            <Stack
-              direction="row"
-              spacing={1}
-              sx={{ flexWrap: 'wrap', gap: 1 }}
-            >
-              {post.location && (
-                <Chip
-                  icon={<LocationOnIcon />}
-                  label={post.location}
-                  size="small"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                  }}
-                  sx={{
-                    bgcolor: 'primary.light',
-                    color: 'primary.contrastText',
-                    cursor: 'default',
-                  }}
-                />
-              )}
-              {(post.tags || []).map((tag, index) => (
-                <Chip
-                  key={index}
-                  label={tag.startsWith('#') ? tag : `#${tag}`}
-                  size="small"
-                  onClick={() =>
-                    router.push(`/search?tags=${encodeURIComponent(tag)}`)
-                  }
-                  sx={{
-                    backgroundColor: getTagColor(tag),
-                    color: '#fff',
-                    fontWeight: 500,
-                    cursor: 'pointer',
-                    '&:hover': {
-                      backgroundColor: getTagColor(tag),
-                      filter: 'brightness(0.9)',
-                    },
-                  }}
-                />
-              ))}
-            </Stack>
-
-            <Box
-              sx={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                pt: 1,
-              }}
-            >
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <Avatar
-                  src={post.author.avatar || undefined}
-                  sx={{ width: 32, height: 32 }}
-                >
-                  {!post.author.avatar && post.author.name?.charAt(0)}
-                </Avatar>
-                <Typography variant="body2" color="text.secondary">
-                  {post.author.name}
-                </Typography>
-              </Box>
-              <Box onClick={(e) => e.stopPropagation()}>
-                <BookmarkButton
-                  postId={post.id}
-                  initialBookmarkCount={
-                    post.favoritesCount || post._count?.favorites || 0
-                  }
-                  size="small"
-                />
-              </Box>
-            </Box>
-          </Stack>
-        </CardContent>
-      </Card>
-    </Box>
-  );
-};
 
 export const SearchResults = ({
   data,
@@ -291,13 +117,7 @@ export const SearchResults = ({
       <Box
         sx={{
           display: 'grid',
-          gridTemplateColumns: {
-            xs: '1fr',
-            sm: 'repeat(2, 1fr)',
-            md: 'repeat(3, 1fr)',
-            lg: 'repeat(3, 1fr)',
-            xl: 'repeat(3, 1fr)',
-          },
+          gridTemplateColumns: GRID_LAYOUT,
           gap: 4,
           maxWidth: '1400px',
           mx: 'auto',
@@ -308,7 +128,7 @@ export const SearchResults = ({
             key={post.id}
             ref={index === data.posts.length - 1 ? lastElementRef : null}
           >
-            <SearchPostCard post={post} />
+            <PostCard post={post} />
           </div>
         ))}
       </Box>

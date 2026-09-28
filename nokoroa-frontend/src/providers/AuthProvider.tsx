@@ -1,18 +1,40 @@
 'use client';
 
-import { createContext, useContext, useEffect, useState } from 'react';
+import { usePathname } from 'next/navigation';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
 import { toast } from 'react-toastify';
 import { mutate } from 'swr';
 
 import { useSmoothNavigation } from '@/hooks/useSmoothNavigation';
 import { API_CONFIG, createApiRequest } from '@/lib/apiConfig';
-import { getToken } from '@/utils/auth';
+import { getToken, removeToken, setToken } from '@/utils/auth';
+
+/**
+ * 認証セッションの本人情報。
+ * ヘッダー等の「ログイン中は誰か」の表示に使う最小限の項目のみを持つ。
+ * bio や投稿数まで含むプロフィール全体が必要な画面は useUser() を使うこと
+ * (プロフィール情報の正は API = useUser 側であり、ここはその部分集合)。
+ */
+type AuthUser = {
+  id: number;
+  name: string;
+  email: string;
+  avatar?: string;
+};
 
 type AuthContextType = {
   isAuthenticated: boolean;
   isLoading: boolean;
-  loading?: boolean; // 互換性のため追加
-  user?: { id: number; name: string; email: string; avatar?: string };
+  /** 意図的なログアウト遷移中。useRequireAuth が /login への割り込みを抑止するために見る */
+  isLoggingOut: boolean;
+  user?: AuthUser;
   login: (email: string, password: string) => Promise<boolean>;
   logout: () => void;
   register: (name: string, email: string, password: string) => Promise<boolean>;
@@ -20,51 +42,86 @@ type AuthContextType = {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+/**
+ * API レスポンスから認証ユーザーを組み立てる。
+ * 必須項目が欠けている場合は undefined を返し、偽のユーザーを作らない。
+ */
+const toAuthUser = (raw: unknown): AuthUser | undefined => {
+  if (!raw || typeof raw !== 'object') {
+    return undefined;
+  }
+  const { id, name, email, avatar } = raw as Record<string, unknown>;
+  if (typeof id !== 'number' || typeof name !== 'string' || !name) {
+    return undefined;
+  }
+  if (typeof email !== 'string' || !email) {
+    return undefined;
+  }
+  return {
+    id,
+    name,
+    email,
+    avatar: typeof avatar === 'string' ? avatar : undefined,
+  };
+};
+
+type FetchAuthUserResult =
+  | { status: 'ok'; user: AuthUser | undefined }
+  | { status: 'invalid' };
+
+/**
+ * プロフィール API からユーザー情報を取得する。
+ * 「認証が無効(非 2xx / 通信失敗)」と「200 だが形が想定外」を区別して返す。
+ * 後者でトークンを消すと、API 側の一時的な応答形不良だけで強制ログアウトになるため。
+ */
+const fetchAuthUser = async (): Promise<FetchAuthUserResult> => {
+  try {
+    const response = await createApiRequest(API_CONFIG.endpoints.userProfile);
+    if (!response.ok) {
+      return { status: 'invalid' };
+    }
+    return { status: 'ok', user: toAuthUser(await response.json()) };
+  } catch {
+    return { status: 'invalid' };
+  }
+};
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  const [user, setUser] = useState<{
-    id: number;
-    name: string;
-    email: string;
-    avatar?: string;
-  }>();
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [user, setUser] = useState<AuthUser>();
 
-  const navigation = useSmoothNavigation();
+  // 戻り値オブジェクトは毎レンダー新しいため、useCallback 済みの push だけを
+  // 分解して依存する(オブジェクトごと依存すると下の useMemo が毎回無効化される)
+  const { push: navigatePush } = useSmoothNavigation();
+  const pathname = usePathname();
+
+  // ログアウトの push('/') が完了(パス変化)したらフラグを戻す。
+  // 戻し忘れると、ログアウト後に保護ページを直接開いたときのリダイレクトまで抑止してしまう
+  useEffect(() => {
+    setIsLoggingOut(false);
+  }, [pathname]);
 
   useEffect(() => {
     const validateToken = async () => {
-      const token = getToken();
+      if (!getToken()) {
+        setIsAuthenticated(false);
+        setUser(undefined);
+        setIsLoading(false);
+        return;
+      }
 
-      if (token) {
-        try {
-          // トークンの有効性を確認するため、プロフィールAPIを呼び出し
-          const response = await createApiRequest(
-            API_CONFIG.endpoints.userProfile,
-          );
+      // トークンの有効性を確認するため、プロフィールAPIを呼び出し
+      const result = await fetchAuthUser();
 
-          if (response.ok) {
-            const userData = await response.json();
-            setIsAuthenticated(true);
-            setUser({
-              id: userData.id,
-              name: userData.name,
-              email: userData.email,
-              avatar: userData.avatar,
-            });
-          } else {
-            // トークンが無効な場合は削除
-            localStorage.removeItem('jwt');
-            setIsAuthenticated(false);
-            setUser(undefined);
-          }
-        } catch {
-          // トークン検証でエラーが発生した場合の処理
-          localStorage.removeItem('jwt');
-          setIsAuthenticated(false);
-          setUser(undefined);
-        }
+      if (result.status === 'ok') {
+        // 200 なら認証は有効。形が想定外で user が取れなくても認証状態は維持する
+        setIsAuthenticated(true);
+        setUser(result.user);
       } else {
+        // トークンが無効な場合は削除
+        removeToken();
         setIsAuthenticated(false);
         setUser(undefined);
       }
@@ -74,90 +131,69 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     validateToken();
   }, []);
 
-  const login = async (email: string, password: string): Promise<boolean> => {
-    try {
-      const response = await createApiRequest(API_CONFIG.endpoints.login, {
-        method: 'POST',
-        body: JSON.stringify({ email, password }),
-      });
-
-      if (!response.ok) {
-        toast.error(
-          'ログインに失敗しました。メールアドレスとパスワードを確認してください。',
-        );
-        return false;
-      }
-
-      const result = await response.json();
-
-      // access_token または token のいずれかを使用
-      const token = result.access_token || result.token;
-      if (!token) {
-        toast.error('認証トークンが取得できませんでした。');
-        return false;
-      }
-
-      // トークン失効などで logout を経ずにユーザーが切り替わる場合があるため、
-      // ログイン時にも前のユーザーのキャッシュを破棄する。
-      void mutate(() => true, undefined, { revalidate: false });
-
-      localStorage.setItem('jwt', token);
-
-      // ログイン後、プロフィールAPIを呼び出してユーザー情報を取得
+  const login = useCallback(
+    async (email: string, password: string): Promise<boolean> => {
       try {
-        const profileResponse = await createApiRequest(
-          API_CONFIG.endpoints.userProfile,
+        const response = await createApiRequest(API_CONFIG.endpoints.login, {
+          method: 'POST',
+          body: JSON.stringify({ email, password }),
+        });
+
+        if (!response.ok) {
+          toast.error(
+            'ログインに失敗しました。メールアドレスとパスワードを確認してください。',
+          );
+          return false;
+        }
+
+        const result = await response.json();
+
+        // access_token または token のいずれかを使用
+        const token = result.access_token || result.token;
+        if (!token) {
+          toast.error('認証トークンが取得できませんでした。');
+          return false;
+        }
+
+        // トークン失効などで logout を経ずにユーザーが切り替わる場合があるため、
+        // ログイン時にも前のユーザーのキャッシュを破棄する。
+        void mutate(() => true, undefined, { revalidate: false });
+
+        setToken(token);
+
+        // ログイン後、プロフィールAPIを呼び出してユーザー情報を取得。
+        // 取得できなければログインレスポンスの user を使い、それも無ければ undefined のままにする。
+        // (取得失敗時に偽のユーザーを置くと、他人の名前でログインしたように見えてしまう)
+        const fetched = await fetchAuthUser();
+        setUser(
+          (fetched.status === 'ok' ? fetched.user : undefined) ??
+            toAuthUser(result.user),
         );
 
-        if (profileResponse.ok) {
-          const userData = await profileResponse.json();
-          setUser({
-            id: userData.id,
-            name: userData.name,
-            email: userData.email,
-            avatar: userData.avatar,
-          });
-        } else {
-          // プロフィール取得に失敗した場合はログインレスポンスから設定
-          if (result.user) {
-            setUser({
-              id: result.user.id,
-              name: result.user.name,
-              email: result.user.email,
-              avatar: result.user.avatar,
-            });
-          } else {
-            setUser({ id: 1, name: 'User', email });
-          }
-        }
+        setIsAuthenticated(true);
+        toast.success('ログインしました');
+        return true;
       } catch {
-        // プロフィール取得でエラーが発生した場合の処理
-        // フォールバック
-        if (result.user) {
-          setUser({
-            id: result.user.id,
-            name: result.user.name,
-            email: result.user.email,
-          });
-        } else {
-          setUser({ id: 1, name: 'User', email });
-        }
+        // ログインでエラーが発生した場合の処理
+        toast.error(
+          'ログインに失敗しました。ネットワーク接続を確認してください。',
+        );
+        return false;
       }
+    },
+    [],
+  );
 
-      setIsAuthenticated(true);
-      toast.success('ログインしました');
-      return true;
-    } catch {
-      // ログインでエラーが発生した場合の処理
-      toast.error(
-        'ログインに失敗しました。ネットワーク接続を確認してください。',
-      );
-      return false;
+  const logout = useCallback(() => {
+    // 認証状態を落とすと保護ページのガードが /login へ replace しようとするため、
+    // 「意図的なログアウト」であることを先に立てて push('/') を勝たせる
+    // (旧実装は全遷移に入っていた 100ms 遅延のおかげで偶然 '/' が勝っていた)。
+    // すでに '/' に居る場合は push が遷移しない=パス変化のリセットが走らないため、
+    // フラグ自体を立てない(保護ページ上ではないのでガード抑止も不要)
+    if (pathname !== '/') {
+      setIsLoggingOut(true);
     }
-  };
-
-  const logout = () => {
-    localStorage.removeItem('jwt');
+    removeToken();
     setIsAuthenticated(false);
     setUser(undefined);
 
@@ -167,62 +203,63 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     void mutate(() => true, undefined, { revalidate: false });
 
     // 即座にホームページにリダイレクト
-    navigation.push('/');
+    navigatePush('/');
 
     // トーストは少し遅らせて表示
     setTimeout(() => {
       toast.info('ログアウトしました');
     }, 100);
-  };
+  }, [pathname, navigatePush]);
 
-  const register = async (
-    name: string,
-    email: string,
-    password: string,
-  ): Promise<boolean> => {
-    try {
-      const response = await createApiRequest(API_CONFIG.endpoints.signup, {
-        method: 'POST',
-        body: JSON.stringify({ name, email, password }),
-      });
+  const register = useCallback(
+    async (name: string, email: string, password: string): Promise<boolean> => {
+      try {
+        const response = await createApiRequest(API_CONFIG.endpoints.signup, {
+          method: 'POST',
+          body: JSON.stringify({ name, email, password }),
+        });
 
-      if (!response.ok) {
+        if (!response.ok) {
+          toast.error(
+            'アカウント作成に失敗しました。入力内容を確認してください。',
+          );
+          return false;
+        }
+
+        // 新規登録成功後、自動的にログイン
+        const loginSuccess = await login(email, password);
+        if (loginSuccess) {
+          toast.success('アカウントを作成しました！');
+          return true;
+        }
+        return false;
+      } catch {
         toast.error(
-          'アカウント作成に失敗しました。入力内容を確認してください。',
+          'アカウント作成に失敗しました。ネットワーク接続を確認してください。',
         );
         return false;
       }
-
-      // 新規登録成功後、自動的にログイン
-      const loginSuccess = await login(email, password);
-      if (loginSuccess) {
-        toast.success('アカウントを作成しました！');
-        return true;
-      }
-      return false;
-    } catch {
-      toast.error(
-        'アカウント作成に失敗しました。ネットワーク接続を確認してください。',
-      );
-      return false;
-    }
-  };
-
-  return (
-    <AuthContext.Provider
-      value={{
-        isAuthenticated,
-        isLoading,
-        loading: isLoading, // 互換性のため追加
-        user,
-        login,
-        logout,
-        register,
-      }}
-    >
-      {children}
-    </AuthContext.Provider>
+    },
+    [login],
   );
+
+  // usePathname の追加で AuthProvider は全ルート遷移ごとに再レンダーされる。
+  // value をメモ化しないと参照が毎回変わり、useAuth() の全消費者が
+  // 遷移のたびに再レンダーされてしまう
+  const value = useMemo(
+    () => ({
+      isAuthenticated,
+      isLoading,
+      isLoggingOut,
+      user,
+      login,
+      logout,
+      register,
+    }),
+    [isAuthenticated, isLoading, isLoggingOut, user, login, logout, register],
+  );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {

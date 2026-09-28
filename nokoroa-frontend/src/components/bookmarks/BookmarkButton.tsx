@@ -18,6 +18,12 @@ interface BookmarkButtonProps {
   initialBookmarkCount?: number;
   size?: 'small' | 'medium' | 'large';
   showCount?: boolean;
+  /**
+   * 親が既にブックマーク状態を知っている場合に渡す。
+   * 渡された場合は状態問い合わせ API を呼ばない
+   * (一覧で 1 件ずつ問い合わせる N+1 を避けるため)。
+   */
+  initialIsBookmarked?: boolean;
 }
 
 export default function BookmarkButton({
@@ -25,9 +31,12 @@ export default function BookmarkButton({
   initialBookmarkCount = 0,
   size = 'medium',
   showCount = true,
+  initialIsBookmarked,
 }: BookmarkButtonProps) {
   const { isAuthenticated } = useAuth();
-  const [isBookmarked, setIsBookmarked] = useState(false);
+  const [isBookmarked, setIsBookmarked] = useState(
+    initialIsBookmarked ?? false,
+  );
   const [bookmarkCount, setBookmarkCount] = useState(initialBookmarkCount);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -43,10 +52,14 @@ export default function BookmarkButton({
   }, [postId]);
 
   useEffect(() => {
+    // 親から確定値を受け取っている場合は問い合わせ不要
+    if (initialIsBookmarked !== undefined) {
+      return;
+    }
     if (isAuthenticated) {
       loadBookmarkStatus();
     }
-  }, [isAuthenticated, postId, loadBookmarkStatus]);
+  }, [isAuthenticated, postId, loadBookmarkStatus, initialIsBookmarked]);
 
   const handleBookmarkToggle = async (e: React.MouseEvent) => {
     e.preventDefault();

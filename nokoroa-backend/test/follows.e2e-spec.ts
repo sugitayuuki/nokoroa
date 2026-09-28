@@ -1,5 +1,5 @@
 import { Server } from 'http';
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { INestApplication } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
 
@@ -12,6 +12,7 @@ import {
   FollowStatsResponse,
 } from './types';
 import { AppModule } from '../src/app.module';
+import { createValidationPipe } from '../src/common/validation';
 
 describe('Follows (e2e)', () => {
   let app: INestApplication;
@@ -26,7 +27,8 @@ describe('Follows (e2e)', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
-    app.useGlobalPipes(new ValidationPipe());
+    // 本番(main.ts)と同一オプションのパイプを使う(素の ValidationPipe だと transform が効かない)
+    app.useGlobalPipes(createValidationPipe());
     await app.init();
     server = app.getHttpServer() as Server;
   });

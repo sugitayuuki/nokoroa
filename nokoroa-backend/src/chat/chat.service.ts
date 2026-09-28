@@ -2,7 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Response } from 'express';
 import { EmbeddingsService } from '../embeddings/embeddings.service';
-import { FormattedPost, PostsService } from '../posts/posts.service';
+import { FormattedPost } from '../posts/post-format';
+import { PostsService } from '../posts/posts.service';
 import {
   ChatRequestDto,
   MAX_HISTORY_CONTENT_LENGTH,

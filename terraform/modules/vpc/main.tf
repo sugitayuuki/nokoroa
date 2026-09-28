@@ -160,9 +160,19 @@ resource "aws_security_group" "ecs" {
   description = "Security group for ECS tasks"
   vpc_id      = aws_vpc.main.id
 
+  # ALB からの通信はアプリが待ち受けるポートだけに絞る（旧設定は 0-65535 を開放していた）
   ingress {
-    from_port       = 0
-    to_port         = 65535
+    description     = "Frontend port from ALB"
+    from_port       = var.frontend_port
+    to_port         = var.frontend_port
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb.id]
+  }
+
+  ingress {
+    description     = "Backend port from ALB"
+    from_port       = var.backend_port
+    to_port         = var.backend_port
     protocol        = "tcp"
     security_groups = [aws_security_group.alb.id]
   }

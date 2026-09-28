@@ -1,3 +1,5 @@
+import { getToken } from '@/utils/auth';
+
 export const API_CONFIG = {
   BASE_URL:
     (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000') + '/api',
@@ -16,6 +18,7 @@ export const API_CONFIG = {
     users: '/users',
     userById: (id: string) => `/users/${id}`,
     userProfile: '/users/profile',
+    changePassword: '/users/change-password',
     uploadAvatar: '/users/upload-avatar',
     follow: (userId: string) => `/users/${userId}/follow`,
     unfollow: (userId: string) => `/users/${userId}/unfollow`,
@@ -49,8 +52,7 @@ export const API_CONFIG = {
   },
 
   getAuthHeaders: () => {
-    const token =
-      typeof window !== 'undefined' ? localStorage.getItem('jwt') : null;
+    const token = getToken();
     return {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -58,8 +60,7 @@ export const API_CONFIG = {
   },
 
   getFormDataAuthHeaders: () => {
-    const token =
-      typeof window !== 'undefined' ? localStorage.getItem('jwt') : null;
+    const token = getToken();
     return {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     };

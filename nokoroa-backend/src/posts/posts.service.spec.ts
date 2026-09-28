@@ -20,6 +20,7 @@ describe('PostsService', () => {
     },
     location: {
       findFirst: jest.fn(),
+      findMany: jest.fn(),
       create: jest.fn(),
     },
     tag: {
@@ -396,6 +397,111 @@ describe('PostsService', () => {
       });
     });
 
+    describe('場所の付け外し', () => {
+      // location は undefined(触らない) / 空文字(外す) / 文字列(付け替え) の3値。
+      // 空文字を undefined に潰すと、一度付けた場所を二度と外せなくなる。
+      const updateMock = mockPrismaService.post.update as jest.Mock<
+        unknown,
+        [{ data: Record<string, unknown> }]
+      >;
+
+      beforeEach(() => {
+        mockPrismaService.post.findUnique.mockResolvedValue({ authorId: 1 });
+        mockPrismaService.bookmark.count.mockResolvedValue(0);
+      });
+
+      it('location に空文字を送ると場所の紐付けを外す', async () => {
+        mockPrismaService.post.update.mockResolvedValue({
+          ...mockPost,
+          locationId: null,
+          location: null,
+        });
+
+        const result = await service.update(1, { location: '' }, 1);
+
+        const [args] = updateMock.mock.calls[0];
+        expect(args.data.locationId).toBeNull();
+        expect(result.location).toBeNull();
+      });
+
+      it('location に null を送っても場所の紐付けを外す(編集画面の実運用値)', async () => {
+        // frontend の編集フォームは解除時に '' ではなく null を送る
+        mockPrismaService.post.update.mockResolvedValue({
+          ...mockPost,
+          locationId: null,
+          location: null,
+        });
+
+        const result = await service.update(
+          1,
+          { location: null as unknown as string },
+          1,
+        );
+
+        const [args] = updateMock.mock.calls[0];
+        expect(args.data.locationId).toBeNull();
+        expect(result.location).toBeNull();
+      });
+
+      it('location を送らない更新では場所に触れない', async () => {
+        mockPrismaService.post.update.mockResolvedValue(mockPost);
+
+        await service.update(1, { title: 'Updated Title' }, 1);
+
+        const [args] = updateMock.mock.calls[0];
+        expect(args.data).not.toHaveProperty('locationId');
+      });
+
+      it('座標に明示 null を送ると座標なしの既存 Location 行に一致させる', async () => {
+        // 編集画面の「場所未変更・座標なし投稿」ケース。null が undefined に
+        // 潰されると名前のみ一致になり、同名の座標付き別行へ張り替わってしまう
+        mockPrismaService.location.findFirst.mockResolvedValue({
+          id: 7,
+          name: 'Kyoto',
+          country: 'Japan',
+          prefecture: null,
+          latitude: null,
+          longitude: null,
+          createdAt: new Date(),
+        });
+        mockPrismaService.post.update.mockResolvedValue(mockPost);
+
+        await service.update(
+          1,
+          {
+            location: 'Kyoto',
+            latitude: null,
+            longitude: null,
+          },
+          1,
+        );
+
+        expect(mockPrismaService.location.findFirst).toHaveBeenCalledWith({
+          where: { name: 'Kyoto', latitude: null, longitude: null },
+        });
+        const [args] = updateMock.mock.calls[0];
+        expect(args.data.locationId).toBe(7);
+      });
+
+      it('location に文字列を送ると場所を付け替える', async () => {
+        mockPrismaService.location.findFirst.mockResolvedValue({
+          id: 9,
+          name: 'Osaka',
+          country: 'Japan',
+          prefecture: 'Osaka',
+          latitude: null,
+          longitude: null,
+          createdAt: new Date(),
+        });
+        mockPrismaService.post.update.mockResolvedValue(mockPost);
+
+        await service.update(1, { location: 'Osaka' }, 1);
+
+        const [args] = updateMock.mock.calls[0];
+        expect(args.data.locationId).toBe(9);
+      });
+    });
+
     describe('タグ張り替えの不可分性', () => {
       // 削除だけがコミットされてタグが消えた投稿が残る事故を防ぐ。
       function setupOwner() {
@@ -600,6 +706,51 @@ describe('PostsService', () => {
 
       expect(result.tags).toHaveLength(2);
       expect(result.tags[0].count).toBe(5);
+    });
+
+    it('投稿0件のタグを除外し、total も除外後の件数を返す', async () => {
+      mockPrismaService.tag = {
+        findMany: jest.fn().mockResolvedValue([
+          { name: 'travel', slug: 'travel', _count: { postTags: 5 } },
+          { name: 'orphan', slug: 'orphan', _count: { postTags: 0 } },
+        ]),
+      } as unknown as typeof mockPrismaService.tag;
+
+      const result = await service.getTags();
+
+      expect(result.tags).toHaveLength(1);
+      expect(result.total).toBe(1);
+    });
+  });
+
+  describe('getLocations', () => {
+    it('投稿0件の場所を除外し、total も除外後の件数を返す', async () => {
+      // total が locations.length のままだと、返した配列の長さと食い違い
+      // getTags とも挙動がずれる
+      mockPrismaService.location.findMany.mockResolvedValue([
+        {
+          id: 1,
+          name: 'Tokyo',
+          prefecture: 'Tokyo',
+          latitude: 35.6762,
+          longitude: 139.6503,
+          _count: { posts: 3 },
+        },
+        {
+          id: 2,
+          name: 'Unused Place',
+          prefecture: null,
+          latitude: null,
+          longitude: null,
+          _count: { posts: 0 },
+        },
+      ]);
+
+      const result = await service.getLocations();
+
+      expect(result.locations).toHaveLength(1);
+      expect(result.locations[0].name).toBe('Tokyo');
+      expect(result.total).toBe(1);
     });
   });
 

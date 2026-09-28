@@ -132,6 +132,45 @@ describe('FavoritesService', () => {
       expect(result.hasMore).toBe(true);
     });
 
+    it('緯度0・経度0(Null Island)が null に潰れない', async () => {
+      // || で畳むと 0 が falsy として null になり、赤道・本初子午線上の
+      // 投稿が地図に出せなくなる
+      const zeroGeoBookmark = {
+        ...mockBookmark,
+        post: {
+          ...mockPost,
+          locationId: 2,
+          location: {
+            id: 2,
+            name: 'Null Island',
+            country: 'N/A',
+            prefecture: null,
+            latitude: 0,
+            longitude: 0,
+            createdAt: new Date(),
+          },
+        },
+      };
+      mockPrismaService.bookmark.findMany.mockResolvedValue([zeroGeoBookmark]);
+      mockPrismaService.bookmark.count.mockResolvedValue(1);
+
+      const result = await service.getUserFavorites(1, 10, 0);
+
+      expect(result.favorites[0].post.latitude).toBe(0);
+      expect(result.favorites[0].post.longitude).toBe(0);
+      expect(result.favorites[0].post.location).toBe('Null Island');
+    });
+
+    it('post は favoritesCount を持ち、内部表現の _count は漏らさない', async () => {
+      mockPrismaService.bookmark.findMany.mockResolvedValue([mockBookmark]);
+      mockPrismaService.bookmark.count.mockResolvedValue(1);
+
+      const result = await service.getUserFavorites(1, 10, 0);
+
+      expect(result.favorites[0].post.favoritesCount).toBe(5);
+      expect(result.favorites[0].post).not.toHaveProperty('_count');
+    });
+
     it('ブックマークがない場合空配列を返す', async () => {
       mockPrismaService.bookmark.findMany.mockResolvedValue([]);
       mockPrismaService.bookmark.count.mockResolvedValue(0);

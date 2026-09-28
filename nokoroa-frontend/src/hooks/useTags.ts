@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { API_CONFIG } from '@/lib/apiConfig';
 
@@ -19,62 +19,35 @@ export function useTags() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchTags = async () => {
-      try {
-        setError(null);
-        setIsLoading(true);
+  const fetchTags = useCallback(async () => {
+    try {
+      setError(null);
+      setIsLoading(true);
 
-        const response = await fetch(`${API_CONFIG.BASE_URL}/posts/tags`);
+      // タグ一覧は公開エンドポイントのため認証ヘッダは付けない(既存挙動を維持)
+      const response = await fetch(`${API_CONFIG.BASE_URL}/posts/tags`);
 
-        if (!response.ok) {
-          throw new Error('タグの取得に失敗しました');
-        }
-
-        const data: TagsResponse = await response.json();
-        setTags(data.tags);
-      } catch (err) {
-        setError(
-          err instanceof Error ? err.message : 'タグの取得に失敗しました',
-        );
-      } finally {
-        setIsLoading(false);
+      if (!response.ok) {
+        throw new Error('タグの取得に失敗しました');
       }
-    };
 
-    fetchTags();
+      const data: TagsResponse = await response.json();
+      setTags(data.tags);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'タグの取得に失敗しました');
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
 
-  const refetch = () => {
-    const fetchTags = async () => {
-      try {
-        setError(null);
-        setIsLoading(true);
-
-        const response = await fetch(`${API_CONFIG.BASE_URL}/posts/tags`);
-
-        if (!response.ok) {
-          throw new Error('タグの取得に失敗しました');
-        }
-
-        const data: TagsResponse = await response.json();
-        setTags(data.tags);
-      } catch (err) {
-        setError(
-          err instanceof Error ? err.message : 'タグの取得に失敗しました',
-        );
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
+  useEffect(() => {
     fetchTags();
-  };
+  }, [fetchTags]);
 
   return {
     tags,
     isLoading,
     error,
-    refetch,
+    refetch: fetchTags,
   };
 }

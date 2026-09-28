@@ -26,6 +26,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 
 import { API_CONFIG } from '@/lib/apiConfig';
+import { geocodeLocation as requestGeocode } from '@/utils/geocoding';
 import { isComposingEvent } from '@/utils/ime';
 
 import { CreatePostData } from '../../types/post';
@@ -149,43 +150,27 @@ export const PostForm = ({
       }
 
       try {
-        const response = await fetch(
-          `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(trimmed)}&format=json&limit=1&accept-language=ja`,
-          { signal: controller.signal },
-        );
-
-        if (!response.ok) {
-          throw new Error('Geocoding failed');
-        }
-
-        const data = (await response.json()) as Array<{
-          lat: string;
-          lon: string;
-          display_name: string;
-        }>;
+        // 問い合わせと座標検証は utils/geocoding に集約(編集フォームと同一結果にするため)
+        const result = await requestGeocode(trimmed, {
+          signal: controller.signal,
+        });
 
         if (controller.signal.aborted) return;
 
-        if (data.length > 0) {
-          const { lat, lon, display_name } = data[0];
-          const parsedLat = parseFloat(lat);
-          const parsedLon = parseFloat(lon);
-          if (!Number.isFinite(parsedLat) || !Number.isFinite(parsedLon)) {
-            throw new Error('Invalid coordinates returned');
-          }
+        if (result) {
           cacheSet(cacheKey, {
-            lat: parsedLat,
-            lon: parsedLon,
-            display_name,
+            lat: result.latitude,
+            lon: result.longitude,
+            display_name: result.displayName,
           });
           if (controller.signal.aborted) return;
           setFormData((prev) => ({
             ...prev,
-            latitude: parsedLat,
-            longitude: parsedLon,
+            latitude: result.latitude,
+            longitude: result.longitude,
           }));
           setGeocodingSuccess(true);
-          setGeocodedDisplayName(display_name);
+          setGeocodedDisplayName(result.displayName);
         } else {
           cacheSet(cacheKey, null);
           if (controller.signal.aborted) return;

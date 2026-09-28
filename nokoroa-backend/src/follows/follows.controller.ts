@@ -15,11 +15,11 @@ import {
   ApiResponse,
   ApiBearerAuth,
   ApiParam,
-  ApiQuery,
 } from '@nestjs/swagger';
 import { FollowsService } from './follows.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AuthenticatedRequest } from '../common/authenticated-request';
+import { PagePaginationDto } from '../common/pagination.dto';
 
 @ApiTags('follows')
 @Controller('follows')
@@ -93,28 +93,16 @@ export class FollowsController {
     description: '指定したユーザーのフォロワー一覧を取得します',
   })
   @ApiParam({ name: 'userId', description: 'ユーザーID', example: 1 })
-  @ApiQuery({
-    name: 'page',
-    required: false,
-    description: 'ページ番号',
-    example: 1,
-  })
-  @ApiQuery({
-    name: 'limit',
-    required: false,
-    description: '1ページあたりの件数',
-    example: 20,
-  })
   @ApiResponse({ status: 200, description: '取得成功' })
+  @ApiResponse({ status: 400, description: 'ページネーション指定が不正です' })
   async getFollowers(
     @Param('userId', ParseIntPipe) userId: number,
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
+    @Query() pagination: PagePaginationDto,
   ) {
     return await this.followsService.getFollowers(
       userId,
-      page ? parseInt(page) : 1,
-      limit ? parseInt(limit) : 20,
+      pagination.page,
+      pagination.limit,
     );
   }
 
@@ -124,28 +112,16 @@ export class FollowsController {
     description: '指定したユーザーがフォローしているユーザー一覧を取得します',
   })
   @ApiParam({ name: 'userId', description: 'ユーザーID', example: 1 })
-  @ApiQuery({
-    name: 'page',
-    required: false,
-    description: 'ページ番号',
-    example: 1,
-  })
-  @ApiQuery({
-    name: 'limit',
-    required: false,
-    description: '1ページあたりの件数',
-    example: 20,
-  })
   @ApiResponse({ status: 200, description: '取得成功' })
+  @ApiResponse({ status: 400, description: 'ページネーション指定が不正です' })
   async getFollowing(
     @Param('userId', ParseIntPipe) userId: number,
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
+    @Query() pagination: PagePaginationDto,
   ) {
     return await this.followsService.getFollowing(
       userId,
-      page ? parseInt(page) : 1,
-      limit ? parseInt(limit) : 20,
+      pagination.page,
+      pagination.limit,
     );
   }
 
