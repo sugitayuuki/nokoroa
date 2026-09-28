@@ -22,17 +22,17 @@ export const MAX_HISTORY_TOTAL_LENGTH = 20000;
 class MessageDto {
   @IsString()
   @MaxLength(32)
-  role: string;
+  role!: string;
 
   @IsString()
   @MaxLength(MAX_HISTORY_CONTENT_LENGTH)
-  content: string;
+  content!: string;
 }
 
 export class ChatRequestDto {
   @IsString()
   @MaxLength(MAX_MESSAGE_LENGTH)
-  message: string;
+  message!: string;
 
   @IsOptional()
   @IsArray()

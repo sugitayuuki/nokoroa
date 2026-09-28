@@ -8,7 +8,7 @@ export class ChangePasswordDto {
   })
   @IsNotEmpty()
   @IsString()
-  currentPassword: string;
+  currentPassword!: string;
 
   @ApiProperty({
     description: '新しいパスワード（8文字以上）',
@@ -18,7 +18,7 @@ export class ChangePasswordDto {
   @IsNotEmpty()
   @IsString()
   @MinLength(8, { message: 'パスワードは8文字以上である必要があります' })
-  newPassword: string;
+  newPassword!: string;
 
   @ApiProperty({
     description: '新しいパスワード（確認用）',
@@ -26,5 +26,5 @@ export class ChangePasswordDto {
   })
   @IsNotEmpty()
   @IsString()
-  confirmPassword: string;
+  confirmPassword!: string;
 }

@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Response } from 'express';
 import { EmbeddingsService } from '../embeddings/embeddings.service';
-import { PostsService } from '../posts/posts.service';
+import { FormattedPost, PostsService } from '../posts/posts.service';
 import {
   ChatRequestDto,
   MAX_HISTORY_CONTENT_LENGTH,
@@ -100,22 +100,10 @@ export class ChatService {
       location: string;
       author: string;
     }> = [];
-    let relatedPostsRaw: unknown[] = [];
-
-    type ChatPost = {
-      id: number;
-      title?: string;
-      content?: string;
-      location?: string | null | { name?: string };
-      author?: string | { name?: string };
-      [key: string]: unknown;
-    };
-    const toChatPost = (p: unknown): ChatPost => p as ChatPost;
+    let relatedPostsRaw: FormattedPost[] = [];
 
     try {
-      const posts: ChatPost[] = (await this.searchByVector(dto.message, 5)).map(
-        toChatPost,
-      );
+      const posts: FormattedPost[] = await this.searchByVector(dto.message, 5);
 
       if (posts.length === 0) {
         const searchResult = await this.postsService.search({
@@ -123,7 +111,7 @@ export class ChatService {
           limit: 5,
           offset: 0,
         });
-        for (const p of searchResult.posts) posts.push(toChatPost(p));
+        posts.push(...searchResult.posts);
       }
 
       if (posts.length === 0) {
@@ -142,7 +130,7 @@ export class ChatService {
           for (const p of wordResult.posts) {
             if (!seen.has(p.id)) {
               seen.add(p.id);
-              posts.push(toChatPost(p));
+              posts.push(p);
             }
           }
           if (posts.length >= 5) break;
@@ -153,16 +141,10 @@ export class ChatService {
       if (posts.length > 0) {
         relatedPostsRaw = posts;
         contextPosts = posts.map((post) => ({
-          title: post.title || '',
-          content: post.content || '',
-          location:
-            typeof post.location === 'string'
-              ? post.location
-              : post.location?.name || '',
-          author:
-            typeof post.author === 'string'
-              ? post.author
-              : post.author?.name || '',
+          title: post.title,
+          content: post.content,
+          location: post.location ?? '',
+          author: post.author.name,
         }));
       }
     } catch (error) {
@@ -272,20 +254,18 @@ export class ChatService {
   private async searchByVector(
     query: string,
     limit: number,
-  ): Promise<Array<Record<string, unknown>>> {
+  ): Promise<FormattedPost[]> {
     const hits = await this.embeddingsService.searchSimilar(query, limit);
     if (hits.length === 0) return [];
 
     const ids = hits.map((h) => h.postId);
     const posts = await this.postsService.findManyByIds(ids);
-    const byId = new Map(
-      posts.map((p) => [(p as unknown as { id: number }).id, p]),
-    );
+    const byId = new Map(posts.map((p) => [p.id, p]));
 
-    const found: Record<string, unknown>[] = [];
+    const found: FormattedPost[] = [];
     for (const hit of hits) {
       const post = byId.get(hit.postId);
-      if (post) found.push(post as unknown as Record<string, unknown>);
+      if (post) found.push(post);
     }
     return found;
   }

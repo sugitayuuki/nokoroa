@@ -19,7 +19,7 @@ export class CreatePostDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(200)
-  title: string;
+  title!: string;
 
   @ApiProperty({
     description: '投稿の本文',
@@ -28,7 +28,7 @@ export class CreatePostDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(10000)
-  content: string;
+  content!: string;
 
   @ApiProperty({
     description: '投稿画像のURL',
@@ -43,7 +43,7 @@ export class CreatePostDto {
   })
   @IsNotEmpty({ message: '画像は必須です' })
   @MaxLength(2048)
-  imageUrl: string;
+  imageUrl!: string;
 
   @ApiPropertyOptional({
     description: '場所の名前',

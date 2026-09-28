@@ -48,43 +48,14 @@ const postInclude = {
       tag: true,
     },
   },
-};
+} satisfies Prisma.PostInclude;
 
-interface PostWithRelations {
-  id: number;
-  title: string;
-  content: string;
-  imageUrl: string | null;
-  isPublic: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-  authorId: number;
-  locationId: number | null;
-  author: {
-    id: number;
-    name: string;
-    avatar: string | null;
-  };
-  location: {
-    id: number;
-    name: string;
-    country: string;
-    prefecture: string | null;
-    latitude: number | null;
-    longitude: number | null;
-    createdAt: Date;
-  } | null;
-  postTags: {
-    id: number;
-    postId: number;
-    tagId: number;
-    tag: {
-      id: number;
-      name: string;
-      slug: string;
-    };
-  }[];
-}
+// 手書きすると schema.prisma の変更に追随できず、実体と食い違ったまま
+// キャストで通ってしまう。include から導出して常に一致させる。
+type PostWithRelations = Prisma.PostGetPayload<{ include: typeof postInclude }>;
+
+/** PostsService が外部に返す投稿の形。呼び出し側が再定義せずに済むよう公開する */
+export type FormattedPost = ReturnType<typeof formatPost>;
 
 function formatPost(post: PostWithRelations) {
   return {
@@ -247,7 +218,7 @@ export class PostsService {
 
     this.syncEmbedding(post);
 
-    return formatPost(post as PostWithRelations);
+    return formatPost(post);
   }
 
   async findAll(limit: number = 10, offset: number = 0) {
@@ -267,7 +238,7 @@ export class PostsService {
     ]);
 
     return {
-      posts: (posts as PostWithRelations[]).map(formatPost),
+      posts: posts.map(formatPost),
       total,
       hasMore: skip + take < total,
     };
@@ -324,7 +295,7 @@ export class PostsService {
     ]);
 
     return {
-      posts: (posts as PostWithRelations[]).map(formatPost),
+      posts: posts.map(formatPost),
       total,
       hasMore: offset + limit < total,
     };
@@ -336,7 +307,7 @@ export class PostsService {
       where: { id: { in: ids }, isPublic: true },
       include: postInclude,
     });
-    return (posts as PostWithRelations[]).map(formatPost);
+    return posts.map(formatPost);
   }
 
   async searchSemantic(dto: SearchPostsSemanticDto) {
@@ -397,7 +368,7 @@ export class PostsService {
     }
 
     return {
-      ...formatPost(post as PostWithRelations),
+      ...formatPost(post),
       favoritesCount,
     };
   }
@@ -476,7 +447,7 @@ export class PostsService {
     this.syncEmbedding(updatedPost);
 
     return {
-      ...formatPost(updatedPost as PostWithRelations),
+      ...formatPost(updatedPost),
       favoritesCount,
     };
   }
@@ -510,7 +481,6 @@ export class PostsService {
       q,
     } = searchDto;
 
-    const hasGeo = centerLat !== undefined && centerLng !== undefined;
     const searchPattern = q ? `%${q}%` : null;
 
     interface RawPost {
@@ -535,84 +505,64 @@ export class PostsService {
       total_count: bigint;
     }
 
-    const rows = hasGeo
-      ? await this.prisma.$queryRaw<RawPost[]>`
-          SELECT
-            p.id, p.title, p.content, p."imageUrl", p."isPublic",
-            p."createdAt", p."updatedAt", p."authorId", p."locationId",
-            u.id as "author_id", u.name as "author_name", u.avatar as "author_avatar",
-            l.name as "location_name", l.prefecture, l.latitude, l.longitude,
-            (6371 * acos(
-              LEAST(1.0, GREATEST(-1.0,
-                cos(radians(${centerLat})) * cos(radians(l.latitude)) *
-                cos(radians(l.longitude) - radians(${centerLng})) +
-                sin(radians(${centerLat})) * sin(radians(l.latitude))
-              ))
-            )) as distance,
-            COUNT(*) OVER() AS total_count,
-            COALESCE(
-              (SELECT array_agg(t.name ORDER BY t.name)
-               FROM post_tag pt
-               JOIN tag t ON pt."tagId" = t.id
-               WHERE pt."postId" = p.id),
-              ARRAY[]::text[]
-            ) as tags
-          FROM post p
-          JOIN "user" u ON p."authorId" = u.id
-          LEFT JOIN location l ON p."locationId" = l.id
-          WHERE p."isPublic" = true
-            AND l.latitude IS NOT NULL
-            AND l.longitude IS NOT NULL
-            AND (6371 * acos(
-              LEAST(1.0, GREATEST(-1.0,
-                cos(radians(${centerLat})) * cos(radians(l.latitude)) *
-                cos(radians(l.longitude) - radians(${centerLng})) +
-                sin(radians(${centerLat})) * sin(radians(l.latitude))
-              ))
-            )) <= ${radius}
-            AND (
-              ${searchPattern}::text IS NULL OR (
-                p.title ILIKE ${searchPattern} OR
-                p.content ILIKE ${searchPattern} OR
-                l.name ILIKE ${searchPattern} OR
-                u.name ILIKE ${searchPattern}
-              )
-            )
-          ORDER BY distance ASC, p."createdAt" DESC, p.id ASC
-          LIMIT ${limit} OFFSET ${offset}
-        `
-      : await this.prisma.$queryRaw<RawPost[]>`
-          SELECT
-            p.id, p.title, p.content, p."imageUrl", p."isPublic",
-            p."createdAt", p."updatedAt", p."authorId", p."locationId",
-            u.id as "author_id", u.name as "author_name", u.avatar as "author_avatar",
-            l.name as "location_name", l.prefecture, l.latitude, l.longitude,
-            NULL::float as distance,
-            COUNT(*) OVER() AS total_count,
-            COALESCE(
-              (SELECT array_agg(t.name ORDER BY t.name)
-               FROM post_tag pt
-               JOIN tag t ON pt."tagId" = t.id
-               WHERE pt."postId" = p.id),
-              ARRAY[]::text[]
-            ) as tags
-          FROM post p
-          JOIN "user" u ON p."authorId" = u.id
-          LEFT JOIN location l ON p."locationId" = l.id
-          WHERE p."isPublic" = true
-            AND l.latitude IS NOT NULL
-            AND l.longitude IS NOT NULL
-            AND (
-              ${searchPattern}::text IS NULL OR (
-                p.title ILIKE ${searchPattern} OR
-                p.content ILIKE ${searchPattern} OR
-                l.name ILIKE ${searchPattern} OR
-                u.name ILIKE ${searchPattern}
-              )
-            )
-          ORDER BY p."createdAt" DESC, p.id ASC
-          LIMIT ${limit} OFFSET ${offset}
-        `;
+    // 距離式は SELECT と WHERE の両方に現れる。クエリを丸ごと二重に持つと
+    // 片方だけ直したときに静かに食い違うため、差分だけを断片にして合成する。
+    const distanceExpr =
+      centerLat !== undefined && centerLng !== undefined
+        ? Prisma.sql`(6371 * acos(
+            LEAST(1.0, GREATEST(-1.0,
+              cos(radians(${centerLat})) * cos(radians(l.latitude)) *
+              cos(radians(l.longitude) - radians(${centerLng})) +
+              sin(radians(${centerLat})) * sin(radians(l.latitude))
+            ))
+          ))`
+        : null;
+    const hasGeo = distanceExpr !== null;
+
+    const distanceSelect = distanceExpr
+      ? Prisma.sql`${distanceExpr} as distance`
+      : Prisma.sql`NULL::float as distance`;
+    // 半径での絞り込みと距離順の並びは、距離が算出できる geo 指定時のみ足す
+    const radiusFilter = distanceExpr
+      ? Prisma.sql`AND ${distanceExpr} <= ${radius}`
+      : Prisma.empty;
+    const orderBy = distanceExpr
+      ? Prisma.sql`ORDER BY distance ASC, p."createdAt" DESC, p.id ASC`
+      : Prisma.sql`ORDER BY p."createdAt" DESC, p.id ASC`;
+
+    const rows = await this.prisma.$queryRaw<RawPost[]>`
+      SELECT
+        p.id, p.title, p.content, p."imageUrl", p."isPublic",
+        p."createdAt", p."updatedAt", p."authorId", p."locationId",
+        u.id as "author_id", u.name as "author_name", u.avatar as "author_avatar",
+        l.name as "location_name", l.prefecture, l.latitude, l.longitude,
+        ${distanceSelect},
+        COUNT(*) OVER() AS total_count,
+        COALESCE(
+          (SELECT array_agg(t.name ORDER BY t.name)
+           FROM post_tag pt
+           JOIN tag t ON pt."tagId" = t.id
+           WHERE pt."postId" = p.id),
+          ARRAY[]::text[]
+        ) as tags
+      FROM post p
+      JOIN "user" u ON p."authorId" = u.id
+      LEFT JOIN location l ON p."locationId" = l.id
+      WHERE p."isPublic" = true
+        AND l.latitude IS NOT NULL
+        AND l.longitude IS NOT NULL
+        ${radiusFilter}
+        AND (
+          ${searchPattern}::text IS NULL OR (
+            p.title ILIKE ${searchPattern} OR
+            p.content ILIKE ${searchPattern} OR
+            l.name ILIKE ${searchPattern} OR
+            u.name ILIKE ${searchPattern}
+          )
+        )
+      ${orderBy}
+      LIMIT ${limit} OFFSET ${offset}
+    `;
 
     const total = rows.length > 0 ? Number(rows[0].total_count) : 0;
 
