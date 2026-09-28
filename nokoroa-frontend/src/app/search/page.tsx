@@ -88,7 +88,7 @@ function SearchPageContent() {
         isLoading={isLoading}
         error={error}
         hasSearched={hasSearched}
-        hasMore={hasMore}
+        hasMore={hasMore && !error}
         isLoadingMore={isLoadingMore}
         onLoadMore={loadMore}
         mode={filters.mode}

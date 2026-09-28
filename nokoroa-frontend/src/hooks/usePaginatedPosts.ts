@@ -93,10 +93,12 @@ export function usePaginatedPosts<T extends { id: number }>({
   }, [error]);
 
   const loadMore = useCallback(() => {
-    if (!hasMore || isLoadingMore) return;
+    // error 中は observer と同じく発火させない(キー不変で fetch も起きず、
+    // リトライ解決までスピナーだけが出る無駄な待ち状態になるため)
+    if (!hasMore || isLoadingMore || error) return;
     setIsLoadingMore(true);
     onPageChange(lastLoadedPageRef.current + 1);
-  }, [hasMore, isLoadingMore, onPageChange]);
+  }, [hasMore, isLoadingMore, onPageChange, error]);
 
   const reset = useCallback(() => {
     setPosts([]);
