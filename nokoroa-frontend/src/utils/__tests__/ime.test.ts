@@ -82,7 +82,7 @@ describe('isComposingEvent', () => {
   });
 
   it('nativeEvent に isComposing / keyCode が無い環境でも変換中とは判定しない', () => {
-    // undefined || false || false は最後のオペランドに短絡するため false が返る
+    // 全オペランドが falsy のため || は最後の比較結果 false を返す
     const event = { key: 'Enter', nativeEvent: {} } as unknown as KeyboardEvent;
     expect(isComposingEvent(event)).toBe(false);
   });

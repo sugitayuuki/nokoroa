@@ -103,17 +103,21 @@ export default function EditPostPage() {
   const resolveCoordinates = async (
     currentPost: PostData,
     nextLocation: string,
-  ): Promise<{ latitude?: number; longitude?: number }> => {
-    // 座標が確定しない場合は undefined を返してフィールドごと送らない。
-    // null を明示送信すると backend の getOrCreateLocation が
-    // {name, latitude:null, longitude:null} で検索し、同名で座標を持つ
-    // 既存 Location を再利用できず座標なしの重複行を作ってしまう。
+  ): Promise<{ latitude?: number | null; longitude?: number | null }> => {
+    // backend の getOrCreateLocation は lat/lng が両方あると座標込みで、
+    // 省略すると名前のみで既存 Location を検索する。分岐ごとの正解が違う:
+    // - 未変更: 今の値をそのまま送る(座標 null の投稿は null を明示送信し、
+    //   null 込み一致で自分の行を再利用する。省略すると名前一致で同名の
+    //   座標付き別行に黙って張り替わってしまう)
+    // - 変更してジオコーディング成功: 新しい座標を送る
+    // - 変更したが座標不明: フィールドごと省略し、名前のみ検索(main と同挙動)
+    //   に倒す(null を明示すると同名の座標付き行を再利用できず重複行を作る)
     const previousLocation = (currentPost.location ?? '').trim();
 
     if (nextLocation === previousLocation) {
       return {
-        latitude: currentPost.latitude ?? undefined,
-        longitude: currentPost.longitude ?? undefined,
+        latitude: currentPost.latitude ?? null,
+        longitude: currentPost.longitude ?? null,
       };
     }
 
@@ -125,7 +129,7 @@ export default function EditPostPage() {
       const geocoded = await geocodeLocation(nextLocation);
       if (!geocoded) {
         toast.warn(
-          '場所の位置情報が見つかりませんでした（地図には表示されません）',
+          '場所の位置情報が見つかりませんでした（同名の既知の地点があればそこにひもづきます）',
         );
         return {};
       }
@@ -134,7 +138,9 @@ export default function EditPostPage() {
         longitude: geocoded.longitude,
       };
     } catch {
-      toast.warn('位置情報の取得に失敗しました（地図には表示されません）');
+      toast.warn(
+        '位置情報の取得に失敗しました（同名の既知の地点があればそこにひもづきます）',
+      );
       return {};
     }
   };

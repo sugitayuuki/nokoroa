@@ -31,6 +31,13 @@ export const LazyImage = ({
   const imgRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    // IntersectionObserver が無い環境では遅延させず即時表示に倒す
+    // (スケルトンのまま画像が永久に出ないのを防ぐ)
+    if (typeof IntersectionObserver === 'undefined') {
+      setIsIntersecting(true);
+      return;
+    }
+
     const observer = new IntersectionObserver(
       ([entry]) => {
         if (entry.isIntersecting) {
@@ -92,6 +99,13 @@ export const LazyImage = ({
           src={hasError ? '/top.jpg' : src}
           alt={alt}
           className={className}
+          // キャッシュ済み画像等で load イベントを取りこぼしても表示されるよう、
+          // ref 時点で読み込み完了していればその場で確定させる
+          ref={(node: HTMLImageElement | null) => {
+            if (node && node.complete && node.naturalWidth > 0 && !hasLoaded) {
+              handleImageLoad();
+            }
+          }}
           onLoad={handleImageLoad}
           onError={handleImageError}
           sx={{

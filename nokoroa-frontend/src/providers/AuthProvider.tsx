@@ -1,5 +1,6 @@
 'use client';
 
+import { usePathname } from 'next/navigation';
 import { createContext, useContext, useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import { mutate } from 'swr';
@@ -24,6 +25,8 @@ type AuthUser = {
 type AuthContextType = {
   isAuthenticated: boolean;
   isLoading: boolean;
+  /** 意図的なログアウト遷移中。useRequireAuth が /login への割り込みを抑止するために見る */
+  isLoggingOut: boolean;
   user?: AuthUser;
   login: (email: string, password: string) => Promise<boolean>;
   logout: () => void;
@@ -55,15 +58,15 @@ const toAuthUser = (raw: unknown): AuthUser | undefined => {
   };
 };
 
+type FetchAuthUserResult =
+  | { status: 'ok'; user: AuthUser | undefined }
+  | { status: 'invalid' };
+
 /**
  * プロフィール API からユーザー情報を取得する。
  * 「認証が無効(非 2xx / 通信失敗)」と「200 だが形が想定外」を区別して返す。
  * 後者でトークンを消すと、API 側の一時的な応答形不良だけで強制ログアウトになるため。
  */
-type FetchAuthUserResult =
-  | { status: 'ok'; user: AuthUser | undefined }
-  | { status: 'invalid' };
-
 const fetchAuthUser = async (): Promise<FetchAuthUserResult> => {
   try {
     const response = await createApiRequest(API_CONFIG.endpoints.userProfile);
@@ -79,9 +82,17 @@ const fetchAuthUser = async (): Promise<FetchAuthUserResult> => {
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [user, setUser] = useState<AuthUser>();
 
   const navigation = useSmoothNavigation();
+  const pathname = usePathname();
+
+  // ログアウトの push('/') が完了(パス変化)したらフラグを戻す。
+  // 戻し忘れると、ログアウト後に保護ページを直接開いたときのリダイレクトまで抑止してしまう
+  useEffect(() => {
+    setIsLoggingOut(false);
+  }, [pathname]);
 
   useEffect(() => {
     const validateToken = async () => {
@@ -162,6 +173,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const logout = () => {
+    // 認証状態を落とすと保護ページのガードが /login へ replace しようとするため、
+    // 「意図的なログアウト」であることを先に立てて push('/') を勝たせる
+    // (旧実装は全遷移に入っていた 100ms 遅延のおかげで偶然 '/' が勝っていた)
+    setIsLoggingOut(true);
     removeToken();
     setIsAuthenticated(false);
     setUser(undefined);
@@ -218,6 +233,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       value={{
         isAuthenticated,
         isLoading,
+        isLoggingOut,
         user,
         login,
         logout,

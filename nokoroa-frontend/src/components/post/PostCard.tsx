@@ -150,7 +150,7 @@ export default function PostCard({
                 fontSize: '4rem',
               }}
             >
-              {post.title.charAt(0)}
+              {(post.title ?? '').charAt(0)}
             </Typography>
           </Box>
         )}
@@ -359,7 +359,14 @@ export default function PostCard({
                 {post.author?.name}
               </Typography>
             </Box>
-            <Box onClick={(e) => e.stopPropagation()}>
+            <Box
+              onClick={(e) => {
+                // カード全体が <a> のため、ボタン外(件数テキスト等)のクリックが
+                // ブラウザ既定のリンク遷移にならないよう preventDefault も必要
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+            >
               <BookmarkButton
                 postId={post.id}
                 initialBookmarkCount={

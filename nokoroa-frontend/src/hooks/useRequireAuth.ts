@@ -31,7 +31,7 @@ export interface UseRequireAuthResult {
  */
 export function useRequireAuth(redirectTo = '/login'): UseRequireAuthResult {
   const router = useRouter();
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, isLoggingOut } = useAuth();
   // リダイレクト実行後の再レンダリングで二重に遷移を発行しないようにする
   const hasRedirected = useRef(false);
 
@@ -39,10 +39,16 @@ export function useRequireAuth(redirectTo = '/login'): UseRequireAuthResult {
     if (isLoading || isAuthenticated || hasRedirected.current) {
       return;
     }
+    if (isLoggingOut) {
+      // 意図的なログアウト中は logout() の push('/') に行き先を譲る。
+      // ここで /login へ replace すると、ログアウトしたのにログイン画面へ
+      // 着地してしまう(フラグは AuthProvider がパス変化で戻す)
+      return;
+    }
     hasRedirected.current = true;
     // ガードによる離脱は履歴に残さない(戻るボタンで保護ページに戻ると再度弾かれるため)
     router.replace(redirectTo);
-  }, [isAuthenticated, isLoading, redirectTo, router]);
+  }, [isAuthenticated, isLoading, isLoggingOut, redirectTo, router]);
 
   return {
     isAuthLoading: isLoading,

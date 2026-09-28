@@ -49,7 +49,13 @@ export function useUser(): UseUserReturn {
 
   return {
     user: data ?? null,
-    isLoading: isAuthLoading || isLoading,
+    // SWR の key が null → endpoint に切り替わる非初回レンダーでは isLoading が
+    // false のまま data 未到達のコミットが 1 回挟まり、「読み込んでいます」表示が
+    // 一瞬ちらつく。「認証済みだがデータ未到達」もローディング扱いにして塞ぐ
+    isLoading:
+      isAuthLoading ||
+      isLoading ||
+      (isAuthenticated && !error && data === undefined),
     error: error instanceof Error ? error.message : null,
     refetch: () => {
       void mutate();
