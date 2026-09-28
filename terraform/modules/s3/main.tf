@@ -29,12 +29,16 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "uploads" {
 }
 
 # S3 Bucket Public Access Block
+# 投稿画像は public/* をバケットポリシーで公開配信しているため、ポリシー側の
+# 2 つ (block_public_policy / restrict_public_buckets) は有効にできない。
+# 一方 ACL は一切使っていない (アップロード時に ACL を指定していない) ので、
+# ACL 側の 2 つは閉じて、オブジェクト単位で公開範囲を広げられないようにする。
 resource "aws_s3_bucket_public_access_block" "uploads" {
   bucket = aws_s3_bucket.uploads.id
 
-  block_public_acls       = false
+  block_public_acls       = true
   block_public_policy     = false
-  ignore_public_acls      = false
+  ignore_public_acls      = true
   restrict_public_buckets = false
 }
 

@@ -50,8 +50,10 @@ terraform/**/*.tfstate
 terraform/**/*.tfstate.*
 # plan ファイルは変数値を平文で含むためコミットしない
 *.tfplan
-**/terraform.tfvars
-!**/terraform.tfvars.example
+# *.auto.tfvars は Terraform が自動で読み込むためシークレットの置き場所に
+# なりやすい。terraform.tfvars だけでなく全ての tfvars を除外する
+*.tfvars
+!*.tfvars.example
 # .terraform.lock.hcl はプロバイダのバージョンを固定するため意図的にコミットする
 
 # Python
