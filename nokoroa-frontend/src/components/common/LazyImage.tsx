@@ -122,6 +122,10 @@ export const LazyImage = ({
       {isIntersecting && (
         <Box
           component="img"
+          // 実効 src が変わったらノードごと作り直す。同一値への差し替え
+          // (エラー後に prop が /top.jpg になる等)で load イベントが
+          // 再発火せずスケルトンが固着するのを防ぐ
+          key={hasError ? '/top.jpg' : src}
           src={hasError ? '/top.jpg' : src}
           alt={alt}
           className={className}

@@ -151,6 +151,12 @@ describe('PagePaginationDto (follows)', () => {
     expect(dto.limit).toBe(20);
   });
 
+  it('小数(?limit=12.5)は @IsInt で弾く(旧 parseInt は 12 に黙って読み替えていた)', () => {
+    expect(
+      parseQuery(OffsetPaginationDto, { limit: '12.5' }).errors.length,
+    ).toBeGreaterThan(0);
+  });
+
   it('範囲内の指数表記(?limit=1e1)は Number 解釈で通る(旧 parseInt とは非互換)', () => {
     // Number('1e1') === 10 / Number.isInteger も true のため @IsInt を通過する。
     // 旧 parseInt('1e1') は 1 だったので、意図的な非互換として仕様固定する
