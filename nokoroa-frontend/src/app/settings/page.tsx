@@ -1,7 +1,6 @@
 'use client';
 
 import AccountCircleIcon from '@mui/icons-material/AccountCircle';
-import NotificationsIcon from '@mui/icons-material/Notifications';
 import PrivacyTipIcon from '@mui/icons-material/PrivacyTip';
 import SecurityIcon from '@mui/icons-material/Security';
 import {
@@ -16,11 +15,9 @@ import {
   ListItem,
   ListItemButton,
   ListItemText,
-  Switch,
   Typography,
 } from '@mui/material';
 import Link from 'next/link';
-import { useState } from 'react';
 
 import { useRequireAuth } from '@/hooks/useRequireAuth';
 import { useUser } from '@/hooks/useUser';
@@ -32,32 +29,65 @@ interface SettingsSection {
   items: SettingsItem[];
 }
 
+/** 遷移先を持つ項目のみを扱う。保存先のない飾りのトグルは置かない */
 interface SettingsItem {
   id: string;
   title: string;
   description: string;
-  type: 'toggle' | 'link';
-  value?: boolean;
-  href?: string;
-  onChange?: (value: boolean) => void;
+  href: string;
 }
+
+const SETTINGS_SECTIONS: SettingsSection[] = [
+  {
+    id: 'account',
+    title: 'アカウント',
+    icon: <AccountCircleIcon />,
+    items: [
+      {
+        id: 'profile-edit',
+        title: 'プロフィール編集',
+        description: 'プロフィール情報を編集',
+        href: '/profile/edit',
+      },
+    ],
+  },
+  {
+    id: 'privacy',
+    title: 'プライバシー',
+    icon: <PrivacyTipIcon />,
+    items: [
+      {
+        id: 'privacy-policy',
+        title: 'プライバシーポリシー',
+        description: 'プライバシーポリシーを確認',
+        href: '/privacy',
+      },
+      {
+        id: 'terms',
+        title: '利用規約',
+        description: '利用規約を確認',
+        href: '/terms',
+      },
+    ],
+  },
+  {
+    id: 'security',
+    title: 'セキュリティ',
+    icon: <SecurityIcon />,
+    items: [
+      {
+        id: 'password-change',
+        title: 'パスワード変更',
+        description: 'アカウントのパスワードを変更',
+        href: '/settings/change-password',
+      },
+    ],
+  },
+];
 
 export default function SettingsPage() {
   const { isAuthLoading, isReady } = useRequireAuth();
   const { user, isLoading, error } = useUser();
-  const [settings, setSettings] = useState({
-    emailNotifications: true,
-    pushNotifications: false,
-    profileVisible: true,
-    postsVisible: true,
-  });
-
-  const handleToggleChange = (settingKey: string) => (value: boolean) => {
-    setSettings((prev) => ({
-      ...prev,
-      [settingKey]: value,
-    }));
-  };
 
   if (!isReady && !isAuthLoading) {
     return null;
@@ -86,97 +116,6 @@ export default function SettingsPage() {
     );
   }
 
-  const settingsSections: SettingsSection[] = [
-    {
-      id: 'account',
-      title: 'アカウント',
-      icon: <AccountCircleIcon />,
-      items: [
-        {
-          id: 'profile-edit',
-          title: 'プロフィール編集',
-          description: 'プロフィール情報を編集',
-          type: 'link',
-          href: '/profile/edit',
-        },
-      ],
-    },
-    {
-      id: 'notifications',
-      title: '通知',
-      icon: <NotificationsIcon />,
-      items: [
-        {
-          id: 'email-notifications',
-          title: 'メール通知',
-          description: '新しいいいねやコメントをメールで通知',
-          type: 'toggle',
-          value: settings.emailNotifications,
-          onChange: handleToggleChange('emailNotifications'),
-        },
-        {
-          id: 'push-notifications',
-          title: 'プッシュ通知',
-          description: 'ブラウザのプッシュ通知を有効にする',
-          type: 'toggle',
-          value: settings.pushNotifications,
-          onChange: handleToggleChange('pushNotifications'),
-        },
-      ],
-    },
-    {
-      id: 'privacy',
-      title: 'プライバシー',
-      icon: <PrivacyTipIcon />,
-      items: [
-        {
-          id: 'profile-visible',
-          title: 'プロフィール公開',
-          description: '他のユーザーにプロフィールを表示',
-          type: 'toggle',
-          value: settings.profileVisible,
-          onChange: handleToggleChange('profileVisible'),
-        },
-        {
-          id: 'posts-visible',
-          title: '投稿の公開設定',
-          description: 'デフォルトで投稿を公開する',
-          type: 'toggle',
-          value: settings.postsVisible,
-          onChange: handleToggleChange('postsVisible'),
-        },
-        {
-          id: 'privacy-policy',
-          title: 'プライバシーポリシー',
-          description: 'プライバシーポリシーを確認',
-          type: 'link',
-          href: '/privacy',
-        },
-        {
-          id: 'terms',
-          title: '利用規約',
-          description: '利用規約を確認',
-          type: 'link',
-          href: '/terms',
-        },
-      ],
-    },
-    {
-      id: 'security',
-      title: 'セキュリティ',
-      icon: <SecurityIcon />,
-      items: [
-        {
-          id: 'password-change',
-          title: 'パスワード変更',
-          description: 'アカウントのパスワードを変更',
-          type: 'link',
-          href: '/settings/change-password',
-        },
-      ],
-    },
-  ];
-
   return (
     <Container maxWidth="md" sx={{ py: 4 }}>
       <Typography variant="h3" component="h1" sx={{ mb: 4 }}>
@@ -199,7 +138,7 @@ export default function SettingsPage() {
         </Card>
       )}
 
-      {settingsSections.map((section) => (
+      {SETTINGS_SECTIONS.map((section) => (
         <Card key={section.id} sx={{ mb: 2 }}>
           <CardContent>
             <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
@@ -212,40 +151,14 @@ export default function SettingsPage() {
             <List disablePadding>
               {section.items.map((item, itemIndex) => (
                 <Box key={item.id}>
-                  {item.type === 'link' ? (
-                    <ListItem disablePadding>
-                      <ListItemButton
-                        component={item.href?.startsWith('#') ? 'button' : Link}
-                        href={
-                          item.href?.startsWith('#') ? undefined : item.href
-                        }
-                        onClick={
-                          item.href?.startsWith('#') ? () => {} : undefined
-                        }
-                      >
-                        <ListItemText
-                          primary={item.title}
-                          secondary={item.description}
-                        />
-                      </ListItemButton>
-                    </ListItem>
-                  ) : (
-                    <ListItem>
+                  <ListItem disablePadding>
+                    <ListItemButton component={Link} href={item.href}>
                       <ListItemText
                         primary={item.title}
                         secondary={item.description}
                       />
-                      <Switch
-                        edge="end"
-                        checked={item.value || false}
-                        onChange={(event) => {
-                          if (item.onChange) {
-                            item.onChange(event.target.checked);
-                          }
-                        }}
-                      />
-                    </ListItem>
-                  )}
+                    </ListItemButton>
+                  </ListItem>
                   {itemIndex < section.items.length - 1 && <Divider />}
                 </Box>
               ))}

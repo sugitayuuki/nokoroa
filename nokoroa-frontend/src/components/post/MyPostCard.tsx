@@ -3,16 +3,11 @@
 import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
 import LanguageIcon from '@mui/icons-material/Language';
-import LocationOnIcon from '@mui/icons-material/LocationOn';
 import LockIcon from '@mui/icons-material/Lock';
 import PublicIcon from '@mui/icons-material/Public';
 import {
-  Avatar,
   Box,
   Button,
-  Card,
-  CardContent,
-  Chip,
   CircularProgress,
   Dialog,
   DialogActions,
@@ -22,26 +17,21 @@ import {
   IconButton,
   Menu,
   MenuItem,
-  Stack,
   Typography,
 } from '@mui/material';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import React, { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 
-import { LazyImage } from '@/components/common/LazyImage';
 import { GRID_LAYOUT } from '@/constants/theme';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useUser } from '@/hooks/useUser';
 import { API_CONFIG, createApiRequest } from '@/lib/apiConfig';
 import { useAuth } from '@/providers/AuthProvider';
 import { getToken } from '@/utils/auth';
-import { formatDistanceToNow } from '@/utils/dateFormat';
-import { getTagColor } from '@/utils/tagColors';
 
 import { PostData } from '../../types/post';
-import BookmarkButton from '../bookmarks/BookmarkButton';
+import PostCard from './PostCard';
 
 interface MyPostListProps {
   posts: PostData[];
@@ -52,6 +42,11 @@ interface MyPostListProps {
   onDelete?: (postId: number) => void;
 }
 
+/**
+ * 所有者向けの投稿カード。
+ * 表示は PostCard の owner 変種に委ね、この層は公開切替・削除・編集導線と
+ * それらに伴う状態 (メニュー / 確認ダイアログ / 楽観的更新) だけを持つ。
+ */
 const MyPostCard = ({
   post,
   onUpdate,
@@ -176,194 +171,40 @@ const MyPostCard = ({
 
   return (
     <Box>
-      <Card
-        component={Link}
-        href={`/posts/${localPost.id}`}
-        sx={{
-          height: '100%',
-          display: 'flex',
-          flexDirection: 'column',
-          borderRadius: 2,
-          overflow: 'hidden',
-          minWidth: { xs: '100%', sm: 320 },
-          maxWidth: { xs: '100%', sm: 400 },
-          mx: 'auto',
-          transition: 'transform 0.2s, box-shadow 0.2s',
-          textDecoration: 'none',
-          color: 'inherit',
-          cursor: 'pointer',
-          position: 'relative',
-          '&:hover': {
-            transform: 'translateY(-4px)',
-            boxShadow: '0 8px 16px rgba(0, 0, 0, 0.1)',
-          },
-        }}
-      >
-        {/* 編集・削除・公開設定ボタン（投稿の作者のみ表示） */}
-        {isOwner && (
-          <Box
-            sx={{
-              position: 'absolute',
-              top: 8,
-              right: 8,
-              zIndex: 2,
-              display: 'flex',
-              gap: 1,
-              bgcolor: 'rgba(255, 255, 255, 0.9)',
-              borderRadius: 1,
-              p: 0.5,
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <IconButton size="small" color="primary" onClick={handleEdit}>
-              <EditIcon fontSize="small" />
-            </IconButton>
-            <IconButton size="small" color="error" onClick={handleDeleteClick}>
-              <DeleteIcon fontSize="small" />
-            </IconButton>
-            <IconButton
-              size="small"
-              color="default"
-              onClick={handleVisibilityClick}
-            >
-              <LanguageIcon fontSize="small" />
-            </IconButton>
-          </Box>
-        )}
-
-        {/* 公開/非公開アイコン */}
-        <Box
-          sx={{
-            position: 'absolute',
-            top: 8,
-            left: 8,
-            zIndex: 2,
-            bgcolor: 'rgba(255, 255, 255, 0.9)',
-            borderRadius: 1,
-            p: 0.5,
-          }}
-        >
-          {localPost.isPublic ? (
+      <PostCard
+        post={localPost}
+        variant="owner"
+        badge={
+          localPost.isPublic ? (
             <PublicIcon fontSize="small" color="success" />
           ) : (
             <LockIcon fontSize="small" color="action" />
-          )}
-        </Box>
-
-        <LazyImage
-          src={localPost.imageUrl || '/top.jpg'}
-          alt={localPost.title}
-          height={{ xs: 200, sm: 280 }}
-        />
-        <CardContent sx={{ flexGrow: 1, bgcolor: 'background.paper' }}>
-          <Stack spacing={2}>
-            <Box>
-              <Typography
-                variant="h6"
-                component="h2"
-                gutterBottom
-                sx={{
-                  fontWeight: 600,
-                  color: 'text.primary',
-                }}
+          )
+        }
+        actions={
+          isOwner ? (
+            <>
+              <IconButton size="small" color="primary" onClick={handleEdit}>
+                <EditIcon fontSize="small" />
+              </IconButton>
+              <IconButton
+                size="small"
+                color="error"
+                onClick={handleDeleteClick}
               >
-                {localPost.title}
-              </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                {formatDistanceToNow(localPost.createdAt)}
-              </Typography>
-            </Box>
-
-            <Typography
-              variant="body2"
-              color="text.secondary"
-              sx={{
-                display: '-webkit-box',
-                WebkitLineClamp: 3,
-                WebkitBoxOrient: 'vertical',
-                overflow: 'hidden',
-              }}
-            >
-              {localPost.content}
-            </Typography>
-
-            <Stack
-              direction="row"
-              spacing={1}
-              sx={{ flexWrap: 'wrap', gap: 1 }}
-            >
-              {localPost.location && (
-                <Chip
-                  icon={<LocationOnIcon />}
-                  label={localPost.location}
-                  size="small"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                  }}
-                  sx={{
-                    bgcolor: 'primary.light',
-                    color: 'primary.contrastText',
-                    cursor: 'default',
-                  }}
-                />
-              )}
-              {(localPost.tags || []).map((tag, index) => (
-                <Chip
-                  key={index}
-                  label={tag.startsWith('#') ? tag : `#${tag}`}
-                  size="small"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    router.push(`/search?tags=${encodeURIComponent(tag)}`);
-                  }}
-                  sx={{
-                    backgroundColor: getTagColor(tag),
-                    color: '#fff',
-                    fontWeight: 500,
-                    cursor: 'pointer',
-                    '&:hover': {
-                      backgroundColor: getTagColor(tag),
-                      filter: 'brightness(0.9)',
-                    },
-                  }}
-                />
-              ))}
-            </Stack>
-
-            <Box
-              sx={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                pt: 1,
-              }}
-            >
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <Avatar
-                  src={localPost.author.avatar || undefined}
-                  sx={{ width: 32, height: 32 }}
-                >
-                  {!localPost.author.avatar && localPost.author.name?.charAt(0)}
-                </Avatar>
-                <Typography variant="body2" color="text.secondary">
-                  {localPost.author.name}
-                </Typography>
-              </Box>
-              <Box onClick={(e) => e.stopPropagation()}>
-                <BookmarkButton
-                  postId={localPost.id}
-                  initialBookmarkCount={
-                    localPost.favoritesCount || localPost._count?.favorites || 0
-                  }
-                  size="small"
-                />
-              </Box>
-            </Box>
-          </Stack>
-        </CardContent>
-      </Card>
+                <DeleteIcon fontSize="small" />
+              </IconButton>
+              <IconButton
+                size="small"
+                color="default"
+                onClick={handleVisibilityClick}
+              >
+                <LanguageIcon fontSize="small" />
+              </IconButton>
+            </>
+          ) : undefined
+        }
+      />
 
       {/* 公開設定メニュー */}
       <Menu

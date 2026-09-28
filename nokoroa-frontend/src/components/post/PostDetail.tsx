@@ -13,10 +13,16 @@ import {
 import {
   Avatar,
   Box,
+  Button,
   Card,
   CardContent,
   CardMedia,
   Chip,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
   Divider,
   IconButton,
   Menu,
@@ -26,9 +32,11 @@ import {
   useTheme,
 } from '@mui/material';
 import { useRouter } from 'next/navigation';
-import { SyntheticEvent, useState } from 'react';
+import { useState } from 'react';
+import { toast } from 'react-toastify';
 
 import { API_CONFIG } from '@/lib/apiConfig';
+import { getFavoritesCount } from '@/utils/post';
 import { getTagColor } from '@/utils/tagColors';
 
 import { useAuth } from '../../providers/AuthProvider';
@@ -55,16 +63,14 @@ export const PostDetail = ({ post }: PostDetailProps) => {
   const theme = useTheme();
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  // ヘッダーと投稿者情報の 2 か所は同じ author.avatar を表示するため、
+  // 読み込み失敗のフォールバック判定も 1 つの state で足りる
   const [avatarError, setAvatarError] = useState(false);
-  const [avatarError2, setAvatarError2] = useState(false);
   const isOwner = user?.id === post.author.id;
 
-  const handleAvatarError = (_e: SyntheticEvent<HTMLImageElement, Event>) => {
+  const handleAvatarError = () => {
     setAvatarError(true);
-  };
-
-  const handleAvatarError2 = (_e: SyntheticEvent<HTMLImageElement, Event>) => {
-    setAvatarError2(true);
   };
 
   const handleMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
@@ -80,15 +86,16 @@ export const PostDetail = ({ post }: PostDetailProps) => {
     handleMenuClose();
   };
 
-  const handleDelete = async () => {
-    if (!confirm('この投稿を削除しますか？')) {
-      return;
-    }
+  const handleDeleteClick = () => {
+    setDeleteDialogOpen(true);
+    handleMenuClose();
+  };
 
+  const handleDeleteConfirm = async () => {
     setIsDeleting(true);
     try {
       const response = await fetch(
-        `${API_CONFIG.BASE_URL}${API_CONFIG.endpoints.postById(String(post.id))}`,
+        API_CONFIG.buildUrl(API_CONFIG.endpoints.postById(String(post.id))),
         {
           method: 'DELETE',
           headers: API_CONFIG.getAuthHeaders(),
@@ -99,14 +106,15 @@ export const PostDetail = ({ post }: PostDetailProps) => {
         throw new Error('Failed to delete post');
       }
 
-      router.push('/posts');
+      toast.success('投稿を削除しました');
+      router.push('/');
     } catch {
       // 投稿削除時にエラーが発生した場合の処理
-      alert('削除に失敗しました。');
+      toast.error('投稿の削除に失敗しました');
     } finally {
       setIsDeleting(false);
+      setDeleteDialogOpen(false);
     }
-    handleMenuClose();
   };
 
   return (
@@ -161,7 +169,7 @@ export const PostDetail = ({ post }: PostDetailProps) => {
                     ? post.author.avatar
                     : undefined
                 }
-                imgProps={{ onError: handleAvatarError }}
+                slotProps={{ img: { onError: handleAvatarError } }}
                 sx={{
                   bgcolor: 'primary.main',
                   width: { xs: 48, sm: 56 },
@@ -283,11 +291,13 @@ export const PostDetail = ({ post }: PostDetailProps) => {
                   open={Boolean(anchorEl)}
                   onClose={handleMenuClose}
                   disableScrollLock={true}
-                  PaperProps={{
-                    elevation: 8,
-                    sx: {
-                      borderRadius: 2,
-                      mt: 1,
+                  slotProps={{
+                    paper: {
+                      elevation: 8,
+                      sx: {
+                        borderRadius: 2,
+                        mt: 1,
+                      },
                     },
                   }}
                 >
@@ -296,7 +306,7 @@ export const PostDetail = ({ post }: PostDetailProps) => {
                     編集
                   </MenuItem>
                   <MenuItem
-                    onClick={handleDelete}
+                    onClick={handleDeleteClick}
                     disabled={isDeleting}
                     sx={{ gap: 1 }}
                   >
@@ -425,20 +435,20 @@ export const PostDetail = ({ post }: PostDetailProps) => {
           >
             <Avatar
               src={
-                !avatarError2 && post.author.avatar
+                !avatarError && post.author.avatar
                   ? post.author.avatar
                   : undefined
               }
-              imgProps={{ onError: handleAvatarError2 }}
+              slotProps={{ img: { onError: handleAvatarError } }}
               sx={{
                 width: { xs: 40, sm: 48 },
                 height: { xs: 40, sm: 48 },
                 bgcolor: 'primary.main',
               }}
             >
-              {(avatarError2 || !post.author.avatar) && post.author.name
+              {(avatarError || !post.author.avatar) && post.author.name
                 ? post.author.name.charAt(0).toUpperCase()
-                : (avatarError2 || !post.author.avatar) && <PersonIcon />}
+                : (avatarError || !post.author.avatar) && <PersonIcon />}
             </Avatar>
             <Box sx={{ flex: 1, minWidth: 0 }}>
               <Typography
@@ -507,14 +517,41 @@ export const PostDetail = ({ post }: PostDetailProps) => {
           >
             <BookmarkButton
               postId={post.id}
-              initialBookmarkCount={
-                post.favoritesCount || post._count?.favorites || 0
-              }
+              initialBookmarkCount={getFavoritesCount(post)}
               size="large"
             />
           </Box>
         </Box>
       </CardContent>
+
+      {/* 削除確認ダイアログ */}
+      <Dialog
+        open={deleteDialogOpen}
+        onClose={() => setDeleteDialogOpen(false)}
+      >
+        <DialogTitle>投稿を削除</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            この投稿を削除してもよろしいですか？この操作は取り消せません。
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={() => setDeleteDialogOpen(false)}
+            disabled={isDeleting}
+          >
+            キャンセル
+          </Button>
+          <Button
+            onClick={handleDeleteConfirm}
+            color="error"
+            variant="contained"
+            disabled={isDeleting}
+          >
+            削除
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Card>
   );
 };

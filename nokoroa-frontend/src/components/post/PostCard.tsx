@@ -13,11 +13,12 @@ import {
 } from '@mui/material';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import type { MouseEvent } from 'react';
+import type { MouseEvent, ReactNode } from 'react';
 
 import BookmarkButton from '@/components/bookmarks/BookmarkButton';
 import { LazyImage } from '@/components/common/LazyImage';
 import { formatDistanceToNow } from '@/utils/dateFormat';
+import { getFavoritesCount } from '@/utils/post';
 import { getTagColor } from '@/utils/tagColors';
 
 /**
@@ -44,10 +45,73 @@ export interface PostCardData {
 /**
  * feed: 投稿一覧・検索結果・ブックマーク一覧。280px 画像 / 投稿日時 /
  *       投稿者 / ブックマークボタンを持つ標準カード。
+ * owner: 自分の投稿一覧 (所有者向け)。feed をモバイル幅に合わせたうえで、
+ *       badge (公開状態) と actions (編集・削除・公開設定) のスロットを受ける。
+ * map: 地図ページの周辺投稿。200px 画像・タグ 2 件・1 行タイトルの密なカード。
+ *       クリックで詳細ダイアログを開くためリンクにはしない (onClick を渡す)。
  * compact: ユーザープロフィールの投稿タブ。240px 画像・タグ 3 件までで、
  *       author と集計を返さない API に合わせてフッターを持たない。
  */
-export type PostCardVariant = 'feed' | 'compact';
+export type PostCardVariant = 'feed' | 'owner' | 'map' | 'compact';
+
+/** compact 以外の 3 変種は同一のカード構造を共有し、ここの設定値だけが異なる */
+type StandardVariant = Exclude<PostCardVariant, 'compact'>;
+
+interface StandardVariantConfig {
+  /** カード幅の制約。map は親グリッドの列幅に従うため指定しない */
+  width: {
+    minWidth?: number | { xs: string; sm: number };
+    maxWidth?: number | { xs: string; sm: number };
+    mx?: 'auto';
+  };
+  imageHeight: number | { xs: number; sm: number };
+  /** タイトルを 1 行で省略表示するか */
+  titleNoWrap: boolean;
+  /** 投稿日時の下マージン */
+  dateMarginBottom: number;
+  /** 本文の表示行数 */
+  contentLines: number;
+  /** 表示するタグ数の上限。未指定なら全件 */
+  tagLimit?: number;
+  /** タグチップからタグ検索へ遷移させるか */
+  interactiveTags: boolean;
+  avatarSize: number;
+}
+
+const STANDARD_VARIANTS: Record<StandardVariant, StandardVariantConfig> = {
+  feed: {
+    width: { minWidth: 320, maxWidth: 400, mx: 'auto' },
+    imageHeight: 280,
+    titleNoWrap: false,
+    dateMarginBottom: 2,
+    contentLines: 3,
+    interactiveTags: true,
+    avatarSize: 32,
+  },
+  owner: {
+    width: {
+      minWidth: { xs: '100%', sm: 320 },
+      maxWidth: { xs: '100%', sm: 400 },
+      mx: 'auto',
+    },
+    imageHeight: { xs: 200, sm: 280 },
+    titleNoWrap: false,
+    dateMarginBottom: 2,
+    contentLines: 3,
+    interactiveTags: true,
+    avatarSize: 32,
+  },
+  map: {
+    width: {},
+    imageHeight: 200,
+    titleNoWrap: true,
+    dateMarginBottom: 1,
+    contentLines: 2,
+    tagLimit: 2,
+    interactiveTags: false,
+    avatarSize: 24,
+  },
+};
 
 interface PostCardProps {
   post: PostCardData;
@@ -55,9 +119,17 @@ interface PostCardProps {
   /**
    * 親が既にブックマーク状態を知っている場合に渡す。
    * 渡すとカード毎のブックマーク状態問い合わせを省略できる。
-   * feed 変種でのみ有効(compact はブックマークボタンを持たない)。
+   * feed / owner 変種でのみ有効(compact はブックマークボタンを持たない)。
    */
   isBookmarked?: boolean;
+  /** 画像左上に重ねる要素 (owner: 公開/非公開アイコン) */
+  badge?: ReactNode;
+  /** 画像右上に重ねる操作群 (owner: 編集/削除/公開設定) */
+  actions?: ReactNode;
+  /** フッター右端の要素。既定はブックマークボタン (map: 公開/非公開アイコン) */
+  footerAction?: ReactNode;
+  /** 渡すとカードはリンクではなくクリック可能な Card になる (map: 詳細ダイアログ) */
+  onClick?: () => void;
 }
 
 /** compact 変種でチップ表示するタグの上限。超過分は「+N」でまとめる */
@@ -71,15 +143,28 @@ const cardHoverSx = {
   },
 } as const;
 
-const tagChipSx = (tag: string) => ({
+const overlaySx = {
+  position: 'absolute',
+  top: 8,
+  zIndex: 2,
+  bgcolor: 'rgba(255, 255, 255, 0.9)',
+  borderRadius: 1,
+  p: 0.5,
+} as const;
+
+const tagChipSx = (tag: string, interactive: boolean) => ({
   backgroundColor: getTagColor(tag),
   color: '#fff',
   fontWeight: 500,
-  cursor: 'pointer',
-  '&:hover': {
-    backgroundColor: getTagColor(tag),
-    filter: 'brightness(0.9)',
-  },
+  cursor: interactive ? 'pointer' : 'default',
+  ...(interactive
+    ? {
+        '&:hover': {
+          backgroundColor: getTagColor(tag),
+          filter: 'brightness(0.9)',
+        },
+      }
+    : {}),
 });
 
 const formatTagLabel = (tag: string) => (tag.startsWith('#') ? tag : `#${tag}`);
@@ -88,6 +173,10 @@ export default function PostCard({
   post,
   variant = 'feed',
   isBookmarked,
+  badge,
+  actions,
+  footerAction,
+  onClick,
 }: PostCardProps) {
   const router = useRouter();
   const tags = post.tags || [];
@@ -99,15 +188,19 @@ export default function PostCard({
     router.push(`/search?tags=${encodeURIComponent(tag)}`);
   };
 
-  // 表示専用チップ。カードのリンク遷移を発火させない。
-  // clickable={false} を明示すると MUI は素の div(role/tabIndex なし)で描画するため、
-  // 押しても何も起きない要素がフォーカス順・読み上げ対象に入らない
-  const handleStaticChipClick = (e: MouseEvent) => {
+  // カード内に置いた要素のクリックを、カードのリンク遷移 (や onClick) から切り離す。
+  // カード全体が <a> のため、stopPropagation だけではブラウザ既定の
+  // リンク遷移が走ってしまうので preventDefault も必要。
+  const stopCardActivation = (e: MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
   };
+
+  // 表示専用チップ。カードのリンク遷移を発火させない。
+  // clickable={false} を明示すると MUI は素の div(role/tabIndex なし)で描画するため、
+  // 押しても何も起きない要素がフォーカス順・読み上げ対象に入らない
   const staticChipProps = {
-    onClick: handleStaticChipClick,
+    onClick: stopCardActivation,
     clickable: false,
   } as const;
 
@@ -219,7 +312,7 @@ export default function PostCard({
                 sx={{
                   fontSize: '0.75rem',
                   height: '24px',
-                  ...tagChipSx(tag),
+                  ...tagChipSx(tag, true),
                 }}
               />
             ))}
@@ -244,31 +337,27 @@ export default function PostCard({
     );
   }
 
-  return (
-    <Card
-      component={Link}
-      href={`/posts/${post.id}`}
-      sx={{
-        height: '100%',
-        display: 'flex',
-        flexDirection: 'column',
-        borderRadius: 2,
-        overflow: 'hidden',
-        minWidth: 320,
-        maxWidth: 400,
-        mx: 'auto',
-        textDecoration: 'none',
-        color: 'inherit',
-        cursor: 'pointer',
-        ...cardHoverSx,
-      }}
-    >
+  const config = STANDARD_VARIANTS[variant];
+  const visibleTags =
+    config.tagLimit === undefined ? tags : tags.slice(0, config.tagLimit);
+
+  const cardBody = (
+    <>
       <Box sx={{ position: 'relative' }}>
         <LazyImage
           src={post.imageUrl || '/top.jpg'}
           alt={post.title}
-          height={280}
+          height={config.imageHeight}
         />
+        {badge && <Box sx={{ ...overlaySx, left: 8 }}>{badge}</Box>}
+        {actions && (
+          <Box
+            sx={{ ...overlaySx, right: 8, display: 'flex', gap: 1 }}
+            onClick={stopCardActivation}
+          >
+            {actions}
+          </Box>
+        )}
         {typeof post.similarity === 'number' && (
           <Chip
             icon={<AutoAwesomeIcon fontSize="small" />}
@@ -298,12 +387,23 @@ export default function PostCard({
               sx={{
                 fontWeight: 600,
                 color: 'text.primary',
+                ...(config.titleNoWrap
+                  ? {
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }
+                  : {}),
               }}
             >
               {post.title}
             </Typography>
             {post.createdAt && (
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              <Typography
+                variant="body2"
+                color="text.secondary"
+                sx={{ mb: config.dateMarginBottom }}
+              >
                 {formatDistanceToNow(post.createdAt)}
               </Typography>
             )}
@@ -314,7 +414,7 @@ export default function PostCard({
             color="text.secondary"
             sx={{
               display: '-webkit-box',
-              WebkitLineClamp: 3,
+              WebkitLineClamp: config.contentLines,
               WebkitBoxOrient: 'vertical',
               overflow: 'hidden',
             }}
@@ -336,13 +436,15 @@ export default function PostCard({
                 }}
               />
             )}
-            {tags.map((tag, index) => (
+            {visibleTags.map((tag, index) => (
               <Chip
                 key={index}
                 label={formatTagLabel(tag)}
                 size="small"
-                onClick={handleTagClick(tag)}
-                sx={tagChipSx(tag)}
+                {...(config.interactiveTags
+                  ? { onClick: handleTagClick(tag) }
+                  : staticChipProps)}
+                sx={tagChipSx(tag, config.interactiveTags)}
               />
             ))}
           </Stack>
@@ -358,34 +460,55 @@ export default function PostCard({
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               <Avatar
                 src={post.author?.avatar || undefined}
-                sx={{ width: 32, height: 32 }}
+                sx={{ width: config.avatarSize, height: config.avatarSize }}
               >
-                {!post.author?.avatar && post.author?.name?.charAt(0)}
+                {!post.author?.avatar &&
+                  post.author?.name?.charAt(0).toUpperCase()}
               </Avatar>
               <Typography variant="body2" color="text.secondary">
                 {post.author?.name}
               </Typography>
             </Box>
-            <Box
-              onClick={(e) => {
-                // カード全体が <a> のため、ボタン外(件数テキスト等)のクリックが
-                // ブラウザ既定のリンク遷移にならないよう preventDefault も必要
-                e.preventDefault();
-                e.stopPropagation();
-              }}
-            >
-              <BookmarkButton
-                postId={post.id}
-                initialBookmarkCount={
-                  post.favoritesCount || post._count?.favorites || 0
-                }
-                initialIsBookmarked={isBookmarked}
-                size="small"
-              />
-            </Box>
+            {footerAction ?? (
+              <Box onClick={stopCardActivation}>
+                <BookmarkButton
+                  postId={post.id}
+                  initialBookmarkCount={getFavoritesCount(post)}
+                  initialIsBookmarked={isBookmarked}
+                  size="small"
+                />
+              </Box>
+            )}
           </Box>
         </Stack>
       </CardContent>
+    </>
+  );
+
+  const cardSx = {
+    height: '100%',
+    display: 'flex',
+    flexDirection: 'column',
+    borderRadius: 2,
+    overflow: 'hidden',
+    textDecoration: 'none',
+    color: 'inherit',
+    cursor: 'pointer',
+    ...config.width,
+    ...cardHoverSx,
+  };
+
+  if (onClick) {
+    return (
+      <Card sx={cardSx} onClick={onClick}>
+        {cardBody}
+      </Card>
+    );
+  }
+
+  return (
+    <Card component={Link} href={`/posts/${post.id}`} sx={cardSx}>
+      {cardBody}
     </Card>
   );
 }

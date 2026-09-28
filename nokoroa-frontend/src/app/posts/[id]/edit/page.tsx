@@ -1,34 +1,23 @@
 'use client';
 
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
-import LocationOnIcon from '@mui/icons-material/LocationOn';
-import SaveIcon from '@mui/icons-material/Save';
 import {
   Alert,
   Box,
   Button,
-  Card,
-  CardContent,
-  Checkbox,
   CircularProgress,
   Container,
-  FormControlLabel,
   IconButton,
-  Stack,
-  TextField,
   Typography,
 } from '@mui/material';
 import { useParams, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 
-import {
-  ImageUploadField,
-  uploadImageFile,
-} from '@/components/post/ImageUploadField';
+import { PostForm } from '@/components/post/PostForm';
 import { useRequireAuth } from '@/hooks/useRequireAuth';
 import { API_CONFIG, createApiRequest } from '@/lib/apiConfig';
-import { PostData } from '@/types/post';
+import { CreatePostData, PostData } from '@/types/post';
 import { geocodeLocation } from '@/utils/geocoding';
 
 export default function EditPostPage() {
@@ -40,19 +29,6 @@ export default function EditPostPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const [formData, setFormData] = useState({
-    title: '',
-    content: '',
-    location: '',
-    tags: '',
-    isPublic: true,
-    imageUrl: '',
-  });
-
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string>('');
-  const [uploadingImage, setUploadingImage] = useState(false);
 
   const fetchPost = useCallback(async () => {
     try {
@@ -66,21 +42,6 @@ export default function EditPostPage() {
 
       const data = await response.json();
       setPost(data);
-
-      // フォームデータを設定
-      setFormData({
-        title: data.title,
-        content: data.content,
-        location: data.location || '',
-        tags: data.tags.join(', '),
-        isPublic: data.isPublic,
-        imageUrl: data.imageUrl || '',
-      });
-
-      // 既存の画像URLをプレビューに設定
-      if (data.imageUrl) {
-        setPreviewUrl(data.imageUrl);
-      }
     } catch (error) {
       setError((error as Error).message);
       toast.error('投稿の読み込みに失敗しました');
@@ -103,6 +64,10 @@ export default function EditPostPage() {
   const resolveCoordinates = async (
     currentPost: PostData,
     nextLocation: string,
+    // PostForm が入力欄の blur 時点で解決済みの座標。
+    // 場所テキストを変えると PostForm 側で undefined に戻るため、
+    // 値が入っていれば必ず nextLocation に対応する座標である
+    formCoordinates: { latitude?: number; longitude?: number },
   ): Promise<{ latitude?: number | null; longitude?: number | null }> => {
     // backend の getOrCreateLocation は lat/lng が両方あると座標込みで、
     // 省略すると名前のみで既存 Location を検索する。分岐ごとの正解が違う:
@@ -125,6 +90,18 @@ export default function EditPostPage() {
       return {};
     }
 
+    // PostForm が既に解決済みならそれを使う(同じ場所を二重に問い合わせない)
+    if (
+      formCoordinates.latitude !== undefined &&
+      formCoordinates.longitude !== undefined
+    ) {
+      return {
+        latitude: formCoordinates.latitude,
+        longitude: formCoordinates.longitude,
+      };
+    }
+
+    // blur 前に送信された等で未解決の場合は、ここで解決してから送る
     try {
       const geocoded = await geocodeLocation(nextLocation);
       if (!geocoded) {
@@ -145,51 +122,37 @@ export default function EditPostPage() {
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (!formData.title.trim() || !formData.content.trim()) {
-      toast.error('タイトルと内容は必須です');
+  const handleSubmit = async (data: CreatePostData) => {
+    if (!post) {
       return;
     }
 
-    if (!post) {
+    if (!data.title.trim() || !data.content.trim()) {
+      toast.error('タイトルと内容は必須です');
       return;
     }
 
     setSubmitting(true);
     try {
-      // 画像をアップロード
-      let imageUrl = formData.imageUrl;
-      if (selectedFile) {
-        const uploadedUrl = await uploadImageFile(
-          selectedFile,
-          setUploadingImage,
-        );
-        if (uploadedUrl) {
-          imageUrl = uploadedUrl;
-        }
-      }
-
-      const location = formData.location.trim();
-      const { latitude, longitude } = await resolveCoordinates(post, location);
+      const location = (data.location ?? '').trim();
+      const { latitude, longitude } = await resolveCoordinates(post, location, {
+        latitude: data.latitude,
+        longitude: data.longitude,
+      });
 
       const response = await createApiRequest(
         API_CONFIG.endpoints.postById(id as string),
         {
           method: 'PUT',
           body: JSON.stringify({
-            title: formData.title,
-            content: formData.content,
+            title: data.title,
+            content: data.content,
             location: location || null,
             latitude,
             longitude,
-            tags: formData.tags
-              .split(',')
-              .map((tag) => tag.trim())
-              .filter((tag) => tag.length > 0),
-            isPublic: formData.isPublic,
-            imageUrl: imageUrl || null,
+            tags: data.tags ?? [],
+            isPublic: data.isPublic,
+            imageUrl: data.imageUrl || null,
           }),
         },
       );
@@ -206,22 +169,6 @@ export default function EditPostPage() {
     } finally {
       setSubmitting(false);
     }
-  };
-
-  const handleChange =
-    (field: string) =>
-    (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-      setFormData((prev) => ({
-        ...prev,
-        [field]: e.target.value,
-      }));
-    };
-
-  const handleCheckboxChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setFormData((prev) => ({
-      ...prev,
-      isPublic: e.target.checked,
-    }));
   };
 
   // 未認証が確定したらガードのリダイレクトに任せて何も描画しない
@@ -287,106 +234,25 @@ export default function EditPostPage() {
         </Typography>
       </Box>
 
-      <Card>
-        <CardContent>
-          <form onSubmit={handleSubmit}>
-            <Stack spacing={3}>
-              <TextField
-                label="タイトル"
-                value={formData.title}
-                onChange={handleChange('title')}
-                fullWidth
-                required
-                disabled={submitting}
-                inputProps={{ maxLength: 200 }}
-                helperText={`${formData.title.length}/200`}
-              />
-
-              <TextField
-                label="内容"
-                value={formData.content}
-                onChange={handleChange('content')}
-                fullWidth
-                required
-                multiline
-                rows={10}
-                disabled={submitting}
-                inputProps={{ maxLength: 10000 }}
-                helperText={`${formData.content.length}/10000`}
-              />
-
-              <TextField
-                label="場所"
-                value={formData.location}
-                onChange={handleChange('location')}
-                fullWidth
-                disabled={submitting}
-                InputProps={{
-                  startAdornment: (
-                    <LocationOnIcon sx={{ mr: 1, color: 'text.secondary' }} />
-                  ),
-                }}
-                placeholder="例: 東京, パリ, ニューヨーク"
-              />
-
-              <TextField
-                label="タグ"
-                value={formData.tags}
-                onChange={handleChange('tags')}
-                fullWidth
-                disabled={submitting}
-                helperText="カンマ区切りで複数のタグを入力できます (例: 旅行, グルメ, 観光)"
-                placeholder="例: 旅行, グルメ, 観光"
-              />
-
-              <ImageUploadField
-                previewUrl={previewUrl}
-                selectedFile={selectedFile}
-                uploadingImage={uploadingImage}
-                disabled={submitting}
-                onFileSelect={setSelectedFile}
-                onPreviewChange={setPreviewUrl}
-                onUploadingChange={setUploadingImage}
-              />
-
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={formData.isPublic}
-                    onChange={handleCheckboxChange}
-                    disabled={submitting}
-                  />
-                }
-                label="公開する"
-              />
-
-              <Box sx={{ display: 'flex', gap: 2 }}>
-                <Button
-                  type="submit"
-                  variant="contained"
-                  size="large"
-                  startIcon={
-                    submitting ? <CircularProgress size={20} /> : <SaveIcon />
-                  }
-                  disabled={submitting}
-                  fullWidth
-                >
-                  {submitting ? '更新中...' : '更新'}
-                </Button>
-                <Button
-                  variant="outlined"
-                  size="large"
-                  onClick={() => router.back()}
-                  disabled={submitting}
-                  fullWidth
-                >
-                  キャンセル
-                </Button>
-              </Box>
-            </Stack>
-          </form>
-        </CardContent>
-      </Card>
+      <PostForm
+        initialData={{
+          title: post.title,
+          content: post.content,
+          imageUrl: post.imageUrl ?? '',
+          location: post.location ?? '',
+          latitude: post.latitude ?? undefined,
+          longitude: post.longitude ?? undefined,
+          tags: post.tags,
+          isPublic: post.isPublic,
+        }}
+        onSubmit={handleSubmit}
+        isLoading={submitting}
+        submitLabel="更新"
+        submittingLabel="更新中..."
+        onCancel={() => router.back()}
+        // 既存投稿は画像なしでも保存できる必要があるため必須にしない
+        requireImage={false}
+      />
     </Container>
   );
 }

@@ -275,21 +275,23 @@ export const SearchForm = ({ onSearch, initialFilters }: SearchFormProps) => {
                     ? '「紅葉と温泉が楽しめる秋の旅行」のように自然文でどうぞ'
                     : 'タイトル、コンテンツ、著者名で検索...'
                 }
-                InputProps={{
-                  ...params.InputProps,
-                  startAdornment: (
-                    <InputAdornment position="start">
-                      {isSemantic ? <AutoAwesomeIcon /> : <SearchIcon />}
-                    </InputAdornment>
-                  ),
-                  endAdornment: (
-                    <>
-                      {keywordLoading && !isSemantic && (
-                        <CircularProgress color="inherit" size={20} />
-                      )}
-                      {params.InputProps.endAdornment}
-                    </>
-                  ),
+                slotProps={{
+                  input: {
+                    ...params.InputProps,
+                    startAdornment: (
+                      <InputAdornment position="start">
+                        {isSemantic ? <AutoAwesomeIcon /> : <SearchIcon />}
+                      </InputAdornment>
+                    ),
+                    endAdornment: (
+                      <>
+                        {keywordLoading && !isSemantic && (
+                          <CircularProgress color="inherit" size={20} />
+                        )}
+                        {params.InputProps.endAdornment}
+                      </>
+                    ),
+                  },
                 }}
               />
             )}
@@ -366,21 +368,23 @@ export const SearchForm = ({ onSearch, initialFilters }: SearchFormProps) => {
                       fullWidth
                       label="場所"
                       placeholder="場所で絞り込み..."
-                      InputProps={{
-                        ...params.InputProps,
-                        startAdornment: (
-                          <InputAdornment position="start">
-                            <LocationIcon />
-                          </InputAdornment>
-                        ),
-                        endAdornment: (
-                          <>
-                            {locationLoading && (
-                              <CircularProgress color="inherit" size={20} />
-                            )}
-                            {params.InputProps.endAdornment}
-                          </>
-                        ),
+                      slotProps={{
+                        input: {
+                          ...params.InputProps,
+                          startAdornment: (
+                            <InputAdornment position="start">
+                              <LocationIcon />
+                            </InputAdornment>
+                          ),
+                          endAdornment: (
+                            <>
+                              {locationLoading && (
+                                <CircularProgress color="inherit" size={20} />
+                              )}
+                              {params.InputProps.endAdornment}
+                            </>
+                          ),
+                        },
                       }}
                     />
                   )}
@@ -401,24 +405,26 @@ export const SearchForm = ({ onSearch, initialFilters }: SearchFormProps) => {
                       {...params}
                       label="タグを追加"
                       placeholder="タグを入力または選択"
-                      InputProps={{
-                        ...params.InputProps,
-                        endAdornment: (
-                          <>
-                            {params.InputProps.endAdornment}
-                            {tagInputValue && (
-                              <InputAdornment position="end">
-                                <IconButton
-                                  onClick={() => handleAddTag(tagInputValue)}
-                                  edge="end"
-                                  size="small"
-                                >
-                                  <AddIcon />
-                                </IconButton>
-                              </InputAdornment>
-                            )}
-                          </>
-                        ),
+                      slotProps={{
+                        input: {
+                          ...params.InputProps,
+                          endAdornment: (
+                            <>
+                              {params.InputProps.endAdornment}
+                              {tagInputValue && (
+                                <InputAdornment position="end">
+                                  <IconButton
+                                    onClick={() => handleAddTag(tagInputValue)}
+                                    edge="end"
+                                    size="small"
+                                  >
+                                    <AddIcon />
+                                  </IconButton>
+                                </InputAdornment>
+                              )}
+                            </>
+                          ),
+                        },
                       }}
                     />
                   )}
