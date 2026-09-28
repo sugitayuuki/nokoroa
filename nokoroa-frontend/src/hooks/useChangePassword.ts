@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 
-import { API_CONFIG } from '@/lib/apiConfig';
+import { API_CONFIG, createApiRequest } from '@/lib/apiConfig';
 import { getToken } from '@/utils/auth';
 
 interface ChangePasswordData {
@@ -29,23 +29,20 @@ export function useChangePassword(): UseChangePasswordReturn {
       setError(null);
       setSuccess(false);
 
-      const token = getToken();
-      if (!token) {
+      if (!getToken()) {
         throw new Error('認証が必要です');
       }
 
-      const API_URL = API_CONFIG.BASE_URL;
-      const response = await fetch(`${API_URL}/users/change-password`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+      const response = await createApiRequest(
+        API_CONFIG.endpoints.changePassword,
+        {
+          method: 'PUT',
+          body: JSON.stringify(data),
         },
-        body: JSON.stringify(data),
-      });
+      );
 
       if (!response.ok) {
-        const errorData = await response.json();
+        const errorData = await response.json().catch(() => ({}));
         throw new Error(errorData.message || 'パスワード変更に失敗しました');
       }
 

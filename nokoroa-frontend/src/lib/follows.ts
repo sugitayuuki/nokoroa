@@ -1,5 +1,6 @@
 import { API_CONFIG, createApiRequest } from '@/lib/apiConfig';
 import { UserFollowData } from '@/types/user';
+import { getToken } from '@/utils/auth';
 
 export interface FollowStats {
   followersCount: number;
@@ -20,9 +21,7 @@ export interface FollowListResponse {
 }
 
 export async function followUser(userId: number): Promise<void> {
-  const token =
-    typeof window !== 'undefined' ? localStorage.getItem('jwt') : null;
-  if (!token) {
+  if (!getToken()) {
     throw new Error('認証が必要です');
   }
 
@@ -40,9 +39,7 @@ export async function followUser(userId: number): Promise<void> {
 }
 
 export async function unfollowUser(userId: number): Promise<void> {
-  const token =
-    typeof window !== 'undefined' ? localStorage.getItem('jwt') : null;
-  if (!token) {
+  if (!getToken()) {
     throw new Error('認証が必要です');
   }
 
@@ -60,9 +57,7 @@ export async function unfollowUser(userId: number): Promise<void> {
 }
 
 export async function checkFollowStatus(userId: number): Promise<FollowStatus> {
-  const token =
-    typeof window !== 'undefined' ? localStorage.getItem('jwt') : null;
-  if (!token) {
+  if (!getToken()) {
     return { isFollowing: false, followedAt: null };
   }
 

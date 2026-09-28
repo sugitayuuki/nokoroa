@@ -6,13 +6,25 @@ import { mutate } from 'swr';
 
 import { useSmoothNavigation } from '@/hooks/useSmoothNavigation';
 import { API_CONFIG, createApiRequest } from '@/lib/apiConfig';
-import { getToken } from '@/utils/auth';
+import { getToken, removeToken, setToken } from '@/utils/auth';
+
+/**
+ * 認証セッションの本人情報。
+ * ヘッダー等の「ログイン中は誰か」の表示に使う最小限の項目のみを持つ。
+ * bio や投稿数まで含むプロフィール全体が必要な画面は useUser() を使うこと
+ * (プロフィール情報の正は API = useUser 側であり、ここはその部分集合)。
+ */
+type AuthUser = {
+  id: number;
+  name: string;
+  email: string;
+  avatar?: string;
+};
 
 type AuthContextType = {
   isAuthenticated: boolean;
   isLoading: boolean;
-  loading?: boolean; // 互換性のため追加
-  user?: { id: number; name: string; email: string; avatar?: string };
+  user?: AuthUser;
   login: (email: string, password: string) => Promise<boolean>;
   logout: () => void;
   register: (name: string, email: string, password: string) => Promise<boolean>;
@@ -20,51 +32,67 @@ type AuthContextType = {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+/**
+ * API レスポンスから認証ユーザーを組み立てる。
+ * 必須項目が欠けている場合は undefined を返し、偽のユーザーを作らない。
+ */
+const toAuthUser = (raw: unknown): AuthUser | undefined => {
+  if (!raw || typeof raw !== 'object') {
+    return undefined;
+  }
+  const { id, name, email, avatar } = raw as Record<string, unknown>;
+  if (typeof id !== 'number' || typeof name !== 'string' || !name) {
+    return undefined;
+  }
+  if (typeof email !== 'string' || !email) {
+    return undefined;
+  }
+  return {
+    id,
+    name,
+    email,
+    avatar: typeof avatar === 'string' ? avatar : undefined,
+  };
+};
+
+/** プロフィール API からユーザー情報を取得する。取得できない場合は undefined。 */
+const fetchAuthUser = async (): Promise<AuthUser | undefined> => {
+  try {
+    const response = await createApiRequest(API_CONFIG.endpoints.userProfile);
+    if (!response.ok) {
+      return undefined;
+    }
+    return toAuthUser(await response.json());
+  } catch {
+    return undefined;
+  }
+};
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  const [user, setUser] = useState<{
-    id: number;
-    name: string;
-    email: string;
-    avatar?: string;
-  }>();
+  const [user, setUser] = useState<AuthUser>();
 
   const navigation = useSmoothNavigation();
 
   useEffect(() => {
     const validateToken = async () => {
-      const token = getToken();
+      if (!getToken()) {
+        setIsAuthenticated(false);
+        setUser(undefined);
+        setIsLoading(false);
+        return;
+      }
 
-      if (token) {
-        try {
-          // トークンの有効性を確認するため、プロフィールAPIを呼び出し
-          const response = await createApiRequest(
-            API_CONFIG.endpoints.userProfile,
-          );
+      // トークンの有効性を確認するため、プロフィールAPIを呼び出し
+      const authUser = await fetchAuthUser();
 
-          if (response.ok) {
-            const userData = await response.json();
-            setIsAuthenticated(true);
-            setUser({
-              id: userData.id,
-              name: userData.name,
-              email: userData.email,
-              avatar: userData.avatar,
-            });
-          } else {
-            // トークンが無効な場合は削除
-            localStorage.removeItem('jwt');
-            setIsAuthenticated(false);
-            setUser(undefined);
-          }
-        } catch {
-          // トークン検証でエラーが発生した場合の処理
-          localStorage.removeItem('jwt');
-          setIsAuthenticated(false);
-          setUser(undefined);
-        }
+      if (authUser) {
+        setIsAuthenticated(true);
+        setUser(authUser);
       } else {
+        // トークンが無効な場合は削除
+        removeToken();
         setIsAuthenticated(false);
         setUser(undefined);
       }
@@ -101,48 +129,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // ログイン時にも前のユーザーのキャッシュを破棄する。
       void mutate(() => true, undefined, { revalidate: false });
 
-      localStorage.setItem('jwt', token);
+      setToken(token);
 
-      // ログイン後、プロフィールAPIを呼び出してユーザー情報を取得
-      try {
-        const profileResponse = await createApiRequest(
-          API_CONFIG.endpoints.userProfile,
-        );
-
-        if (profileResponse.ok) {
-          const userData = await profileResponse.json();
-          setUser({
-            id: userData.id,
-            name: userData.name,
-            email: userData.email,
-            avatar: userData.avatar,
-          });
-        } else {
-          // プロフィール取得に失敗した場合はログインレスポンスから設定
-          if (result.user) {
-            setUser({
-              id: result.user.id,
-              name: result.user.name,
-              email: result.user.email,
-              avatar: result.user.avatar,
-            });
-          } else {
-            setUser({ id: 1, name: 'User', email });
-          }
-        }
-      } catch {
-        // プロフィール取得でエラーが発生した場合の処理
-        // フォールバック
-        if (result.user) {
-          setUser({
-            id: result.user.id,
-            name: result.user.name,
-            email: result.user.email,
-          });
-        } else {
-          setUser({ id: 1, name: 'User', email });
-        }
-      }
+      // ログイン後、プロフィールAPIを呼び出してユーザー情報を取得。
+      // 取得できなければログインレスポンスの user を使い、それも無ければ undefined のままにする。
+      // (取得失敗時に偽のユーザーを置くと、他人の名前でログインしたように見えてしまう)
+      setUser((await fetchAuthUser()) ?? toAuthUser(result.user));
 
       setIsAuthenticated(true);
       toast.success('ログインしました');
@@ -157,7 +149,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const logout = () => {
-    localStorage.removeItem('jwt');
+    removeToken();
     setIsAuthenticated(false);
     setUser(undefined);
 
@@ -213,7 +205,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       value={{
         isAuthenticated,
         isLoading,
-        loading: isLoading, // 互換性のため追加
         user,
         login,
         logout,

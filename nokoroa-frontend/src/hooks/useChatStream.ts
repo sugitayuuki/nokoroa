@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { API_CONFIG } from '@/lib/apiConfig';
 import { PostData } from '@/types/post';
+import { getToken } from '@/utils/auth';
 
 export interface ChatMessage {
   role: 'user' | 'assistant';
@@ -87,7 +88,7 @@ function setRelatedPostsOnLastAssistant(
 
 function readStoredToken(): string | null {
   try {
-    return localStorage.getItem('jwt');
+    return getToken();
   } catch (storageErr) {
     console.warn(
       '[ChatPanel] localStorage access failed, sending without token',
