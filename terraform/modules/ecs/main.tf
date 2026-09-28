@@ -102,7 +102,7 @@ resource "aws_iam_role_policy" "ecs_s3_access" {
           "s3:PutObject",
           "s3:DeleteObject"
         ]
-        Resource = "arn:aws:s3:::${var.project_name}-${var.environment}-uploads/*"
+        Resource = "${var.uploads_bucket_arn}/*"
       }
     ]
   })
@@ -146,7 +146,7 @@ resource "aws_ecs_task_definition" "backend" {
         },
         {
           name  = "AWS_BUCKET_NAME"
-          value = "${var.project_name}-${var.environment}-uploads"
+          value = var.uploads_bucket_name
         },
         {
           name  = "AWS_REGION"
@@ -222,6 +222,12 @@ resource "aws_ecs_task_definition" "backend" {
       image     = var.ai_image != "" ? var.ai_image : "public.ecr.aws/docker/library/python:3.12-slim"
       essential = true
 
+      # CORS_ORIGINS は本番では実質機能していない。AI サイドカーは ALB に
+      # 紐づかず、同一タスク内の backend から localhost 経由でしか呼ばれないため
+      # ブラウザのプリフライトが発生しない。それでも値を明示しているのは、
+      # nokoroa-ai/app/config.py の既定値が localhost:3000 / 4000（ローカル開発用）に
+      # なっており、未設定のままだと本番タスクが開発用オリジンを許可したまま
+      # 起動するため。将来サイドカーを外部公開する場合はここが唯一の指定箇所になる。
       environment = [
         {
           name  = "CORS_ORIGINS"

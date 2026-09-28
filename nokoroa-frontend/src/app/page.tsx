@@ -8,23 +8,19 @@ import Paper from '@mui/material/Paper';
 import Stack from '@mui/material/Stack';
 import Typography from '@mui/material/Typography';
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 import PostCard from '@/components/post/PostCard';
 import { GRID_LAYOUT } from '@/constants/theme';
-import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
+import { usePaginatedPosts } from '@/hooks/usePaginatedPosts';
 import { usePosts } from '@/hooks/usePosts';
 import { useAuth } from '@/providers/AuthProvider';
 import { useDialog } from '@/providers/DialogProvider';
-import { PostData } from '@/types/post';
 
 export default function TopPage() {
   const { isAuthenticated, isLoading } = useAuth();
   const { openSignup } = useDialog();
   const [page, setPage] = useState(0);
-  const [allPosts, setAllPosts] = useState<PostData[]>([]);
-  const [hasMore, setHasMore] = useState(false);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
 
   const {
     data: posts,
@@ -32,34 +28,11 @@ export default function TopPage() {
     error,
   } = usePosts({ limit: 12, page });
 
-  useEffect(() => {
-    if (posts) {
-      if (page === 0) {
-        setAllPosts(posts.posts);
-      } else {
-        setAllPosts((prev) => {
-          const existingIds = new Set(prev.map((p) => p.id));
-          const newPosts = posts.posts.filter((p) => !existingIds.has(p.id));
-          return [...prev, ...newPosts];
-        });
-      }
-      setHasMore(posts.hasMore);
-      setIsLoadingMore(false);
-    }
-  }, [posts, page]);
-
-  const handleLoadMore = () => {
-    if (hasMore && !isLoadingMore) {
-      setIsLoadingMore(true);
-      setPage((prev) => prev + 1);
-    }
-  };
-
-  const { lastElementRef } = useInfiniteScroll({
-    hasMore,
-    isLoading: isLoadingMore,
-    onLoadMore: handleLoadMore,
-  });
+  const {
+    posts: allPosts,
+    isLoadingMore,
+    lastElementRef,
+  } = usePaginatedPosts({ data: posts, page, onPageChange: setPage, error });
 
   if (isLoading) {
     return (

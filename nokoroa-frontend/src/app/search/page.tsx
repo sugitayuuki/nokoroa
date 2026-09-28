@@ -1,23 +1,24 @@
 'use client';
 
 import SearchIcon from '@mui/icons-material/Search';
-import { Box, Container, Typography } from '@mui/material';
+import { Box, CircularProgress, Container, Typography } from '@mui/material';
 import { useSearchParams } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
+
+import { usePaginatedPosts } from '@/hooks/usePaginatedPosts';
 
 import { SearchForm } from '../../components/search/SearchForm';
 import { SearchResults } from '../../components/search/SearchResults';
 import { useSearchPosts } from '../../hooks/useSearchPosts';
-import { PostData } from '../../types/post';
 import { SearchFilters } from '../../types/search';
 
-export default function SearchPage() {
+/** 1 ページあたりの取得件数 */
+const PAGE_SIZE = 10;
+
+function SearchPageContent() {
   const searchParams = useSearchParams();
   const [filters, setFilters] = useState<SearchFilters>({});
   const [hasSearched, setHasSearched] = useState(false);
-  const [allPosts, setAllPosts] = useState<PostData[]>([]);
-  const [hasMore, setHasMore] = useState(false);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
 
   useEffect(() => {
     const tagParam = searchParams.get('tags');
@@ -25,7 +26,7 @@ export default function SearchPage() {
       const initialFilters: SearchFilters = {
         tags: [tagParam],
         mode: 'keyword',
-        limit: 10,
+        limit: PAGE_SIZE,
         offset: 0,
       };
       setFilters(initialFilters);
@@ -35,37 +36,36 @@ export default function SearchPage() {
 
   const { data, isLoading, error } = useSearchPosts(filters, hasSearched);
 
-  useEffect(() => {
-    if (data) {
-      if (filters.offset === 0 || !filters.offset) {
-        setAllPosts(data.posts);
-      } else {
-        setAllPosts((prev) => [...prev, ...data.posts]);
-      }
-      setHasMore(data.hasMore);
-      setIsLoadingMore(false);
-    }
-  }, [data, filters.offset]);
+  // 検索 API は offset 指定なので、累積側が扱うページ番号へ読み替える
+  const pageSize = filters.limit || PAGE_SIZE;
+  const page = Math.floor((filters.offset || 0) / pageSize);
+
+  const {
+    posts: allPosts,
+    hasMore,
+    isLoadingMore,
+    loadMore,
+    reset,
+  } = usePaginatedPosts({
+    data,
+    page,
+    error,
+    onPageChange: (nextPage) =>
+      setFilters((prev) => ({
+        ...prev,
+        offset: nextPage * (prev.limit || PAGE_SIZE),
+      })),
+  });
 
   const handleSearch = (newFilters: SearchFilters) => {
     const searchFilters = {
       ...newFilters,
-      limit: 10,
+      limit: PAGE_SIZE,
       offset: 0,
     };
     setFilters(searchFilters);
     setHasSearched(true);
-    setAllPosts([]);
-  };
-
-  const handleLoadMore = async () => {
-    if (hasMore && !isLoadingMore) {
-      setIsLoadingMore(true);
-      setFilters((prev) => ({
-        ...prev,
-        offset: (prev.offset || 0) + (prev.limit || 10),
-      }));
-    }
+    reset();
   };
 
   return (
@@ -88,11 +88,38 @@ export default function SearchPage() {
         isLoading={isLoading}
         error={error}
         hasSearched={hasSearched}
-        hasMore={hasMore}
+        hasMore={hasMore && !error}
         isLoadingMore={isLoadingMore}
-        onLoadMore={handleLoadMore}
+        onLoadMore={loadMore}
         mode={filters.mode}
       />
     </Container>
+  );
+}
+
+/**
+ * useSearchParams は Suspense 境界の内側で使う必要がある
+ * (Next.js 15 では境界が無いと prerender エラーになる)。
+ */
+export default function SearchPage() {
+  return (
+    <Suspense
+      // 空の fallback だとプリレンダ HTML が空になり、ディープリンク時に
+      // ハイドレーション完了まで白画面が出る。スピナーを見せる
+      fallback={
+        <Box
+          sx={{
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            minHeight: '50vh',
+          }}
+        >
+          <CircularProgress />
+        </Box>
+      }
+    >
+      <SearchPageContent />
+    </Suspense>
   );
 }

@@ -38,7 +38,19 @@ CI が毎コミットで `terraform fmt -check` / `init` / `validate` を実行�
 | ACM 証明書 | 無料。再発行には DNS 検証の待ち時間が必要 |
 | ECR リポジトリ | ビルド済みイメージの保管場所 |
 | S3 アップロードバケット | 投稿画像の実データ |
-| Secrets Manager（2 件） | 削除すると 30 日間は同名で作り直せない。1 件あたり月 $0.40 |
+| Secrets Manager | 削除すると 30 日間は同名で作り直せない。1 件あたり月 $0.40（下記参照） |
+
+`modules/secrets` が定義しているシークレットは **7 件**です（`db-password`(現在アプリからは未消費。接続は `database-url` を使用) / `jwt-secret` / `database-url` / `google-client-id` / `google-client-secret` / `gemini-api-key` / `internal-api-key`）。停止時の `terraform destroy` はこの 7 件すべてを削除対象にしていますが、`recovery_window_in_days` を明示していないため既定の **30 日間の削除待ち**に入り、待機中も課金対象として残ります。請求上「2 件分」しか見えていないのは、残りが削除待ち期間を終えて消えた後の状態と考えられます（AWS 上の実数は未確認）。
+
+つまり再構築時は、**AWS に実在する分は `terraform import` が必要、削除待ちが残っている分は待機満了か `aws secretsmanager restore-secret` が必要**です。どちらに該当するかは事前に確認してください。
+
+```bash
+# 実在（削除待ちを含む）するシークレットの一覧と削除予定日
+aws secretsmanager list-secrets \
+  --include-planned-deletion \
+  --query 'SecretList[?starts_with(Name, `nokoroa-prod-`)].[Name,DeletedDate]' \
+  --output table
+```
 
 ## ディレクトリ構成
 
@@ -88,6 +100,8 @@ ECS 側の受け口はフロントエンド（3000）とバックエンド（300
 ### ドメインは apex（`nokoroa.com`）に寄せる
 
 `www.nokoroa.com` にも A レコードと ACM の SAN がありますが、バックエンドの CORS 許可オリジンは apex 単独です。www のまま到達すると API がすべて CORS で失敗するため、**ALB の HTTPS リスナールール（優先度 150）で www → apex へ 301 リダイレクト**しています（`modules/alb` の `apex_domain`）。優先度は意図的に `/api/*` の転送ルール（100）より**後**にしています。ALB の redirect は 301/302 しか選べず、www 宛の `POST /api/*` を先にリダイレクトすると GET に降格してボディが消えるため、API は www のままでも転送し、ページ遷移（GET）だけを apex へ寄せる設計です。HTTP リスナー側にも同じルール（優先度 10）を置き、`http://www` からの 301 が 2 ホップになるのを避けています。
+
+ポート 80 のリスナーは `enable_https` で排他にしています。HTTPS 有効時は 443 へ 301 する `http`、無効時は frontend へ直接転送する `http_dev` のどちらか一方だけが作られます（両方に `count` を入れる前は同じ 80 番を取り合って `DuplicateListener` になり、かつ 443 が無いのに 443 へリダイレクトする分岐が残っていました）。
 
 ドメイン名は `envs/prod` の `app_domain`（既定 `nokoroa.com`）に一本化し、Route 53・ACM・S3 の CORS・ECS の `FRONTEND_URL` / `GOOGLE_CALLBACK_URL` がこれを参照します。
 
@@ -223,5 +237,5 @@ terraform destroy \
 ## 既知の課題
 
 - **state が S3 に置かれていない**: `versions.tf` の S3 backend がコメントアウトされたままで、state はローカル管理です。保管先のバケットと DynamoDB ロックテーブルは `modules/s3` に定義済みですが、state を置くバケット自身を同じ設定で作る循環があるため、ブートストラップを分ける必要があります。
-- **残しているリソースが state に載っていない**: 上記の「停止中も残しているもの」は AWS 上に実在する一方、現在の state には記録されていません。このため今のまま `terraform apply` を実行すると、ECR・S3・Secrets Manager が既存と衝突します。再構築の前に `terraform import` で state に取り込む必要があります。
-- **変数の `validation` が未設定**: 93 個の変数すべてに `description` と `type` はありますが、値域の検証は入れていません。
+- **残しているリソースが state に載っていない**: 上記の「停止中も残しているもの」は AWS 上に実在する一方、現在の state には記録されていません。このため今のまま `terraform apply` を実行すると、ECR・S3・Secrets Manager が既存と衝突します。再構築の前に `terraform import` で state に取り込む必要があります。Secrets Manager は削除待ち中のものが混ざりうるため、`import` の前に `list-secrets --include-planned-deletion` で状態を確認してください（削除待ちのものは `import` できず、`restore-secret` か待機満了が必要です）。
+- **変数の `validation` が未設定**: 94 個の変数すべてに `description` と `type` はありますが、値域の検証は入れていません。

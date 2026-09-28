@@ -12,7 +12,12 @@ interface ChangePasswordData {
 }
 
 interface UseChangePasswordReturn {
-  changePassword: (data: ChangePasswordData) => Promise<void>;
+  /**
+   * 成功したかを戻り値で返す。
+   * success state は次のレンダリングまで更新されないため、
+   * 呼び出し直後に参照しても常に古い値になる(フォームリセットが走らない)。
+   */
+  changePassword: (data: ChangePasswordData) => Promise<boolean>;
   isLoading: boolean;
   error: string | null;
   success: boolean;
@@ -23,7 +28,7 @@ export function useChangePassword(): UseChangePasswordReturn {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
-  const changePassword = async (data: ChangePasswordData) => {
+  const changePassword = async (data: ChangePasswordData): Promise<boolean> => {
     try {
       setIsLoading(true);
       setError(null);
@@ -47,9 +52,11 @@ export function useChangePassword(): UseChangePasswordReturn {
       }
 
       setSuccess(true);
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'エラーが発生しました');
       // パスワード変更でエラーが発生した場合の処理
+      return false;
     } finally {
       setIsLoading(false);
     }

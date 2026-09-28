@@ -26,13 +26,14 @@ export function useSearchSuggestions(
 
       setIsLoading(true);
       try {
+        // サジェストは公開エンドポイントのため認証ヘッダは付けない(既存挙動を維持)
         const endpoint =
           type === 'keyword'
-            ? `${API_CONFIG.BASE_URL}/posts/suggestions/keywords`
-            : `${API_CONFIG.BASE_URL}/posts/suggestions/locations`;
+            ? API_CONFIG.endpoints.keywordSuggestions
+            : API_CONFIG.endpoints.locationSuggestions;
 
         const response = await fetch(
-          `${endpoint}?q=${encodeURIComponent(query)}`,
+          API_CONFIG.buildUrl(`${endpoint}?q=${encodeURIComponent(query)}`),
         );
 
         if (response.ok) {

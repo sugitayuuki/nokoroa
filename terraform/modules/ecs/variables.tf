@@ -13,16 +13,6 @@ variable "aws_region" {
   type        = string
 }
 
-variable "vpc_id" {
-  description = "VPC ID"
-  type        = string
-}
-
-variable "private_subnet_ids" {
-  description = "Private subnet IDs"
-  type        = list(string)
-}
-
 variable "public_subnet_ids" {
   description = "Public subnet IDs"
   type        = list(string)
@@ -51,6 +41,19 @@ variable "backend_port" {
 variable "frontend_port" {
   description = "Frontend port"
   type        = number
+}
+
+# アップロード用 S3 バケットは modules/s3 が名前を決めている。ここで
+# "${project}-${env}-uploads" を組み直すと、あちらの命名を変えた瞬間に IAM ポリシーと
+# AWS_BUCKET_NAME が無言で実在しないバケットを指すため、必ず output を受け取る。
+variable "uploads_bucket_name" {
+  description = "Name of the uploads S3 bucket (pass modules/s3 output; do not rebuild the string)"
+  type        = string
+}
+
+variable "uploads_bucket_arn" {
+  description = "ARN of the uploads S3 bucket (pass modules/s3 output; do not rebuild the string)"
+  type        = string
 }
 
 variable "app_domain" {

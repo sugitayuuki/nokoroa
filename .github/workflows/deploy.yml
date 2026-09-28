@@ -49,6 +49,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # backend / AI は frontend と違い cache-from / cache-to を設定していない。
+      # ランナーは毎回使い捨てでキャッシュのエクスポート先が無く、ビルドはどのみち
+      # 素の状態から始まるため、no-cache: true はその前提を明示する保険（Prisma
+      # クライアント生成と apt / pip のネイティブ依存が、途中から復元されたレイヤで
+      # 古いまま残るのを確実に避ける）。速度が問題になったら frontend と同じ
+      # type=gha を入れて no-cache を外す。非対称なのは意図であって設定漏れではない。
       - name: Build and push Backend image
         id: build-backend
         uses: docker/build-push-action@v5
@@ -148,6 +154,9 @@ jobs:
           # （Terraform 側のタスク定義には意図的に持たせていない）。
           # terraform の app_domain を変更する場合はこの値も併せて変更すること
           # (ci.yml の build ジョブにも同じ NEXT_PUBLIC_API_URL がある)
+          # backend / AI と違いここだけ type=gha のキャッシュを使う。Next.js の
+          # ビルドが 3 つの中で最も重く、かつ build-args はキャッシュキーに含まれる
+          # ため、下の NEXT_PUBLIC_* を変えれば確実にキャッシュは無効化される。
           build-args: |
             NEXT_PUBLIC_API_URL=https://nokoroa.com
             NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=${{ secrets.GOOGLE_MAPS_API_KEY }}

@@ -126,6 +126,10 @@ async function requestChatStream(
     content: msg.content.slice(0, MAX_HISTORY_CONTENT_LENGTH),
   }));
 
+  // createApiRequest ではなく素の fetch のままにしている。
+  // createApiRequest は getToken() を直接呼ぶが、ここは localStorage が
+  // 読めない環境でも「トークン無しで送る」ために readStoredToken() で
+  // ガード済みのトークンを受け取る契約になっているため。
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
@@ -133,7 +137,7 @@ async function requestChatStream(
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  return fetch(`${API_CONFIG.BASE_URL}/chat/stream`, {
+  return fetch(API_CONFIG.buildUrl(API_CONFIG.endpoints.chatStream), {
     method: 'POST',
     headers,
     body: JSON.stringify({
@@ -283,8 +287,9 @@ export function useChatStream({
       if (token) {
         suggestionsHeaders['Authorization'] = `Bearer ${token}`;
       }
+      // requestChatStream と同じ理由でトークンは引数から受け取る
       const suggestionsRes = await fetch(
-        `${API_CONFIG.BASE_URL}/chat/suggestions`,
+        API_CONFIG.buildUrl(API_CONFIG.endpoints.chatSuggestions),
         {
           method: 'POST',
           headers: suggestionsHeaders,

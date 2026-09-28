@@ -1,18 +1,12 @@
 'use client';
 
-import LocationOnIcon from '@mui/icons-material/LocationOn';
 import LockIcon from '@mui/icons-material/Lock';
 import MapIcon from '@mui/icons-material/Map';
 import PublicIcon from '@mui/icons-material/Public';
 import SearchIcon from '@mui/icons-material/Search';
 import {
-  Avatar,
   Box,
   Button,
-  Card,
-  CardContent,
-  CardMedia,
-  Chip,
   CircularProgress,
   Container,
   Dialog,
@@ -21,15 +15,14 @@ import {
   IconButton,
   InputAdornment,
   Paper,
-  Stack,
   TextField,
   Typography,
 } from '@mui/material';
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 
+import PostCard from '@/components/post/PostCard';
 import { API_CONFIG } from '@/lib/apiConfig';
-import { formatDistanceToNow } from '@/utils/dateFormat';
 import { isComposingEvent } from '@/utils/ime';
 
 import { GoogleMap } from '../../components/map/GoogleMap';
@@ -37,9 +30,6 @@ import { PostDetail } from '../../components/post/PostDetail';
 import { useBodyScrollLock } from '../../hooks/useBodyScrollLock';
 import { useAuth } from '../../providers/AuthProvider';
 import { PostData } from '../../types/post';
-import { getTagColor } from '../../utils/tagColors';
-
-const API_BASE_URL = API_CONFIG.BASE_URL || 'http://localhost:4000';
 
 export default function MapPage() {
   const { isAuthenticated, isLoading: authLoading } = useAuth();
@@ -72,7 +62,7 @@ export default function MapPage() {
       }
       params.append('limit', '100');
 
-      const url = `${API_BASE_URL}/posts/search-by-location?${params.toString()}`;
+      const url = `${API_CONFIG.buildUrl(API_CONFIG.endpoints.searchByLocation)}?${params.toString()}`;
 
       const response = await fetch(url);
 
@@ -280,26 +270,28 @@ export default function MapPage() {
             placeholder="場所や投稿内容で検索..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            onKeyPress={(e) => {
-              // keypress の IME 挙動はブラウザ差があるため、念のため同じガードを入れる
+            onKeyDown={(e) => {
+              // IME の変換確定 Enter で検索が誤発火しないようガードする
               if (isComposingEvent(e)) return;
               if (e.key === 'Enter') {
                 handleSearch();
               }
             }}
-            InputProps={{
-              startAdornment: (
-                <InputAdornment position="start">
-                  <SearchIcon />
-                </InputAdornment>
-              ),
-              endAdornment: (
-                <InputAdornment position="end">
-                  <IconButton onClick={handleSearch} edge="end">
+            slotProps={{
+              input: {
+                startAdornment: (
+                  <InputAdornment position="start">
                     <SearchIcon />
-                  </IconButton>
-                </InputAdornment>
-              ),
+                  </InputAdornment>
+                ),
+                endAdornment: (
+                  <InputAdornment position="end">
+                    <IconButton onClick={handleSearch} edge="end">
+                      <SearchIcon />
+                    </IconButton>
+                  </InputAdornment>
+                ),
+              },
             }}
           />
         </Box>
@@ -448,146 +440,19 @@ export default function MapPage() {
           }}
         >
           {posts.map((post) => (
-            <Card
+            <PostCard
               key={post.id}
-              sx={{
-                height: '100%',
-                display: 'flex',
-                flexDirection: 'column',
-                borderRadius: 2,
-                overflow: 'hidden',
-                cursor: 'pointer',
-                transition: 'transform 0.2s, box-shadow 0.2s',
-                '&:hover': {
-                  transform: 'translateY(-4px)',
-                  boxShadow: '0 8px 16px rgba(0, 0, 0, 0.1)',
-                },
-              }}
-              onClick={() => {
-                if (post && typeof handlePostClick === 'function') {
-                  handlePostClick(post);
-                }
-              }}
-            >
-              <CardMedia
-                component="img"
-                height="200"
-                image={post.imageUrl || '/top.jpg'}
-                alt={post.title}
-                sx={{ objectFit: 'cover' }}
-              />
-              <CardContent sx={{ flexGrow: 1, bgcolor: 'background.paper' }}>
-                <Stack spacing={2}>
-                  <Box>
-                    <Typography
-                      variant="h6"
-                      component="h2"
-                      gutterBottom
-                      sx={{
-                        fontWeight: 600,
-                        color: 'text.primary',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {post.title}
-                    </Typography>
-                    <Typography
-                      variant="body2"
-                      color="text.secondary"
-                      sx={{ mb: 1 }}
-                    >
-                      {formatDistanceToNow(post.createdAt)}
-                    </Typography>
-                  </Box>
-
-                  <Typography
-                    variant="body2"
-                    color="text.secondary"
-                    sx={{
-                      display: '-webkit-box',
-                      WebkitLineClamp: 2,
-                      WebkitBoxOrient: 'vertical',
-                      overflow: 'hidden',
-                    }}
-                  >
-                    {post.content}
-                  </Typography>
-
-                  <Stack
-                    direction="row"
-                    spacing={1}
-                    sx={{ flexWrap: 'wrap', gap: 1 }}
-                  >
-                    {post.location && (
-                      <Chip
-                        icon={<LocationOnIcon />}
-                        label={post.location}
-                        size="small"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                        }}
-                        sx={{
-                          bgcolor: 'primary.light',
-                          color: 'primary.contrastText',
-                          cursor: 'default',
-                        }}
-                      />
-                    )}
-                    {post.tags?.slice(0, 2).map((tag, index) => (
-                      <Chip
-                        key={index}
-                        label={tag.startsWith('#') ? tag : `#${tag}`}
-                        size="small"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                        }}
-                        sx={{
-                          backgroundColor: getTagColor(tag),
-                          color: 'white',
-                          fontSize: '0.75rem',
-                        }}
-                      />
-                    ))}
-                  </Stack>
-
-                  <Box
-                    sx={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      pt: 1,
-                    }}
-                  >
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <Avatar
-                        src={post.author?.avatar || undefined}
-                        sx={{ width: 24, height: 24 }}
-                      >
-                        {!post.author?.avatar && post.author?.name
-                          ? post.author.name.charAt(0).toUpperCase()
-                          : null}
-                      </Avatar>
-                      <Typography variant="body2" color="text.secondary">
-                        {post.author?.name || 'Unknown'}
-                      </Typography>
-                    </Box>
-                    {post.isPublic ? (
-                      <PublicIcon
-                        sx={{ fontSize: 18, color: 'text.secondary' }}
-                      />
-                    ) : (
-                      <LockIcon
-                        sx={{ fontSize: 18, color: 'text.secondary' }}
-                      />
-                    )}
-                  </Box>
-                </Stack>
-              </CardContent>
-            </Card>
+              post={post}
+              variant="map"
+              onClick={() => handlePostClick(post)}
+              footerAction={
+                post.isPublic ? (
+                  <PublicIcon sx={{ fontSize: 18, color: 'text.secondary' }} />
+                ) : (
+                  <LockIcon sx={{ fontSize: 18, color: 'text.secondary' }} />
+                )
+              }
+            />
           ))}
         </Box>
 

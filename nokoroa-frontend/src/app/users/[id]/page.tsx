@@ -8,8 +8,6 @@ import {
   Container,
   Paper,
   Skeleton,
-  Tab,
-  Tabs,
   Typography,
 } from '@mui/material';
 import { useParams, useRouter } from 'next/navigation';
@@ -23,12 +21,6 @@ import { useUser } from '@/hooks/useUser';
 import { API_CONFIG, createApiRequest } from '@/lib/apiConfig';
 import { UserProfile } from '@/types/user';
 
-interface TabPanelProps {
-  children?: React.ReactNode;
-  index: number;
-  value: number;
-}
-
 type UserData = UserProfile & {
   posts?: Array<{
     id: number;
@@ -41,22 +33,6 @@ type UserData = UserProfile & {
   isFollowing?: boolean;
 };
 
-function TabPanel(props: TabPanelProps) {
-  const { children, value, index, ...other } = props;
-
-  return (
-    <div
-      role="tabpanel"
-      hidden={value !== index}
-      id={`profile-tabpanel-${index}`}
-      aria-labelledby={`profile-tab-${index}`}
-      {...other}
-    >
-      {value === index && <Box sx={{ p: 3 }}>{children}</Box>}
-    </div>
-  );
-}
-
 export default function UserProfilePage() {
   const params = useParams();
   const router = useRouter();
@@ -64,7 +40,6 @@ export default function UserProfilePage() {
   const { user: currentUser } = useUser();
   const [userData, setUserData] = useState<UserData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [tabValue, setTabValue] = useState(0);
 
   const isOwnProfile = currentUser?.id === userId;
 
@@ -102,10 +77,6 @@ export default function UserProfilePage() {
           : prev.followersCount - 1,
       };
     });
-  };
-
-  const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
-    setTabValue(newValue);
   };
 
   if (loading) {
@@ -203,18 +174,12 @@ export default function UserProfilePage() {
             )}
           </Box>
         </Box>
-
-        <Tabs
-          value={tabValue}
-          onChange={handleTabChange}
-          aria-label="profile tabs"
-        >
-          <Tab label="投稿" />
-          <Tab label="いいね" />
-        </Tabs>
       </Paper>
 
-      <TabPanel value={tabValue} index={0}>
+      <Box sx={{ p: 3 }}>
+        <Typography variant="h6" component="h2" sx={{ mb: 2 }}>
+          投稿
+        </Typography>
         <Box
           sx={{
             display: 'grid',
@@ -226,13 +191,7 @@ export default function UserProfilePage() {
             <PostCard key={post.id} post={post} variant="compact" />
           ))}
         </Box>
-      </TabPanel>
-
-      <TabPanel value={tabValue} index={1}>
-        <Typography variant="body1" color="text.secondary">
-          いいねした投稿がここに表示されます
-        </Typography>
-      </TabPanel>
+      </Box>
     </Container>
   );
 }

@@ -121,7 +121,7 @@ export default function Header({ onMobileToggle }: HeaderProps) {
                     src={
                       user.avatar.startsWith('http')
                         ? user.avatar
-                        : `${API_CONFIG.BASE_URL}/uploads/avatars/${user.avatar}`
+                        : API_CONFIG.buildUrl(`/uploads/avatars/${user.avatar}`)
                     }
                     alt={user.name}
                     sx={{
