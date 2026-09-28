@@ -289,24 +289,28 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
             if (data === '[DONE]') {
               continue;
             }
-            const event = parsed as { type?: string; posts?: PostData[] };
-            if (event.type === 'related_posts' && event.posts) {
-              receivedRelatedPosts = event.posts;
-              setMessages((prev) => {
-                const lastMsg = prev[prev.length - 1];
-                if (lastMsg?.role === 'assistant') {
-                  return [
-                    ...prev.slice(0, -1),
-                    { ...lastMsg, relatedPosts: event.posts },
-                  ];
+            if (data.startsWith('[ERROR]')) {
+              throw new Error(data);
+            }
+
+            if (data.startsWith('{')) {
+              try {
+                const parsed = JSON.parse(data);
+                if (parsed.type === 'related_posts' && parsed.posts) {
+                  receivedRelatedPosts = parsed.posts as PostData[];
+                  setMessages((prev) => {
+                    const lastMsg = prev[prev.length - 1];
+                    if (lastMsg?.role === 'assistant') {
+                      return [
+                        ...prev.slice(0, -1),
+                        { ...lastMsg, relatedPosts: parsed.posts },
+                      ];
+                    }
+                    return prev;
+                  });
+                  continue;
                 }
-                return prev;
-              });
-            } else {
-              console.warn(
-                '[ChatPanel] unknown SSE event type, skipping',
-                event.type,
-              );
+              } catch {}
             }
 
             fullResponse += data;
@@ -315,10 +319,6 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
             charQueueRef.current.push(...Array.from(data));
             startTyping();
           }
-
-          fullResponse += data;
-          charQueueRef.current.push(...Array.from(data));
-          startTyping();
         }
       }
 
