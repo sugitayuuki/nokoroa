@@ -25,7 +25,9 @@ export function useTags() {
       setIsLoading(true);
 
       // タグ一覧は公開エンドポイントのため認証ヘッダは付けない(既存挙動を維持)
-      const response = await fetch(`${API_CONFIG.BASE_URL}/posts/tags`);
+      const response = await fetch(
+        API_CONFIG.buildUrl(API_CONFIG.endpoints.postTags),
+      );
 
       if (!response.ok) {
         throw new Error('タグの取得に失敗しました');

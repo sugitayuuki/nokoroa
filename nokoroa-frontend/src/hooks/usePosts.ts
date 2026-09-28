@@ -28,7 +28,9 @@ export const usePosts = ({
   params.append('offset', (page * limit).toString());
   if (authorId) params.append('authorId', authorId.toString());
 
-  const url = `${API_CONFIG.BASE_URL}${API_CONFIG.endpoints.posts}?${params.toString()}`;
+  const url = API_CONFIG.buildUrl(
+    `${API_CONFIG.endpoints.posts}?${params.toString()}`,
+  );
 
   return useSWR<PostsResponse>(url, fetcher, {
     revalidateOnFocus: false,

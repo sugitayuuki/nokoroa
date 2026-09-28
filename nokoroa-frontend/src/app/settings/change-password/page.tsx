@@ -80,9 +80,11 @@ export default function ChangePasswordPage() {
       return;
     }
 
-    await changePassword(formData);
+    // success state はこのハンドラのクロージャでは更新前の値のままなので、
+    // 戻り値で判定する
+    const changed = await changePassword(formData);
 
-    if (success) {
+    if (changed) {
       // 成功時はフォームをリセット
       setFormData({
         currentPassword: '',

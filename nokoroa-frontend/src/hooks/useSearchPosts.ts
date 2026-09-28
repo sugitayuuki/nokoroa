@@ -4,8 +4,6 @@ import { API_CONFIG } from '@/lib/apiConfig';
 
 import { SearchFilters, SearchResponse } from '../types/search';
 
-const API_BASE_URL = API_CONFIG.BASE_URL || 'http://localhost:4000';
-
 export class SearchFetchError extends Error {
   status: number;
   constructor(status: number, message: string) {
@@ -16,7 +14,7 @@ export class SearchFetchError extends Error {
 }
 
 const fetcher = async (url: string): Promise<SearchResponse> => {
-  const isSemantic = url.includes('/posts/search/semantic');
+  const isSemantic = url.includes(API_CONFIG.endpoints.semanticSearch);
   const headers: Record<string, string> = isSemantic
     ? API_CONFIG.getAuthHeaders()
     : {};
@@ -36,7 +34,9 @@ const buildSearchUrl = (filters: SearchFilters): string => {
   if (filters.mode === 'semantic') {
     if (filters.q) searchParams.append('q', filters.q);
     if (filters.limit) searchParams.append('limit', filters.limit.toString());
-    return `${API_BASE_URL}/posts/search/semantic?${searchParams.toString()}`;
+    return API_CONFIG.buildUrl(
+      `${API_CONFIG.endpoints.semanticSearch}?${searchParams.toString()}`,
+    );
   }
 
   if (filters.q) searchParams.append('q', filters.q);
@@ -49,7 +49,9 @@ const buildSearchUrl = (filters: SearchFilters): string => {
   if (filters.limit) searchParams.append('limit', filters.limit.toString());
   if (filters.offset) searchParams.append('offset', filters.offset.toString());
 
-  return `${API_BASE_URL}/posts/search?${searchParams.toString()}`;
+  return API_CONFIG.buildUrl(
+    `${API_CONFIG.endpoints.search}?${searchParams.toString()}`,
+  );
 };
 
 export const useSearchPosts = (

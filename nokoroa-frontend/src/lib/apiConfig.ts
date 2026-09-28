@@ -13,6 +13,8 @@ export const API_CONFIG = {
     // 投稿関連
     posts: '/posts',
     postById: (id: string) => `/posts/${id}`,
+    uploadPostImage: '/posts/upload-image',
+    postTags: '/posts/tags',
 
     // ユーザー関連
     users: '/users',
@@ -31,9 +33,14 @@ export const API_CONFIG = {
 
     // 検索関連
     search: '/posts/search',
+    semanticSearch: '/posts/search/semantic',
+    searchByLocation: '/posts/search-by-location',
+    keywordSuggestions: '/posts/suggestions/keywords',
+    locationSuggestions: '/posts/suggestions/locations',
 
-    // アップロード関連
-    upload: '/upload',
+    // チャット関連
+    chatStream: '/chat/stream',
+    chatSuggestions: '/chat/suggestions',
 
     // いいね関連
     favoritePost: (postId: string) => `/posts/${postId}/favorite`,

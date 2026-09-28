@@ -25,23 +25,40 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 
-import { API_CONFIG } from '@/lib/apiConfig';
+import { uploadPostImage } from '@/lib/uploadImage';
 import { geocodeLocation as requestGeocode } from '@/utils/geocoding';
 import { isComposingEvent } from '@/utils/ime';
 
 import { CreatePostData } from '../../types/post';
-import { getToken } from '../../utils/auth';
 
 interface PostFormProps {
   onSubmit: (data: CreatePostData) => void;
   initialData?: Partial<CreatePostData>;
   isLoading?: boolean;
+  /** 送信ボタンの文言。編集画面は「更新」などに差し替える */
+  submitLabel?: string;
+  /** 送信中の文言 */
+  submittingLabel?: string;
+  /** 指定するとキャンセルボタンを表示する(編集画面用) */
+  onCancel?: () => void;
+  cancelLabel?: string;
+  /**
+   * 画像を必須にするか。
+   * 新規投稿は CreatePostDto.imageUrl が必須なので true、
+   * 編集は UpdatePostDto で任意なので false(画像なしの既存投稿を保存できなくなるため)。
+   */
+  requireImage?: boolean;
 }
 
 export const PostForm = ({
   onSubmit,
   initialData,
   isLoading,
+  submitLabel = '投稿する',
+  submittingLabel = '投稿中...',
+  onCancel,
+  cancelLabel = 'キャンセル',
+  requireImage = true,
 }: PostFormProps) => {
   const [formData, setFormData] = useState<CreatePostData>({
     title: initialData?.title || '',
@@ -67,7 +84,6 @@ export const PostForm = ({
     null,
   );
   const [geocodingAttempted, setGeocodingAttempted] = useState(false);
-  const API_URL = API_CONFIG.BASE_URL;
 
   const geocodeAbortRef = useRef<AbortController | null>(null);
   const GEOCODE_CACHE_MAX = 50;
@@ -234,8 +250,8 @@ export const PostForm = ({
     }));
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    // keypress の IME 挙動はブラウザ差があるため、念のため同じガードを入れる
+  const handleTagKeyDown = (e: React.KeyboardEvent) => {
+    // IME 変換確定の Enter でタグが追加されないようガードする
     if (isComposingEvent(e)) return;
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -279,37 +295,12 @@ export const PostForm = ({
     setUploadError(null);
 
     try {
-      const formDataUpload = new FormData();
-      formDataUpload.append('image', file);
-
-      const token = getToken();
-      if (!token) {
-        throw new Error('認証トークンが見つかりません');
-      }
-
-      const response = await fetch(`${API_URL}/posts/upload-image`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-        body: formDataUpload,
-      });
-
-      if (!response.ok) {
-        if (response.status === 401) {
-          throw new Error('認証が必要です。再度ログインしてください。');
-        }
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(
-          errorData.message || '画像のアップロードに失敗しました',
-        );
-      }
-
-      const result = await response.json();
+      // アップロード経路は lib/uploadImage に集約(新規投稿・編集で同一)
+      const url = await uploadPostImage(file);
       // S3 URLが直接返ってくる
       setFormData((prev) => ({
         ...prev,
-        imageUrl: result.url,
+        imageUrl: url,
       }));
       // previewUrlはbase64のまま維持（サーバーURLは表示に使わない）
     } catch (error) {
@@ -343,6 +334,8 @@ export const PostForm = ({
               setFormData((prev) => ({ ...prev, title: e.target.value }))
             }
             placeholder="投稿のタイトルを入力してください"
+            disabled={isLoading}
+            helperText={`${formData.title.length}/200`}
             slotProps={{ htmlInput: { maxLength: 200 } }}
           />
 
@@ -357,15 +350,22 @@ export const PostForm = ({
               setFormData((prev) => ({ ...prev, content: e.target.value }))
             }
             placeholder="投稿の内容を入力してください"
+            disabled={isLoading}
+            helperText={`${formData.content.length}/10000`}
             slotProps={{ htmlInput: { maxLength: 10000 } }}
           />
 
           <Box>
             <Typography variant="body2" color="text.secondary" gutterBottom>
-              画像{' '}
-              <Typography component="span" color="error.main">
-                *
-              </Typography>
+              画像
+              {requireImage && (
+                <>
+                  {' '}
+                  <Typography component="span" color="error.main">
+                    *
+                  </Typography>
+                </>
+              )}
             </Typography>
             <Paper
               variant="outlined"
@@ -388,7 +388,7 @@ export const PostForm = ({
                 onChange={handleFileChange}
                 style={{ display: 'none' }}
                 id="image-upload"
-                disabled={uploadingImage}
+                disabled={isLoading || uploadingImage}
               />
               <label htmlFor="image-upload" style={{ cursor: 'pointer' }}>
                 <Box sx={{ textAlign: 'center' }}>
@@ -415,7 +415,7 @@ export const PostForm = ({
                           component="span"
                           variant="outlined"
                           startIcon={<CloudUploadIcon />}
-                          disabled={uploadingImage}
+                          disabled={isLoading || uploadingImage}
                         >
                           画像を変更
                         </Button>
@@ -427,7 +427,7 @@ export const PostForm = ({
                             e.preventDefault();
                             handleRemoveImage();
                           }}
-                          disabled={uploadingImage}
+                          disabled={isLoading || uploadingImage}
                         >
                           削除
                         </Button>
@@ -492,25 +492,38 @@ export const PostForm = ({
               label="場所"
               value={formData.location}
               onChange={(e) => {
-                setFormData((prev) => ({ ...prev, location: e.target.value }));
+                // 場所テキストを変えたら座標は無効化する。
+                // 進行中のジオコーディングも打ち切らないと、古いテキストの
+                // 結果が後から届いて「表示中の場所と違う座標」を送ってしまう
+                geocodeAbortRef.current?.abort();
+                setFormData((prev) => ({
+                  ...prev,
+                  location: e.target.value,
+                  latitude: undefined,
+                  longitude: undefined,
+                }));
+                setIsGeocodingLocation(false);
                 setGeocodingSuccess(false);
                 setGeocodingAttempted(false);
                 setGeocodedDisplayName(null);
               }}
               onBlur={handleLocationBlur}
               placeholder="場所を入力してください（例：渋谷、京都駅、富士山）"
-              InputProps={{
-                endAdornment: (
-                  <InputAdornment position="end">
-                    {isGeocodingLocation ? (
-                      <CircularProgress size={20} />
-                    ) : geocodingSuccess ? (
-                      <CheckCircleIcon color="success" />
-                    ) : formData.location ? (
-                      <LocationOnIcon color="action" />
-                    ) : null}
-                  </InputAdornment>
-                ),
+              disabled={isLoading}
+              slotProps={{
+                input: {
+                  endAdornment: (
+                    <InputAdornment position="end">
+                      {isGeocodingLocation ? (
+                        <CircularProgress size={20} />
+                      ) : geocodingSuccess ? (
+                        <CheckCircleIcon color="success" />
+                      ) : formData.location ? (
+                        <LocationOnIcon color="action" />
+                      ) : null}
+                    </InputAdornment>
+                  ),
+                },
               }}
             />
             {geocodingSuccess && formData.latitude && formData.longitude && (
@@ -555,16 +568,19 @@ export const PostForm = ({
               label="タグを追加"
               value={newTag}
               onChange={(e) => setNewTag(e.target.value)}
-              onKeyPress={handleKeyPress}
+              onKeyDown={handleTagKeyDown}
               placeholder="タグを入力してEnterで追加"
-              InputProps={{
-                endAdornment: (
-                  <InputAdornment position="end">
-                    <IconButton onClick={handleAddTag} edge="end">
-                      <AddIcon />
-                    </IconButton>
-                  </InputAdornment>
-                ),
+              disabled={isLoading}
+              slotProps={{
+                input: {
+                  endAdornment: (
+                    <InputAdornment position="end">
+                      <IconButton onClick={handleAddTag} edge="end">
+                        <AddIcon />
+                      </IconButton>
+                    </InputAdornment>
+                  ),
+                },
               }}
             />
             {formData.tags && formData.tags.length > 0 && (
@@ -603,18 +619,30 @@ export const PostForm = ({
           />
 
           <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 2 }}>
+            {onCancel && (
+              <Button
+                variant="outlined"
+                size="large"
+                onClick={onCancel}
+                disabled={isLoading}
+              >
+                {cancelLabel}
+              </Button>
+            )}
             <Button
               type="submit"
               variant="contained"
               size="large"
+              startIcon={isLoading ? <CircularProgress size={20} /> : null}
               disabled={
                 isLoading ||
+                uploadingImage ||
                 !formData.title.trim() ||
                 !formData.content.trim() ||
-                !formData.imageUrl
+                (requireImage && !formData.imageUrl)
               }
             >
-              {isLoading ? '投稿中...' : '投稿する'}
+              {isLoading ? submittingLabel : submitLabel}
             </Button>
           </Box>
         </Box>
