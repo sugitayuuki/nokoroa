@@ -65,7 +65,12 @@ resource "aws_lb_target_group" "frontend" {
 }
 
 # HTTP Listener (redirects to HTTPS)
+# enable_https = false のときは 443 リスナーが存在せず、ここへ 301 しても行き先が
+# 無い。加えて下の http_dev(!enable_https, port 80) と同じポートを取り合い、
+# apply が DuplicateListener で失敗する。よって HTTPS 有効時のみ作成する。
 resource "aws_lb_listener" "http" {
+  count = var.enable_https ? 1 : 0
+
   load_balancer_arn = aws_lb.main.arn
   port              = "80"
   protocol          = "HTTP"
@@ -137,7 +142,7 @@ resource "aws_lb_listener_rule" "www_redirect" {
 resource "aws_lb_listener_rule" "www_redirect_http" {
   count = var.enable_https && var.apex_domain != "" ? 1 : 0
 
-  listener_arn = aws_lb_listener.http.arn
+  listener_arn = aws_lb_listener.http[0].arn
   priority     = 10
 
   action {
@@ -179,7 +184,9 @@ resource "aws_lb_listener_rule" "backend_api" {
   }
 }
 
-# HTTP Listener for development (when no SSL certificate)
+# HTTP Listener for development (when HTTPS is disabled)
+# 上の http リスナーと排他。enable_https のどちらの値でも port 80 のリスナーは
+# ちょうど 1 つになる。
 resource "aws_lb_listener" "http_dev" {
   count = !var.enable_https ? 1 : 0
 

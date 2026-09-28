@@ -134,15 +134,12 @@ docker compose exec backend npx prisma migrate deploy
 docker compose exec backend npm run seed
 
 # 5. フロントエンド
-#    .env.local はリポジトリに含めていないため、その場で作ります。
+#    .env.local.example をコピーするだけで、ローカル既定値が入ります。
 #    地図を使わないなら NEXT_PUBLIC_GOOGLE_MAPS_API_KEY は空のままで OK
 #    (空文字または development_mode ならアプリ側が地図なし表示に
 #     フォールバックします。他のダミー文字列は壊れた地図になるので注意)。
 cd ../nokoroa-frontend
-cat > .env.local <<'EOF'
-NEXT_PUBLIC_API_URL=http://localhost:4000
-NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=
-EOF
+cp .env.local.example .env.local
 npm ci
 npm run dev
 ```

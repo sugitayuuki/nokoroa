@@ -34,10 +34,13 @@ variable "db_password" {
   sensitive   = true
 }
 
+# ECS タスクを ARM64 (Graviton) で統一しているため、RDS も既定を t4g 系に揃える。
+# prod は envs/prod/main.tf で db.t4g.micro を明示しており、この既定値を変えても
+# 現行環境の plan 差分は出ない（新しい環境を足したときの初期値だけが変わる）。
 variable "instance_class" {
   description = "RDS instance class"
   type        = string
-  default     = "db.t3.micro"
+  default     = "db.t4g.micro"
 }
 
 variable "engine_version" {

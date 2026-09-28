@@ -33,6 +33,9 @@ resource "aws_subnet" "public" {
 }
 
 # Private Subnets
+# 現構成では未使用（enable_nat_gateway = false のため外向き通信ができず、ECS タスクは
+# パブリックサブネットに置いている）。将来 NAT Gateway を入れて ECS を private へ
+# 移すときの受け皿として、アドレス設計ごと残している。
 resource "aws_subnet" "private" {
   count             = length(var.availability_zones)
   vpc_id            = aws_vpc.main.id

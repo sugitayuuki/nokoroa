@@ -241,8 +241,9 @@ module "ecs" {
   aws_region   = var.aws_region
 
   # Network
+  # NAT を置かない構成のため ECS タスクはパブリックサブネットに配置する。
+  # private_subnet_ids は ecs モジュールで一度も参照されないため渡していない。
   vpc_id                = module.vpc.vpc_id
-  private_subnet_ids    = module.vpc.private_subnet_ids
   public_subnet_ids     = module.vpc.public_subnet_ids
   ecs_security_group_id = module.vpc.ecs_security_group_id
 
@@ -253,6 +254,10 @@ module "ecs" {
   backend_port   = var.backend_port
   frontend_port  = var.frontend_port
   app_domain     = var.app_domain
+
+  # S3（バケット名は modules/s3 が決めるので output を渡す）
+  uploads_bucket_name = module.s3.uploads_bucket_name
+  uploads_bucket_arn  = module.s3.uploads_bucket_arn
 
   # Secrets (from Secrets Manager)
   database_url_secret_arn     = module.secrets.database_url_arn
