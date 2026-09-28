@@ -1,5 +1,5 @@
 import { Server } from 'http';
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { INestApplication } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
@@ -12,6 +12,7 @@ import {
   OffsetPaginationDto,
   PagePaginationDto,
 } from './pagination.dto';
+import { createValidationPipe } from './validation';
 import { FollowsController } from '../follows/follows.controller';
 import { FollowsService } from '../follows/follows.service';
 
@@ -168,13 +169,8 @@ describe('FollowsController のページネーション (HTTP)', () => {
     }).compile();
 
     app = moduleRef.createNestApplication();
-    app.useGlobalPipes(
-      new ValidationPipe({
-        transform: true,
-        whitelist: true,
-        forbidNonWhitelisted: true,
-      }),
-    );
+    // パイプ構成の二重管理を避け、本番(main.ts)・e2e と同じ生成関数を使う
+    app.useGlobalPipes(createValidationPipe());
     await app.init();
     server = app.getHttpServer() as Server;
   });

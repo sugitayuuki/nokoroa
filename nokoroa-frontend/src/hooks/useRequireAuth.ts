@@ -23,11 +23,14 @@ export interface UseRequireAuthResult {
  * 認証が必須のページ用ガード。
  * 認証判定の完了を待ってから未認証ならリダイレクトする。
  *
- * 使い方:
+ * 使い方(基本形):
  *   const { isAuthLoading, isReady } = useRequireAuth();
  *   if (!isReady) {
  *     return isAuthLoading ? <CircularProgress /> : null;
  *   }
+ * ページ独自のローディング(useUser 等)と合成する場合は、
+ * `if (!isReady && !isAuthLoading) return null;` で未認証だけ先に落とし、
+ * スピナー表示は既存のローディング分岐へ相乗りさせてよい。
  */
 export function useRequireAuth(redirectTo = '/login'): UseRequireAuthResult {
   const router = useRouter();

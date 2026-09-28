@@ -48,14 +48,24 @@ describe('utils/auth (ブラウザ環境スタブ)', () => {
     expect(getToken()).toBeNull();
   });
 
-  it('exp が過去の JWT は掃除して null を返す', async () => {
+  it('exp が猶予(24h)を超えて過去の JWT は掃除して null を返す', async () => {
     const { getToken, setToken } = await import('@/utils/auth');
     const payload = Buffer.from(
-      JSON.stringify({ exp: Math.floor(Date.now() / 1000) - 60 }),
+      JSON.stringify({ exp: Math.floor(Date.now() / 1000) - 25 * 60 * 60 }),
     ).toString('base64url');
     setToken(`header.${payload}.sig`);
     expect(getToken()).toBeNull();
     expect(localStorage.getItem('jwt')).toBeNull();
+  });
+
+  it('失効直後(猶予内)の JWT はそのまま返す(時計スキューでの誤爆防止)', async () => {
+    const { getToken, setToken } = await import('@/utils/auth');
+    const payload = Buffer.from(
+      JSON.stringify({ exp: Math.floor(Date.now() / 1000) - 60 }),
+    ).toString('base64url');
+    const token = `header.${payload}.sig`;
+    setToken(token);
+    expect(getToken()).toBe(token);
   });
 
   it('exp が未来の JWT はそのまま返す', async () => {

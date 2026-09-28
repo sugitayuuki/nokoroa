@@ -98,11 +98,17 @@ export default function PostCard({
     router.push(`/search?tags=${encodeURIComponent(tag)}`);
   };
 
-  // 表示専用チップ。カードのリンク遷移を発火させない
+  // 表示専用チップ。カードのリンク遷移を発火させない。
+  // onClick を渡すと MUI Chip は role="button" + tabIndex=0 になるため、
+  // 押しても何も起きない要素がフォーカス順に入らないよう tabIndex は -1 にする
   const handleStaticChipClick = (e: MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
   };
+  const staticChipProps = {
+    onClick: handleStaticChipClick,
+    tabIndex: -1,
+  } as const;
 
   if (variant === 'compact') {
     return (
@@ -150,7 +156,7 @@ export default function PostCard({
                 fontSize: '4rem',
               }}
             >
-              {(post.title ?? '').charAt(0)}
+              {post.title.charAt(0)}
             </Typography>
           </Box>
         )}
@@ -221,7 +227,7 @@ export default function PostCard({
                 label={`+${tags.length - COMPACT_TAG_LIMIT}`}
                 size="small"
                 variant="outlined"
-                onClick={handleStaticChipClick}
+                {...staticChipProps}
                 sx={{
                   fontSize: '0.75rem',
                   height: '24px',
@@ -321,7 +327,7 @@ export default function PostCard({
                 icon={<LocationOnIcon />}
                 label={post.location}
                 size="small"
-                onClick={handleStaticChipClick}
+                {...staticChipProps}
                 sx={{
                   bgcolor: 'primary.light',
                   color: 'primary.contrastText',

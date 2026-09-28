@@ -10,10 +10,10 @@ Nokoroa の AWS インフラを Terraform で管理しています。
 
 ```
 $ terraform plan
-Plan: 78 to add, 0 to change, 0 to destroy.
+Plan: 79 to add, 0 to change, 0 to destroy.
 ```
 
-この 78 件は「停止によって削除された分」ではなく「定義されている全量」です。停止中も残しているリソース（下記）が state に載っていないため、現状の `plan` はそれらも新規作成として数えます。実際に再構築で作られるのは、それらを `import` で取り込んだあとの差分になります。
+この 79 件は「停止によって削除された分」ではなく「定義されている全量」です。停止中も残しているリソース（下記）が state に載っていないため、現状の `plan` はそれらも新規作成として数えます。実際に再構築で作られるのは、それらを `import` で取り込んだあとの差分になります。
 
 | モジュール | 作成されるリソース数 |
 |---|---:|
@@ -22,9 +22,9 @@ Plan: 78 to add, 0 to change, 0 to destroy.
 | `modules/ecs` | 13 |
 | `envs/prod`（ECR・ACM・Route53 等） | 13 |
 | `modules/s3` | 11 |
-| `modules/alb` | 7 |
+| `modules/alb` | 8 |
 | `modules/rds` | 3 |
-| **合計** | **78** |
+| **合計** | **79** |
 
 CI が毎コミットで `terraform fmt -check` / `init` / `validate` を実行しており、構文エラー・型の不整合・存在しない参照は検出されます。ただし `plan` は認証情報が必要なため CI では実行しておらず、**apply 時にしか現れない問題は検出できません**。プロバイダのバージョンは `.terraform.lock.hcl` をコミットして固定しているため、いつ誰が実行しても同じバージョンで解決されます。
 
@@ -87,7 +87,7 @@ ECS 側の受け口はフロントエンド（3000）とバックエンド（300
 
 ### ドメインは apex（`nokoroa.com`）に寄せる
 
-`www.nokoroa.com` にも A レコードと ACM の SAN がありますが、バックエンドの CORS 許可オリジンは apex 単独です。www のまま到達すると API がすべて CORS で失敗するため、**ALB の HTTPS リスナールール（優先度 10）で www → apex へ 301 リダイレクト**しています（`modules/alb` の `apex_domain`）。優先度は `/api/*` の転送ルール（100）より小さく、全パスに先に効きます。
+`www.nokoroa.com` にも A レコードと ACM の SAN がありますが、バックエンドの CORS 許可オリジンは apex 単独です。www のまま到達すると API がすべて CORS で失敗するため、**ALB の HTTPS リスナールール（優先度 150）で www → apex へ 301 リダイレクト**しています（`modules/alb` の `apex_domain`）。優先度は意図的に `/api/*` の転送ルール（100）より**後**にしています。ALB の redirect は 301/302 しか選べず、www 宛の `POST /api/*` を先にリダイレクトすると GET に降格してボディが消えるため、API は www のままでも転送し、ページ遷移（GET）だけを apex へ寄せる設計です。HTTP リスナー側にも同じルール（優先度 10）を置き、`http://www` からの 301 が 2 ホップになるのを避けています。
 
 ドメイン名は `envs/prod` の `app_domain`（既定 `nokoroa.com`）に一本化し、Route 53・ACM・S3 の CORS・ECS の `FRONTEND_URL` / `GOOGLE_CALLBACK_URL` がこれを参照します。
 

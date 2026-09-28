@@ -1,7 +1,14 @@
 'use client';
 
 import { usePathname } from 'next/navigation';
-import { createContext, useContext, useEffect, useState } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
 import { toast } from 'react-toastify';
 import { mutate } from 'swr';
 
@@ -122,61 +129,68 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     validateToken();
   }, []);
 
-  const login = async (email: string, password: string): Promise<boolean> => {
-    try {
-      const response = await createApiRequest(API_CONFIG.endpoints.login, {
-        method: 'POST',
-        body: JSON.stringify({ email, password }),
-      });
+  const login = useCallback(
+    async (email: string, password: string): Promise<boolean> => {
+      try {
+        const response = await createApiRequest(API_CONFIG.endpoints.login, {
+          method: 'POST',
+          body: JSON.stringify({ email, password }),
+        });
 
-      if (!response.ok) {
+        if (!response.ok) {
+          toast.error(
+            'ログインに失敗しました。メールアドレスとパスワードを確認してください。',
+          );
+          return false;
+        }
+
+        const result = await response.json();
+
+        // access_token または token のいずれかを使用
+        const token = result.access_token || result.token;
+        if (!token) {
+          toast.error('認証トークンが取得できませんでした。');
+          return false;
+        }
+
+        // トークン失効などで logout を経ずにユーザーが切り替わる場合があるため、
+        // ログイン時にも前のユーザーのキャッシュを破棄する。
+        void mutate(() => true, undefined, { revalidate: false });
+
+        setToken(token);
+
+        // ログイン後、プロフィールAPIを呼び出してユーザー情報を取得。
+        // 取得できなければログインレスポンスの user を使い、それも無ければ undefined のままにする。
+        // (取得失敗時に偽のユーザーを置くと、他人の名前でログインしたように見えてしまう)
+        const fetched = await fetchAuthUser();
+        setUser(
+          (fetched.status === 'ok' ? fetched.user : undefined) ??
+            toAuthUser(result.user),
+        );
+
+        setIsAuthenticated(true);
+        toast.success('ログインしました');
+        return true;
+      } catch {
+        // ログインでエラーが発生した場合の処理
         toast.error(
-          'ログインに失敗しました。メールアドレスとパスワードを確認してください。',
+          'ログインに失敗しました。ネットワーク接続を確認してください。',
         );
         return false;
       }
+    },
+    [],
+  );
 
-      const result = await response.json();
-
-      // access_token または token のいずれかを使用
-      const token = result.access_token || result.token;
-      if (!token) {
-        toast.error('認証トークンが取得できませんでした。');
-        return false;
-      }
-
-      // トークン失効などで logout を経ずにユーザーが切り替わる場合があるため、
-      // ログイン時にも前のユーザーのキャッシュを破棄する。
-      void mutate(() => true, undefined, { revalidate: false });
-
-      setToken(token);
-
-      // ログイン後、プロフィールAPIを呼び出してユーザー情報を取得。
-      // 取得できなければログインレスポンスの user を使い、それも無ければ undefined のままにする。
-      // (取得失敗時に偽のユーザーを置くと、他人の名前でログインしたように見えてしまう)
-      const fetched = await fetchAuthUser();
-      setUser(
-        (fetched.status === 'ok' ? fetched.user : undefined) ??
-          toAuthUser(result.user),
-      );
-
-      setIsAuthenticated(true);
-      toast.success('ログインしました');
-      return true;
-    } catch {
-      // ログインでエラーが発生した場合の処理
-      toast.error(
-        'ログインに失敗しました。ネットワーク接続を確認してください。',
-      );
-      return false;
-    }
-  };
-
-  const logout = () => {
+  const logout = useCallback(() => {
     // 認証状態を落とすと保護ページのガードが /login へ replace しようとするため、
     // 「意図的なログアウト」であることを先に立てて push('/') を勝たせる
-    // (旧実装は全遷移に入っていた 100ms 遅延のおかげで偶然 '/' が勝っていた)
-    setIsLoggingOut(true);
+    // (旧実装は全遷移に入っていた 100ms 遅延のおかげで偶然 '/' が勝っていた)。
+    // すでに '/' に居る場合は push が遷移しない=パス変化のリセットが走らないため、
+    // フラグ自体を立てない(保護ページ上ではないのでガード抑止も不要)
+    if (pathname !== '/') {
+      setIsLoggingOut(true);
+    }
     removeToken();
     setIsAuthenticated(false);
     setUser(undefined);
@@ -193,56 +207,57 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setTimeout(() => {
       toast.info('ログアウトしました');
     }, 100);
-  };
+  }, [pathname, navigation]);
 
-  const register = async (
-    name: string,
-    email: string,
-    password: string,
-  ): Promise<boolean> => {
-    try {
-      const response = await createApiRequest(API_CONFIG.endpoints.signup, {
-        method: 'POST',
-        body: JSON.stringify({ name, email, password }),
-      });
+  const register = useCallback(
+    async (name: string, email: string, password: string): Promise<boolean> => {
+      try {
+        const response = await createApiRequest(API_CONFIG.endpoints.signup, {
+          method: 'POST',
+          body: JSON.stringify({ name, email, password }),
+        });
 
-      if (!response.ok) {
+        if (!response.ok) {
+          toast.error(
+            'アカウント作成に失敗しました。入力内容を確認してください。',
+          );
+          return false;
+        }
+
+        // 新規登録成功後、自動的にログイン
+        const loginSuccess = await login(email, password);
+        if (loginSuccess) {
+          toast.success('アカウントを作成しました！');
+          return true;
+        }
+        return false;
+      } catch {
         toast.error(
-          'アカウント作成に失敗しました。入力内容を確認してください。',
+          'アカウント作成に失敗しました。ネットワーク接続を確認してください。',
         );
         return false;
       }
-
-      // 新規登録成功後、自動的にログイン
-      const loginSuccess = await login(email, password);
-      if (loginSuccess) {
-        toast.success('アカウントを作成しました！');
-        return true;
-      }
-      return false;
-    } catch {
-      toast.error(
-        'アカウント作成に失敗しました。ネットワーク接続を確認してください。',
-      );
-      return false;
-    }
-  };
-
-  return (
-    <AuthContext.Provider
-      value={{
-        isAuthenticated,
-        isLoading,
-        isLoggingOut,
-        user,
-        login,
-        logout,
-        register,
-      }}
-    >
-      {children}
-    </AuthContext.Provider>
+    },
+    [login],
   );
+
+  // usePathname の追加で AuthProvider は全ルート遷移ごとに再レンダーされる。
+  // value をメモ化しないと参照が毎回変わり、useAuth() の全消費者が
+  // 遷移のたびに再レンダーされてしまう
+  const value = useMemo(
+    () => ({
+      isAuthenticated,
+      isLoading,
+      isLoggingOut,
+      user,
+      login,
+      logout,
+      register,
+    }),
+    [isAuthenticated, isLoading, isLoggingOut, user, login, logout, register],
+  );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {

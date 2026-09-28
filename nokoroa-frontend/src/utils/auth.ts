@@ -7,7 +7,16 @@ const TOKEN_STORAGE_KEY = 'jwt';
 const isBrowser = (): boolean => typeof window !== 'undefined';
 
 /**
- * JWT の exp(秒)を読み、失効していれば true。
+ * exp 判定の猶予。トークン寿命(1d)ぶん取ることで、端末時計が最大 2 日
+ * 進んでいても発行直後のトークンを「失効」と誤爆しない(誤爆すると
+ * ログイン直後に自前削除してしまい、無警告でログイン不能の詰みになる)。
+ * ここでの掃除は「明らかに古いトークン」だけが対象で、真の失効判定は
+ * 常にサーバ側の 401 が正。
+ */
+const EXPIRY_GRACE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * JWT の exp(秒)を読み、猶予込みで失効していれば true。
  * パースできないトークンは「有効扱い」で返す(判定はサーバ側の 401 に委ねる)。
  * 旧 secureAuth の定期タイマー方式はリスナー不在で一度も動いていなかったため、
  * 読み出し時に失効チェックする方式に置き換えた。
@@ -24,7 +33,7 @@ const isExpired = (token: string): boolean => {
     if (typeof decoded.exp !== 'number') {
       return false;
     }
-    return decoded.exp * 1000 <= Date.now();
+    return decoded.exp * 1000 + EXPIRY_GRACE_MS <= Date.now();
   } catch {
     return false;
   }

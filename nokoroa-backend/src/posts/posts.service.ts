@@ -75,8 +75,11 @@ export class PostsService {
 
   private async getOrCreateLocation(
     locationName: string,
-    latitude?: number,
-    longitude?: number,
+    // null は「座標なしの行に一致させる」明示値(Prisma は null を IS NULL に落とす)。
+    // undefined は「名前のみで検索」。この区別を !== undefined 判定が担っているため、
+    // != null に「整理」してはいけない(null 明示のケースが名前のみ一致に化ける)
+    latitude?: number | null,
+    longitude?: number | null,
     prefecture?: string,
   ) {
     const whereClause = {

@@ -66,9 +66,13 @@ export class UpdatePostDto {
     description: '緯度',
     example: 34.9949,
   })
+  // null は「座標なし」の明示値。@IsOptional() は null を検証スキップするため通る。
+  // 編集画面は「場所未変更で座標なしの投稿」を null 明示で送り、
+  // getOrCreateLocation が {name, latitude: null, longitude: null} で
+  // 既存の座標なし行に一致できるようにしている(省略すると名前のみ一致になる)
   @IsOptional()
   @IsNumber()
-  latitude?: number;
+  latitude?: number | null;
 
   @ApiPropertyOptional({
     description: '経度',
@@ -76,7 +80,7 @@ export class UpdatePostDto {
   })
   @IsOptional()
   @IsNumber()
-  longitude?: number;
+  longitude?: number | null;
 
   @ApiPropertyOptional({
     description: 'タグの配列',

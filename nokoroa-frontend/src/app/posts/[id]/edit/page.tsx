@@ -34,7 +34,7 @@ import { geocodeLocation } from '@/utils/geocoding';
 export default function EditPostPage() {
   const { id } = useParams();
   const router = useRouter();
-  const { isAuthenticated, isAuthLoading } = useRequireAuth();
+  const { isAuthenticated, isAuthLoading, isReady } = useRequireAuth();
 
   const [post, setPost] = useState<PostData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -224,6 +224,13 @@ export default function EditPostPage() {
     }));
   };
 
+  // 未認証が確定したらガードのリダイレクトに任せて何も描画しない
+  // (loading は fetchPost が isAuthenticated ガードで走らず true のままになるため、
+  //  これが無いと未認証時にスピナーが出続ける)
+  if (!isReady && !isAuthLoading) {
+    return null;
+  }
+
   if (isAuthLoading || loading) {
     return (
       <Box
@@ -231,7 +238,7 @@ export default function EditPostPage() {
           display: 'flex',
           justifyContent: 'center',
           alignItems: 'center',
-          minHeight: '60vh',
+          minHeight: '50vh',
         }}
       >
         <CircularProgress />

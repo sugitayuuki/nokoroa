@@ -47,7 +47,7 @@ export default function NewPostPage() {
           display: 'flex',
           justifyContent: 'center',
           alignItems: 'center',
-          minHeight: '60vh',
+          minHeight: '50vh',
         }}
       >
         <CircularProgress />
