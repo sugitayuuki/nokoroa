@@ -1,5 +1,6 @@
 # Personal
 self-introduction.md
+interview-deep-dive-plot.md
 
 # Dependencies
 node_modules/
@@ -47,9 +48,11 @@ coverage/
 terraform/**/.terraform/
 terraform/**/*.tfstate
 terraform/**/*.tfstate.*
-terraform/**/.terraform.lock.hcl
+# plan ファイルは変数値を平文で含むためコミットしない
+*.tfplan
 **/terraform.tfvars
 !**/terraform.tfvars.example
+# .terraform.lock.hcl はプロバイダのバージョンを固定するため意図的にコミットする
 
 # Python
 venv/

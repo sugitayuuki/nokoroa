@@ -38,6 +38,11 @@ output "ecr_frontend_repository_url" {
   value       = aws_ecr_repository.frontend.repository_url
 }
 
+output "ecr_ai_repository_url" {
+  description = "ECR repository URL for AI service"
+  value       = aws_ecr_repository.ai.repository_url
+}
+
 # Secrets Manager ARNs
 output "secrets_database_url_arn" {
   description = "ARN of the DATABASE_URL secret in Secrets Manager"

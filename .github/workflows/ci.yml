@@ -137,6 +137,19 @@ jobs:
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.5.7
 
       - name: Format check
         run: terraform fmt -check -recursive
+
+      # 本番停止中でも「apply すれば再構築できる」ことを毎コミット検証する。
+      # -backend=false で state に触れずに設定の妥当性だけを確認し、
+      # -lockfile=readonly でコミット済みの .terraform.lock.hcl と一致することを保証する。
+      - name: Init (backend なし)
+        working-directory: terraform/envs/prod
+        run: terraform init -backend=false -lockfile=readonly
+
+      - name: Validate
+        working-directory: terraform/envs/prod
+        run: terraform validate
