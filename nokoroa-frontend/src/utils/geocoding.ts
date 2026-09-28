@@ -37,6 +37,12 @@ export const geocodeLocation = async (
     display_name: string;
   }>;
 
+  // Nominatim はエラー時に配列でない JSON を返すことがある。
+  // その場合 data[0] の分割代入で TypeError になり「throw する」契約から外れるため先に検証する
+  if (!Array.isArray(data)) {
+    throw new Error('Unexpected geocoding response');
+  }
+
   if (data.length === 0) {
     return null;
   }

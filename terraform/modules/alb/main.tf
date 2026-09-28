@@ -103,12 +103,14 @@ resource "aws_lb_listener" "https" {
 # www.<apex> にも A レコードと ACM の SAN があるため www でも到達できてしまうが、
 # backend の CORS 許可オリジンは apex 単独のため、www のままだと全 API が CORS で失敗する。
 # ALB 側で apex に寄せることで www で来たユーザーも正常に利用できる。
-# 優先度は API 転送ルール（100）より小さくし、/api/* を含む全パスに先に効かせる。
+# 優先度は API 転送ルール（100）より後にする。ALB の redirect は 301/302 しか
+# 選べず、www 宛の POST /api/* を先に 301 すると GET に降格しボディが消えるため、
+# API は www のままでも forward し、ページ遷移(GET)だけを apex へ寄せる。
 resource "aws_lb_listener_rule" "www_redirect" {
   count = var.enable_https && var.apex_domain != "" ? 1 : 0
 
   listener_arn = aws_lb_listener.https[0].arn
-  priority     = 10
+  priority     = 150
 
   action {
     type = "redirect"

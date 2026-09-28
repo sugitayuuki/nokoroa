@@ -25,6 +25,8 @@ resource "aws_db_parameter_group" "main" {
   # 性能調査は「遅いクエリのみ」に絞る方針へ変更した。
   # 注意: log_min_duration_statement は遅いクエリの SQL 全文(リテラル込み)を出力するため、
   # 個人情報の残留は「全クエリ → 1秒以上のクエリのみ」への縮小であって根絶ではない。
+  # また all → ddl で DML の監査証跡は失われる。監査要件が生じた場合は
+  # pgaudit(書き込み文のみ記録等)での補填を検討すること。
   parameter {
     name  = "log_statement"
     value = "ddl"
