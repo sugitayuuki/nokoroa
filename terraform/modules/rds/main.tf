@@ -10,8 +10,11 @@ resource "aws_db_subnet_group" "main" {
 
 # RDS Parameter Group
 resource "aws_db_parameter_group" "main" {
-  name   = "${var.project_name}-${var.environment}-pg15-params"
-  family = "postgres15"
+  name = "${var.project_name}-${var.environment}-pg15-params"
+  # ローカル compose / CI は pgvector/pgvector:pg16。検証環境と本番の
+  # メジャーバージョンを揃える(本番 DB は停止時に削除済み・state 未登録のため、
+  # 再構築は新規作成でありメジャーアップグレード手順は不要)
+  family = "postgres16"
 
   parameter {
     name         = "shared_preload_libraries"

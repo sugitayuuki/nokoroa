@@ -243,7 +243,6 @@ module "ecs" {
   # Network
   # NAT を置かない構成のため ECS タスクはパブリックサブネットに配置する。
   # private_subnet_ids は ecs モジュールで一度も参照されないため渡していない。
-  vpc_id                = module.vpc.vpc_id
   public_subnet_ids     = module.vpc.public_subnet_ids
   ecs_security_group_id = module.vpc.ecs_security_group_id
 

@@ -40,7 +40,7 @@ CI が毎コミットで `terraform fmt -check` / `init` / `validate` を実行�
 | S3 アップロードバケット | 投稿画像の実データ |
 | Secrets Manager | 削除すると 30 日間は同名で作り直せない。1 件あたり月 $0.40（下記参照） |
 
-`modules/secrets` が定義しているシークレットは **7 件**です（`db-password` / `jwt-secret` / `database-url` / `google-client-id` / `google-client-secret` / `gemini-api-key` / `internal-api-key`）。停止時の `terraform destroy` はこの 7 件すべてを削除対象にしていますが、`recovery_window_in_days` を明示していないため既定の **30 日間の削除待ち**に入り、待機中も課金対象として残ります。請求上「2 件分」しか見えていないのは、残りが削除待ち期間を終えて消えた後の状態と考えられます（AWS 上の実数は未確認）。
+`modules/secrets` が定義しているシークレットは **7 件**です（`db-password`(現在アプリからは未消費。接続は `database-url` を使用) / `jwt-secret` / `database-url` / `google-client-id` / `google-client-secret` / `gemini-api-key` / `internal-api-key`）。停止時の `terraform destroy` はこの 7 件すべてを削除対象にしていますが、`recovery_window_in_days` を明示していないため既定の **30 日間の削除待ち**に入り、待機中も課金対象として残ります。請求上「2 件分」しか見えていないのは、残りが削除待ち期間を終えて消えた後の状態と考えられます（AWS 上の実数は未確認）。
 
 つまり再構築時は、**AWS に実在する分は `terraform import` が必要、削除待ちが残っている分は待機満了か `aws secretsmanager restore-secret` が必要**です。どちらに該当するかは事前に確認してください。
 
