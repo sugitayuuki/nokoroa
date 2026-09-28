@@ -109,11 +109,15 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isResponding, setIsResponding] = useState(false);
   const [panelSize, setPanelSize] = useState<PanelSize>('medium');
   const [dynamicSuggestions, setDynamicSuggestions] = useState<string[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const charQueueRef = useRef<string[]>([]);
   const typingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isRespondingRef = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const mountedRef = useRef(true);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -152,12 +156,21 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
   }, []);
 
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       if (typingTimerRef.current) {
         clearInterval(typingTimerRef.current);
       }
+      abortControllerRef.current?.abort();
     };
   }, []);
+
+  useEffect(() => {
+    if (!isOpen && isRespondingRef.current) {
+      abortControllerRef.current?.abort();
+    }
+  }, [isOpen]);
 
   const handleToggleSize = () => {
     setPanelSize((prev) => {
@@ -169,7 +182,13 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
 
   const handleSend = async (messageText?: string) => {
     const textToSend = messageText || input.trim();
-    if (!textToSend || isLoading) return;
+    if (!textToSend || isRespondingRef.current) return;
+
+    isRespondingRef.current = true;
+    setIsResponding(true);
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
 
     const userMessage = textToSend;
     setInput('');
@@ -188,6 +207,8 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
 
     setTimeout(scrollToBottom, 100);
 
+    let responseStatus = 0;
+
     try {
       // サーバー側の上限(履歴20件 / 1メッセージ8000文字)に合わせて送信分を絞る。
       // 全件送ると会話が伸びるほど入力トークンが増え、上限超過で400になる。
@@ -196,7 +217,15 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
         content: msg.content.slice(0, MAX_HISTORY_CONTENT_LENGTH),
       }));
 
-      const token = localStorage.getItem('jwt');
+      let token: string | null = null;
+      try {
+        token = localStorage.getItem('jwt');
+      } catch (storageErr) {
+        console.warn(
+          '[ChatPanel] localStorage access failed, sending without token',
+          storageErr,
+        );
+      }
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
       };
@@ -211,10 +240,13 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
           message: userMessage,
           history,
         }),
+        signal: controller.signal,
       });
 
+      responseStatus = response.status;
+
       if (!response.ok) {
-        throw new Error('API request failed');
+        throw new Error(`HTTP_${response.status}`);
       }
 
       const reader = response.body?.getReader();
@@ -290,7 +322,6 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
         }
       }
 
-      // Flush remaining characters in queue
       if (charQueueRef.current.length > 0) {
         const remaining = charQueueRef.current.join('');
         charQueueRef.current = [];
@@ -320,7 +351,7 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
         });
       }
 
-      if (fullResponse) {
+      if (fullResponse.trim()) {
         try {
           const suggestionsHeaders: Record<string, string> = {
             'Content-Type': 'application/json',
@@ -337,6 +368,7 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
                 message: userMessage,
                 ai_response: fullResponse,
               }),
+              signal: controller.signal,
             },
           );
           if (suggestionsRes.ok) {
@@ -344,36 +376,98 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
             if (suggestionsData?.suggestions?.length > 0) {
               setDynamicSuggestions(suggestionsData.suggestions);
             }
+          } else {
+            console.warn(
+              '[ChatPanel] suggestions request returned non-ok',
+              suggestionsRes.status,
+            );
           }
-        } catch {}
+        } catch (suggestionsErr) {
+          if ((suggestionsErr as Error)?.name !== 'AbortError') {
+            console.warn(
+              '[ChatPanel] suggestions fetch failed',
+              suggestionsErr,
+            );
+          }
+        }
       }
-    } catch {
-      stopTyping();
+    } catch (err) {
+      const remaining =
+        charQueueRef.current.length > 0 ? charQueueRef.current.join('') : '';
       charQueueRef.current = [];
+      stopTyping();
+
+      if ((err as Error)?.name === 'AbortError') {
+        if (remaining && mountedRef.current) {
+          setMessages((prev) => {
+            const lastIdx = prev.length - 1;
+            const lastMessage = prev[lastIdx];
+            if (
+              lastMessage?.role === 'assistant' &&
+              lastMessage.id !== 'initial'
+            ) {
+              return [
+                ...prev.slice(0, -1),
+                { ...lastMessage, content: lastMessage.content + remaining },
+              ];
+            }
+            return prev;
+          });
+        }
+        return;
+      }
+
+      console.error('[ChatPanel] handleSend failed', err);
+
+      const isNetworkError =
+        responseStatus === 0 &&
+        (err instanceof TypeError ||
+          (typeof navigator !== 'undefined' && navigator.onLine === false));
+
+      const errorContent = isNetworkError
+        ? 'ネットワーク接続を確認してください。'
+        : responseStatus === 401
+          ? 'ログインの有効期限が切れている可能性があります。再ログインしてお試しください。'
+          : responseStatus === 429
+            ? 'リクエストが集中しています。少し待ってから再度お試しください。'
+            : responseStatus >= 500
+              ? 'サーバーで問題が発生しました。時間を置いてお試しください。'
+              : '申し訳ありません。エラーが発生しました。もう一度お試しください。';
+
+      if (!mountedRef.current) return;
+
       setMessages((prev) => {
-        const lastMessage = prev[prev.length - 1];
-        if (lastMessage?.role === 'assistant' && lastMessage.content === '') {
+        const errorMessage: Message = {
+          role: 'assistant',
+          content: errorContent,
+          id: `error-${Date.now()}`,
+        };
+        const lastIdx = prev.length - 1;
+        const lastMessage = prev[lastIdx];
+        const isStreamingAssistant =
+          lastMessage?.role === 'assistant' && lastMessage.id !== 'initial';
+        if (isStreamingAssistant) {
+          const merged = lastMessage.content + remaining;
+          if (merged.length === 0) {
+            return [...prev.slice(0, -1), errorMessage];
+          }
           return [
             ...prev.slice(0, -1),
-            {
-              role: 'assistant',
-              content:
-                '申し訳ありません。エラーが発生しました。もう一度お試しください。',
-              id: `error-${Date.now()}`,
-            },
+            { ...lastMessage, content: merged },
+            errorMessage,
           ];
         }
-        return [
-          ...prev,
-          {
-            role: 'assistant',
-            content:
-              '申し訳ありません。エラーが発生しました。もう一度お試しください。',
-            id: `error-${Date.now()}`,
-          },
-        ];
+        return [...prev, errorMessage];
       });
-      setIsLoading(false);
+    } finally {
+      if (abortControllerRef.current === controller) {
+        abortControllerRef.current = null;
+      }
+      if (mountedRef.current) {
+        setIsLoading(false);
+        setIsResponding(false);
+      }
+      isRespondingRef.current = false;
     }
   };
 
@@ -394,7 +488,7 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
   const activeSuggestions =
     dynamicSuggestions.length > 0 ? dynamicSuggestions : SUGGESTIONS;
   const showSuggestions =
-    (messages.length <= 2 || dynamicSuggestions.length > 0) && !isLoading;
+    (messages.length <= 2 || dynamicSuggestions.length > 0) && !isResponding;
 
   return (
     <AnimatePresence>
@@ -659,7 +753,7 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                disabled={isLoading}
+                disabled={isResponding}
                 multiline
                 maxRows={3}
                 slotProps={{ htmlInput: { maxLength: MAX_INPUT_LENGTH } }}
@@ -672,7 +766,7 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
               <IconButton
                 color="primary"
                 onClick={() => handleSend()}
-                disabled={!input.trim() || isLoading}
+                disabled={!input.trim() || isResponding}
                 sx={{
                   bgcolor: 'primary.main',
                   color: 'primary.contrastText',

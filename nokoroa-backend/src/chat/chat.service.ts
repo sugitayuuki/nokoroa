@@ -9,7 +9,6 @@ import {
   MAX_HISTORY_ITEMS,
   MAX_HISTORY_TOTAL_LENGTH,
 } from './dto/chat-request.dto';
-import { RelatedPostsRequestDto } from './dto/related-posts-request.dto';
 import { SuggestionsRequestDto } from './dto/suggestions-request.dto';
 
 /**
@@ -289,66 +288,5 @@ export class ChatService {
       if (post) found.push(post as unknown as Record<string, unknown>);
     }
     return found;
-  }
-
-  async getRelatedPosts(dto: RelatedPostsRequestDto) {
-    try {
-      const keywordsRes = await fetch(
-        `${this.aiServiceUrl}/api/chat/related-keywords`,
-        {
-          method: 'POST',
-          headers: this.aiHeaders(),
-          body: JSON.stringify({
-            message: dto.message,
-            ai_response: dto.ai_response,
-          }),
-          signal: AbortSignal.timeout(AI_REQUEST_TIMEOUT_MS),
-        },
-      );
-
-      if (!keywordsRes.ok) {
-        this.logger.warn(
-          `AI related-keywords responded ${keywordsRes.status}; returning empty posts`,
-        );
-        return { posts: [] };
-      }
-
-      const keywordsData = (await keywordsRes.json()) as {
-        keywords?: { location?: string };
-      };
-      const keywords = keywordsData.keywords;
-
-      if (!keywords) {
-        this.logger.warn(
-          'AI related-keywords returned null; returning empty posts',
-        );
-        return { posts: [] };
-      }
-
-      const location = keywords.location ?? '';
-
-      const result = await this.postsService.search({
-        location,
-        limit: 3,
-        offset: 0,
-      });
-
-      if (result.posts.length > 0) {
-        return { posts: result.posts };
-      }
-
-      const fallbackResult = await this.postsService.search({
-        q: location,
-        limit: 3,
-        offset: 0,
-      });
-
-      return { posts: fallbackResult.posts };
-    } catch (error) {
-      this.logger.error(
-        `Failed to get related posts: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      );
-      return { posts: [] };
-    }
   }
 }

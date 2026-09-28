@@ -8,7 +8,6 @@ import {
   UserThrottlerGuard,
 } from '../common/user-throttler.guard';
 import { ChatRequestDto } from './dto/chat-request.dto';
-import { RelatedPostsRequestDto } from './dto/related-posts-request.dto';
 import { SuggestionsRequestDto } from './dto/suggestions-request.dto';
 
 // 外部AI(Gemini)への従量課金が発生する経路のため、既定より厳しく制限する。
@@ -36,10 +35,5 @@ export class ChatController {
   ): Promise<{ suggestions: string[] }> {
     const suggestions = await this.chatService.getSuggestions(dto);
     return { suggestions };
-  }
-
-  @Post('related-posts')
-  async relatedPosts(@Body() dto: RelatedPostsRequestDto) {
-    return this.chatService.getRelatedPosts(dto);
   }
 }
