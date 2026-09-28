@@ -1,7 +1,7 @@
 'use client';
 
 import SearchIcon from '@mui/icons-material/Search';
-import { Box, Container, Typography } from '@mui/material';
+import { Box, CircularProgress, Container, Typography } from '@mui/material';
 import { useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
 
@@ -49,6 +49,7 @@ function SearchPageContent() {
   } = usePaginatedPosts({
     data,
     page,
+    error,
     onPageChange: (nextPage) =>
       setFilters((prev) => ({
         ...prev,
@@ -102,7 +103,22 @@ function SearchPageContent() {
  */
 export default function SearchPage() {
   return (
-    <Suspense fallback={null}>
+    <Suspense
+      // 空の fallback だとプリレンダ HTML が空になり、ディープリンク時に
+      // ハイドレーション完了まで白画面が出る。スピナーを見せる
+      fallback={
+        <Box
+          sx={{
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            minHeight: '50vh',
+          }}
+        >
+          <CircularProgress />
+        </Box>
+      }
+    >
       <SearchPageContent />
     </Suspense>
   );

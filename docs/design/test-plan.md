@@ -33,7 +33,7 @@
 
 ### 3.1 バックエンドのユニットテスト
 
-**対象**: Service 層と共通処理（`src/**/*.spec.ts`。auth / users / posts / follows / favorites / chat / embeddings の各 service に加え、`common` 配下の environment・image-upload・pagination.dto・s3.service・user-throttler.guard）
+**対象**: Service 層と共通処理（`src/**/*.spec.ts`。auth / users / posts / follows / favorites / chat / embeddings の各 service に加え、`common` 配下の environment・image-upload・pagination.dto・s3.service・user-throttler.guard、app.controller のスモーク）
 
 **ツール**: Jest（`nokoroa-backend`）
 
@@ -66,7 +66,7 @@ DB を向けてください。
 
 ### 3.3 フロントエンドのユニットテスト
 
-**対象**: `src/utils` と `src/lib` の純ロジック（auth・dateFormat・ime・tagColors・apiConfig）。
+**対象**: `src/utils` と `src/lib` の純ロジック（auth・dateFormat・ime・tagColors・apiConfig・post）。
 `vitest.config.ts` の `environment: 'node'` が示すとおり、**コンポーネントの描画テストは対象外**です。
 
 **ツール**: Vitest（`nokoroa-frontend`）
@@ -202,7 +202,7 @@ CI がカバレッジ不足でビルドを落とすことはありません。�
 |------|---------------:|------|
 | バックエンド ユニット | 13 | `src/**/*.spec.ts` |
 | バックエンド E2E | 6 | `test/*.e2e-spec.ts`。実 DB 必須 |
-| フロントエンド ユニット | 5 | 計 66 ケース（`vitest run`） |
+| フロントエンド ユニット | 6 | 計 70 ケース（`vitest run`） |
 | AIサービス | 4 | `pytest` |
 
 ---

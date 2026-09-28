@@ -75,6 +75,8 @@ interface StandardVariantConfig {
   tagLimit?: number;
   /** タグチップからタグ検索へ遷移させるか */
   interactiveTags: boolean;
+  /** タグチップの文字サイズ。未指定は Chip 既定 (map は旧実装の 0.75rem を維持) */
+  tagFontSize?: string;
   avatarSize: number;
 }
 
@@ -109,6 +111,7 @@ const STANDARD_VARIANTS: Record<StandardVariant, StandardVariantConfig> = {
     contentLines: 2,
     tagLimit: 2,
     interactiveTags: false,
+    tagFontSize: '0.75rem',
     avatarSize: 24,
   },
 };
@@ -444,7 +447,10 @@ export default function PostCard({
                 {...(config.interactiveTags
                   ? { onClick: handleTagClick(tag) }
                   : staticChipProps)}
-                sx={tagChipSx(tag, config.interactiveTags)}
+                sx={{
+                  ...tagChipSx(tag, config.interactiveTags),
+                  ...(config.tagFontSize && { fontSize: config.tagFontSize }),
+                }}
               />
             ))}
           </Stack>

@@ -31,8 +31,6 @@ import { useBodyScrollLock } from '../../hooks/useBodyScrollLock';
 import { useAuth } from '../../providers/AuthProvider';
 import { PostData } from '../../types/post';
 
-const API_BASE_URL = API_CONFIG.BASE_URL || 'http://localhost:4000';
-
 export default function MapPage() {
   const { isAuthenticated, isLoading: authLoading } = useAuth();
   const [posts, setPosts] = useState<PostData[]>([]);
@@ -64,7 +62,7 @@ export default function MapPage() {
       }
       params.append('limit', '100');
 
-      const url = `${API_BASE_URL}/posts/search-by-location?${params.toString()}`;
+      const url = `${API_CONFIG.buildUrl(API_CONFIG.endpoints.searchByLocation)}?${params.toString()}`;
 
       const response = await fetch(url);
 

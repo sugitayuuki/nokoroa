@@ -19,6 +19,12 @@ interface UsePaginatedPostsOptions<T> {
   page: number;
   /** 次ページを要求する。hasMore かつ読み込み中でないときだけ呼ばれる */
   onPageChange: (nextPage: number) => void;
+  /**
+   * 取得側のエラー。真になったら isLoadingMore を解除する。
+   * 渡さないと、次ページ取得が失敗した場合に読み込み中のまま固着し
+   * リトライ不能になる。
+   */
+  error?: unknown;
 }
 
 interface UsePaginatedPostsResult<T> {
@@ -48,6 +54,7 @@ export function usePaginatedPosts<T extends { id: number }>({
   data,
   page,
   onPageChange,
+  error,
 }: UsePaginatedPostsOptions<T>): UsePaginatedPostsResult<T> {
   const [posts, setPosts] = useState<T[]>([]);
   const [hasMore, setHasMore] = useState(false);
@@ -70,6 +77,14 @@ export function usePaginatedPosts<T extends { id: number }>({
     setHasMore(data.hasMore);
     setIsLoadingMore(false);
   }, [data, page, generation]);
+
+  // 取得失敗時に「読み込み中」で固着させない(固着すると observer も
+  // loadMore も無効化されたままリトライ不能になる)
+  useEffect(() => {
+    if (error) {
+      setIsLoadingMore(false);
+    }
+  }, [error]);
 
   const loadMore = useCallback(() => {
     if (!hasMore || isLoadingMore) return;

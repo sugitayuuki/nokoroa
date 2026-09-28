@@ -575,7 +575,11 @@ export const PostForm = ({
                 input: {
                   endAdornment: (
                     <InputAdornment position="end">
-                      <IconButton onClick={handleAddTag} edge="end">
+                      <IconButton
+                        onClick={handleAddTag}
+                        edge="end"
+                        disabled={isLoading}
+                      >
                         <AddIcon />
                       </IconButton>
                     </InputAdornment>
@@ -606,6 +610,7 @@ export const PostForm = ({
           <FormControlLabel
             control={
               <Switch
+                disabled={isLoading}
                 checked={formData.isPublic}
                 onChange={(e) =>
                   setFormData((prev) => ({

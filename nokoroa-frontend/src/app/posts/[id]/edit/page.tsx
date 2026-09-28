@@ -80,6 +80,20 @@ export default function EditPostPage() {
     const previousLocation = (currentPost.location ?? '').trim();
 
     if (nextLocation === previousLocation) {
+      // 場所名が同じでも「座標を持たない既存投稿」に対して PostForm の blur が
+      // 座標を解決済みなら、それを採用して座標を補完する。捨てると
+      // UI は「位置情報を取得しました」と見せたのに保存後も地図に出ない
+      if (
+        currentPost.latitude == null &&
+        currentPost.longitude == null &&
+        formCoordinates.latitude !== undefined &&
+        formCoordinates.longitude !== undefined
+      ) {
+        return {
+          latitude: formCoordinates.latitude,
+          longitude: formCoordinates.longitude,
+        };
+      }
       return {
         latitude: currentPost.latitude ?? null,
         longitude: currentPost.longitude ?? null,
@@ -124,11 +138,6 @@ export default function EditPostPage() {
 
   const handleSubmit = async (data: CreatePostData) => {
     if (!post) {
-      return;
-    }
-
-    if (!data.title.trim() || !data.content.trim()) {
-      toast.error('タイトルと内容は必須です');
       return;
     }
 

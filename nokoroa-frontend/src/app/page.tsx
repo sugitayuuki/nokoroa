@@ -32,7 +32,7 @@ export default function TopPage() {
     posts: allPosts,
     isLoadingMore,
     lastElementRef,
-  } = usePaginatedPosts({ data: posts, page, onPageChange: setPage });
+  } = usePaginatedPosts({ data: posts, page, onPageChange: setPage, error });
 
   if (isLoading) {
     return (

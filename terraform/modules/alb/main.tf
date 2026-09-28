@@ -86,6 +86,14 @@ resource "aws_lb_listener" "http" {
   }
 }
 
+# count 化(無印 → http[0])に伴う state アドレスの移行。
+# これが無いと旧アドレスを含む state では destroy+create になり、
+# apply 中に port 80 リスナーが一瞬消える。
+moved {
+  from = aws_lb_listener.http
+  to   = aws_lb_listener.http[0]
+}
+
 # HTTPS Listener (requires SSL certificate)
 resource "aws_lb_listener" "https" {
   count = var.enable_https ? 1 : 0
