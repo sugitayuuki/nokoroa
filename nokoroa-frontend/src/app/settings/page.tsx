@@ -20,11 +20,10 @@ import {
   Typography,
 } from '@mui/material';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
+import { useRequireAuth } from '@/hooks/useRequireAuth';
 import { useUser } from '@/hooks/useUser';
-import { useAuth } from '@/providers/AuthProvider';
 
 interface SettingsSection {
   id: string;
@@ -44,8 +43,7 @@ interface SettingsItem {
 }
 
 export default function SettingsPage() {
-  const router = useRouter();
-  const { isAuthenticated, isLoading: authLoading } = useAuth();
+  const { isAuthLoading, isReady } = useRequireAuth();
   const { user, isLoading, error } = useUser();
   const [settings, setSettings] = useState({
     emailNotifications: true,
@@ -54,12 +52,6 @@ export default function SettingsPage() {
     postsVisible: true,
   });
 
-  useEffect(() => {
-    if (!authLoading && !isAuthenticated) {
-      router.push('/login');
-    }
-  }, [authLoading, isAuthenticated, router]);
-
   const handleToggleChange = (settingKey: string) => (value: boolean) => {
     setSettings((prev) => ({
       ...prev,
@@ -67,11 +59,11 @@ export default function SettingsPage() {
     }));
   };
 
-  if (!isAuthenticated) {
+  if (!isReady && !isAuthLoading) {
     return null;
   }
 
-  if (authLoading || isLoading) {
+  if (isAuthLoading || isLoading) {
     return (
       <Box
         sx={{

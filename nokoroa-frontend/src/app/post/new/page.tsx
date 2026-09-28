@@ -1,41 +1,23 @@
 'use client';
 
-import { Box, Container, Typography } from '@mui/material';
+import { Box, CircularProgress, Container, Typography } from '@mui/material';
 import { useRouter } from 'next/navigation';
-import { useEffect } from 'react';
 import { toast } from 'react-toastify';
 
-import { API_CONFIG } from '@/lib/apiConfig';
+import { useRequireAuth } from '@/hooks/useRequireAuth';
+import { API_CONFIG, createApiRequest } from '@/lib/apiConfig';
 
 import { PostForm } from '../../../components/post/PostForm';
-import { useAuth } from '../../../providers/AuthProvider';
 import { CreatePostData } from '../../../types/post';
-import { getToken } from '../../../utils/auth';
 
 export default function NewPostPage() {
   const router = useRouter();
-  const { isAuthenticated } = useAuth();
-  const API_URL = API_CONFIG.BASE_URL;
-
-  useEffect(() => {
-    if (!isAuthenticated) {
-      router.push('/login');
-    }
-  }, [isAuthenticated, router]);
+  const { isAuthLoading, isReady } = useRequireAuth();
 
   const handleSubmit = async (data: CreatePostData) => {
     try {
-      const token = getToken();
-      if (!token) {
-        throw new Error('認証トークンが見つかりません');
-      }
-
-      const response = await fetch(`${API_URL}/posts`, {
+      const response = await createApiRequest(API_CONFIG.endpoints.posts, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
         body: JSON.stringify(data),
       });
 
@@ -58,8 +40,19 @@ export default function NewPostPage() {
     }
   };
 
-  if (!isAuthenticated) {
-    return null;
+  if (!isReady) {
+    return isAuthLoading ? (
+      <Box
+        sx={{
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          minHeight: '60vh',
+        }}
+      >
+        <CircularProgress />
+      </Box>
+    ) : null;
   }
 
   return (

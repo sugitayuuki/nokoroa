@@ -26,14 +26,15 @@ import {
   ImageUploadField,
   uploadImageFile,
 } from '@/components/post/ImageUploadField';
+import { useRequireAuth } from '@/hooks/useRequireAuth';
 import { API_CONFIG, createApiRequest } from '@/lib/apiConfig';
-import { useAuth } from '@/providers/AuthProvider';
 import { PostData } from '@/types/post';
+import { geocodeLocation } from '@/utils/geocoding';
 
 export default function EditPostPage() {
   const { id } = useParams();
   const router = useRouter();
-  const { isAuthenticated, loading: authLoading } = useAuth();
+  const { isAuthenticated, isAuthLoading } = useRequireAuth();
 
   const [post, setPost] = useState<PostData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -52,12 +53,6 @@ export default function EditPostPage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string>('');
   const [uploadingImage, setUploadingImage] = useState(false);
-
-  useEffect(() => {
-    if (!authLoading && !isAuthenticated) {
-      router.push('/login');
-    }
-  }, [isAuthenticated, authLoading, router]);
 
   const fetchPost = useCallback(async () => {
     try {
@@ -100,11 +95,55 @@ export default function EditPostPage() {
     }
   }, [id, isAuthenticated, fetchPost]);
 
+  /**
+   * 送信する座標を決める。
+   * 場所テキストが変わっていなければ既存の座標をそのまま維持し、
+   * 変わっていれば再ジオコーディングする(座標を送らないと地図が古い位置のままズレる)。
+   */
+  const resolveCoordinates = async (
+    currentPost: PostData,
+    nextLocation: string,
+  ): Promise<{ latitude: number | null; longitude: number | null }> => {
+    const previousLocation = (currentPost.location ?? '').trim();
+
+    if (nextLocation === previousLocation) {
+      return {
+        latitude: currentPost.latitude ?? null,
+        longitude: currentPost.longitude ?? null,
+      };
+    }
+
+    if (!nextLocation) {
+      return { latitude: null, longitude: null };
+    }
+
+    try {
+      const geocoded = await geocodeLocation(nextLocation);
+      if (!geocoded) {
+        toast.warn(
+          '場所の位置情報が見つかりませんでした（地図には表示されません）',
+        );
+        return { latitude: null, longitude: null };
+      }
+      return {
+        latitude: geocoded.latitude,
+        longitude: geocoded.longitude,
+      };
+    } catch {
+      toast.warn('位置情報の取得に失敗しました（地図には表示されません）');
+      return { latitude: null, longitude: null };
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!formData.title.trim() || !formData.content.trim()) {
       toast.error('タイトルと内容は必須です');
+      return;
+    }
+
+    if (!post) {
       return;
     }
 
@@ -122,6 +161,9 @@ export default function EditPostPage() {
         }
       }
 
+      const location = formData.location.trim();
+      const { latitude, longitude } = await resolveCoordinates(post, location);
+
       const response = await createApiRequest(
         API_CONFIG.endpoints.postById(id as string),
         {
@@ -129,7 +171,9 @@ export default function EditPostPage() {
           body: JSON.stringify({
             title: formData.title,
             content: formData.content,
-            location: formData.location || null,
+            location: location || null,
+            latitude,
+            longitude,
             tags: formData.tags
               .split(',')
               .map((tag) => tag.trim())
@@ -170,7 +214,7 @@ export default function EditPostPage() {
     }));
   };
 
-  if (authLoading || loading) {
+  if (isAuthLoading || loading) {
     return (
       <Box
         sx={{

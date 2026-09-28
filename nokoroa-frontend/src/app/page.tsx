@@ -1,33 +1,24 @@
 'use client';
 
-import LocationOnIcon from '@mui/icons-material/LocationOn';
-import Avatar from '@mui/material/Avatar';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
-import Card from '@mui/material/Card';
-import CardContent from '@mui/material/CardContent';
-import Chip from '@mui/material/Chip';
 import CircularProgress from '@mui/material/CircularProgress';
 import Container from '@mui/material/Container';
 import Paper from '@mui/material/Paper';
 import Stack from '@mui/material/Stack';
 import Typography from '@mui/material/Typography';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
-import BookmarkButton from '@/components/bookmarks/BookmarkButton';
-import { LazyImage } from '@/components/common/LazyImage';
+import PostCard from '@/components/post/PostCard';
+import { GRID_LAYOUT } from '@/constants/theme';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 import { usePosts } from '@/hooks/usePosts';
 import { useAuth } from '@/providers/AuthProvider';
 import { useDialog } from '@/providers/DialogProvider';
 import { PostData } from '@/types/post';
-import { formatDistanceToNow } from '@/utils/dateFormat';
-import { getTagColor } from '@/utils/tagColors';
 
 export default function TopPage() {
-  const router = useRouter();
   const { isAuthenticated, isLoading } = useAuth();
   const { openSignup } = useDialog();
   const [page, setPage] = useState(0);
@@ -90,13 +81,7 @@ export default function TopPage() {
       <Box
         sx={{
           display: 'grid',
-          gridTemplateColumns: {
-            xs: '1fr',
-            sm: 'repeat(2, 1fr)',
-            md: 'repeat(3, 1fr)',
-            lg: 'repeat(3, 1fr)',
-            xl: 'repeat(3, 1fr)',
-          },
+          gridTemplateColumns: GRID_LAYOUT,
           gap: 4,
           maxWidth: '1400px',
           mx: 'auto',
@@ -137,149 +122,7 @@ export default function TopPage() {
               key={post.id}
               ref={index === allPosts.length - 1 ? lastElementRef : null}
             >
-              <Card
-                component={Link}
-                href={`/posts/${post.id}`}
-                sx={{
-                  height: '100%',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  borderRadius: 2,
-                  overflow: 'hidden',
-                  minWidth: 320,
-                  maxWidth: 400,
-                  mx: 'auto',
-                  transition: 'transform 0.2s, box-shadow 0.2s',
-                  textDecoration: 'none',
-                  color: 'inherit',
-                  cursor: 'pointer',
-                  '&:hover': {
-                    transform: 'translateY(-4px)',
-                    boxShadow: '0 8px 16px rgba(0, 0, 0, 0.1)',
-                  },
-                }}
-              >
-                <LazyImage
-                  src={post.imageUrl || '/top.jpg'}
-                  alt={post.title}
-                  height={280}
-                />
-                <CardContent sx={{ flexGrow: 1, bgcolor: 'background.paper' }}>
-                  <Stack spacing={2}>
-                    <Box>
-                      <Typography
-                        variant="h6"
-                        component="h2"
-                        gutterBottom
-                        sx={{
-                          fontWeight: 600,
-                          color: 'text.primary',
-                        }}
-                      >
-                        {post.title}
-                      </Typography>
-                      <Typography
-                        variant="body2"
-                        color="text.secondary"
-                        sx={{ mb: 2 }}
-                      >
-                        {formatDistanceToNow(post.createdAt)}
-                      </Typography>
-                    </Box>
-
-                    <Typography
-                      variant="body2"
-                      color="text.secondary"
-                      sx={{
-                        display: '-webkit-box',
-                        WebkitLineClamp: 3,
-                        WebkitBoxOrient: 'vertical',
-                        overflow: 'hidden',
-                      }}
-                    >
-                      {post.content}
-                    </Typography>
-
-                    <Stack
-                      direction="row"
-                      spacing={1}
-                      sx={{ flexWrap: 'wrap', gap: 1 }}
-                    >
-                      {post.location && (
-                        <Chip
-                          icon={<LocationOnIcon />}
-                          label={post.location}
-                          size="small"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                          }}
-                          sx={{
-                            bgcolor: 'primary.light',
-                            color: 'primary.contrastText',
-                            cursor: 'default',
-                          }}
-                        />
-                      )}
-                      {(post.tags || []).map((tag, index) => (
-                        <Chip
-                          key={index}
-                          label={tag.startsWith('#') ? tag : `#${tag}`}
-                          size="small"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            router.push(
-                              `/search?tags=${encodeURIComponent(tag)}`,
-                            );
-                          }}
-                          sx={{
-                            backgroundColor: getTagColor(tag),
-                            color: '#fff',
-                            fontWeight: 500,
-                            cursor: 'pointer',
-                            '&:hover': {
-                              backgroundColor: getTagColor(tag),
-                              filter: 'brightness(0.9)',
-                            },
-                          }}
-                        />
-                      ))}
-                    </Stack>
-
-                    <Box
-                      sx={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        pt: 1,
-                      }}
-                    >
-                      <Box
-                        sx={{ display: 'flex', alignItems: 'center', gap: 1 }}
-                      >
-                        <Avatar
-                          src={post.author.avatar || undefined}
-                          sx={{ width: 32, height: 32 }}
-                        >
-                          {!post.author.avatar && post.author.name?.charAt(0)}
-                        </Avatar>
-                        <Typography variant="body2" color="text.secondary">
-                          {post.author.name}
-                        </Typography>
-                      </Box>
-                      <Box onClick={(e) => e.stopPropagation()}>
-                        <BookmarkButton
-                          postId={post.id}
-                          initialBookmarkCount={
-                            post.favoritesCount || post._count?.favorites || 0
-                          }
-                          size="small"
-                        />
-                      </Box>
-                    </Box>
-                  </Stack>
-                </CardContent>
-              </Card>
+              <PostCard post={post} />
             </Box>
           ))}
 
@@ -378,7 +221,7 @@ export default function TopPage() {
                 fontFamily: 'serif',
               }}
             >
-              Nokora
+              Nokoroa
             </Typography>
 
             <Typography

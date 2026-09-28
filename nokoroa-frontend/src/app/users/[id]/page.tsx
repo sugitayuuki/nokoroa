@@ -1,16 +1,10 @@
 'use client';
 
-import {
-  Edit as EditIcon,
-  LocationOn as LocationOnIcon,
-} from '@mui/icons-material';
+import { Edit as EditIcon } from '@mui/icons-material';
 import {
   Avatar,
   Box,
   Button,
-  Card,
-  CardContent,
-  Chip,
   Container,
   Paper,
   Skeleton,
@@ -23,10 +17,11 @@ import React, { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 
 import FollowButton from '@/components/follow/FollowButton';
+import PostCard from '@/components/post/PostCard';
+import { GRID_LAYOUT } from '@/constants/theme';
 import { useUser } from '@/hooks/useUser';
 import { API_CONFIG, createApiRequest } from '@/lib/apiConfig';
 import { UserProfile } from '@/types/user';
-import { getTagColor } from '@/utils/tagColors';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -223,158 +218,12 @@ export default function UserProfilePage() {
         <Box
           sx={{
             display: 'grid',
-            gridTemplateColumns: {
-              xs: '1fr',
-              sm: 'repeat(2, 1fr)',
-              md: 'repeat(3, 1fr)',
-            },
+            gridTemplateColumns: GRID_LAYOUT,
             gap: 3,
           }}
         >
           {userData.posts?.map((post) => (
-            <Card
-              key={post.id}
-              sx={{
-                height: '100%',
-                display: 'flex',
-                flexDirection: 'column',
-                borderRadius: 2,
-                overflow: 'hidden',
-                cursor: 'pointer',
-                transition: 'transform 0.2s, box-shadow 0.2s',
-                '&:hover': {
-                  transform: 'translateY(-4px)',
-                  boxShadow: '0 8px 16px rgba(0, 0, 0, 0.1)',
-                },
-              }}
-              onClick={() => router.push(`/posts/${post.id}`)}
-            >
-              {post.imageUrl ? (
-                <Box
-                  component="img"
-                  src={post.imageUrl}
-                  alt={post.title}
-                  sx={{
-                    height: 240,
-                    width: '100%',
-                    objectFit: 'cover',
-                  }}
-                />
-              ) : (
-                <Box
-                  sx={{
-                    height: 240,
-                    background: `linear-gradient(135deg, #667eea 0%, #764ba2 100%)`,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                >
-                  <Typography
-                    variant="h2"
-                    sx={{
-                      color: 'white',
-                      opacity: 0.3,
-                      fontSize: '4rem',
-                    }}
-                  >
-                    {post.title.charAt(0)}
-                  </Typography>
-                </Box>
-              )}
-              <CardContent
-                sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}
-              >
-                <Typography
-                  variant="h6"
-                  component="h3"
-                  gutterBottom
-                  sx={{
-                    fontWeight: 600,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    display: '-webkit-box',
-                    WebkitLineClamp: 2,
-                    WebkitBoxOrient: 'vertical',
-                    minHeight: '3.6em',
-                  }}
-                >
-                  {post.title}
-                </Typography>
-                <Typography
-                  variant="body2"
-                  color="text.secondary"
-                  sx={{
-                    mb: 1,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    display: '-webkit-box',
-                    WebkitLineClamp: 2,
-                    WebkitBoxOrient: 'vertical',
-                    flexGrow: 1,
-                  }}
-                >
-                  {post.content}
-                </Typography>
-                {post.location && (
-                  <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-                    <LocationOnIcon
-                      sx={{
-                        fontSize: '1rem',
-                        mr: 0.5,
-                        color: 'text.secondary',
-                      }}
-                    />
-                    <Typography variant="caption" color="text.secondary">
-                      {post.location}
-                    </Typography>
-                  </Box>
-                )}
-                <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
-                  {post.tags?.slice(0, 3).map((tag: string, index: number) => (
-                    <Chip
-                      key={index}
-                      label={tag.startsWith('#') ? tag : `#${tag}`}
-                      size="small"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        router.push(`/search?tags=${encodeURIComponent(tag)}`);
-                      }}
-                      sx={{
-                        fontSize: '0.75rem',
-                        height: '24px',
-                        backgroundColor: getTagColor(tag),
-                        color: '#fff',
-                        fontWeight: 500,
-                        cursor: 'pointer',
-                        '&:hover': {
-                          backgroundColor: getTagColor(tag),
-                          filter: 'brightness(0.9)',
-                        },
-                      }}
-                    />
-                  ))}
-                  {post.tags && post.tags.length > 3 && (
-                    <Chip
-                      label={`+${post.tags.length - 3}`}
-                      size="small"
-                      variant="outlined"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                      }}
-                      sx={{
-                        fontSize: '0.75rem',
-                        height: '24px',
-                        borderColor: '#999',
-                        color: '#666',
-                        cursor: 'default',
-                      }}
-                    />
-                  )}
-                </Box>
-              </CardContent>
-            </Card>
+            <PostCard key={post.id} post={post} variant="compact" />
           ))}
         </Box>
       </TabPanel>

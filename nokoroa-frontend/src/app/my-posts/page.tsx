@@ -11,26 +11,18 @@ import {
   Tabs,
   Typography,
 } from '@mui/material';
-import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 
 import { MyPostListLazy } from '@/components/post/MyPostCardLazy';
+import { useRequireAuth } from '@/hooks/useRequireAuth';
 import { useUser } from '@/hooks/useUser';
-import { useAuth } from '@/providers/AuthProvider';
 import { PostData } from '@/types/post';
 
 export default function MyPostsPage() {
-  const router = useRouter();
-  const { isAuthenticated, isLoading: authLoading } = useAuth();
+  const { isAuthLoading, isReady } = useRequireAuth();
   const { user, isLoading, error, refetch } = useUser();
   const [activeTab, setActiveTab] = useState(0);
   const [posts, setPosts] = useState<PostData[]>([]);
-
-  useEffect(() => {
-    if (!authLoading && !isAuthenticated) {
-      router.push('/login');
-    }
-  }, [authLoading, isAuthenticated, router]);
 
   useEffect(() => {
     if (user && user.posts) {
@@ -70,11 +62,11 @@ export default function MyPostsPage() {
     setPosts((prevPosts) => prevPosts.filter((post) => post.id !== postId));
   }, []);
 
-  if (!isAuthenticated) {
+  if (!isReady && !isAuthLoading) {
     return null;
   }
 
-  if (authLoading || isLoading) {
+  if (isAuthLoading || isLoading) {
     return (
       <Box
         sx={{

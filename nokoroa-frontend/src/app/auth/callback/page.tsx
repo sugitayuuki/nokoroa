@@ -5,6 +5,8 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect } from 'react';
 import { toast } from 'react-toastify';
 
+import { setToken } from '@/utils/auth';
+
 function AuthCallbackContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -16,8 +18,8 @@ function AuthCallbackContent() {
 
       if (token && userString) {
         try {
-          // トークンをlocalStorageに保存
-          localStorage.setItem('jwt', token);
+          // トークンを保存(キー名は utils/auth に集約)
+          setToken(token);
 
           // ユーザー情報をパース
           const user = JSON.parse(decodeURIComponent(userString));
