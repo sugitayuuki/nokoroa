@@ -6,12 +6,14 @@ Nokoroa の AWS インフラを Terraform で管理しています。
 
 **本番環境は停止中です。** 個人開発のためコストを抑える目的で、常時課金が発生するリソース（ECS サービス・RDS・ALB）を削除しています。
 
-ただし**インフラの定義はすべてこのディレクトリに残っています。** 削除したリソースは以下のとおり `plan` に現れ、`apply` で再構築できます。
+ただし**インフラの定義はすべてこのディレクトリに残っています。** 空の state から `plan` を実行すると、この構成が定義しているリソースの全量が出ます。
 
 ```
 $ terraform plan
 Plan: 77 to add, 0 to change, 0 to destroy.
 ```
+
+この 77 件は「停止によって削除された分」ではなく「定義されている全量」です。停止中も残しているリソース（下記）が state に載っていないため、現状の `plan` はそれらも新規作成として数えます。実際に再構築で作られるのは、それらを `import` で取り込んだあとの差分になります。
 
 | モジュール | 作成されるリソース数 |
 |---|---:|
@@ -24,29 +26,30 @@ Plan: 77 to add, 0 to change, 0 to destroy.
 | `modules/rds` | 3 |
 | **合計** | **77** |
 
-この定義が壊れていないことは CI が毎コミット検証しています（`terraform fmt -check` / `init` / `validate`）。プロバイダのバージョンは `.terraform.lock.hcl` をコミットして固定しているため、いつ誰が実行しても同じバージョンで解決されます。
+CI が毎コミットで `terraform fmt -check` / `init` / `validate` を実行しており、構文エラー・型の不整合・存在しない参照は検出されます。ただし `plan` は認証情報が必要なため CI では実行しておらず、**apply 時にしか現れない問題は検出できません**。プロバイダのバージョンは `.terraform.lock.hcl` をコミットして固定しているため、いつ誰が実行しても同じバージョンで解決されます。
 
 ### 停止中も残しているもの
 
-ドメインと成果物は消すと復旧が面倒なため、意図的に残しています（月 $2〜3 程度）。
+消すと復旧が面倒なもの、削除待ち期間があるものは残しています（月 $2〜3 程度）。
 
 | リソース | 理由 |
 |---|---|
-| Route 53 ホストゾーン | 削除するとネームサーバが変わりドメインが使えなくなる |
+| Route 53 ホストゾーン | そもそも Terraform の管理対象外（`data` 参照）。削除するとネームサーバが変わりドメインが使えなくなる |
 | ACM 証明書 | 無料。再発行には DNS 検証の待ち時間が必要 |
 | ECR リポジトリ | ビルド済みイメージの保管場所 |
 | S3 アップロードバケット | 投稿画像の実データ |
+| Secrets Manager（2 件） | 削除すると 30 日間は同名で作り直せない。1 件あたり月 $0.40 |
 
 ## ディレクトリ構成
 
 ```
 terraform/
 ├── modules/                  # 再利用可能なモジュール
-│   ├── vpc/                  # VPC・サブネット・ルーティング・セキュリティグループ
+│   ├── vpc/                  # VPC・3層サブネット（public/private/database）・SG
 │   ├── rds/                  # PostgreSQL（pgvector 有効）
-│   ├── ecs/                  # ECS Fargate（backend / frontend / AI サイドカー）
+│   ├── ecs/                  # ECS Fargate（backend + AI サイドカー / frontend）
 │   ├── alb/                  # Application Load Balancer・HTTPS リスナー
-│   ├── s3/                   # 画像アップロード用バケット・state 保管用バケット
+│   ├── s3/                   # 画像アップロード用バケット・state 保管用バケット + ロックテーブル
 │   └── secrets/              # AWS Secrets Manager
 ├── envs/
 │   ├── prod/                 # 本番環境（実装済み）
@@ -78,7 +81,7 @@ ALB SG        → ECS タスク  (SG 参照。CIDR では開けない)
 ECS SG        → RDS         (5432。SG 参照)
 ```
 
-RDS はプライベートサブネットに置いており、外向き通信を必要としないため NAT がなくても問題ありません。
+サブネットは public / private / database の 3 層に分けており、RDS は専用の database サブネットに置いています。外向き通信を必要としないため NAT がなくても問題ありません。
 
 ### Secrets Manager を使う
 
@@ -97,6 +100,8 @@ DB パスワード・JWT シークレット・OAuth クライアントシーク�
 
 イメージが存在しない状態から始めるため、**`apply` を 2 回に分けます**。1 回目で ECR を含むインフラを作り、イメージを push してから 2 回目でコンテナを起動します。
 
+> **先に「既知の課題」を確認してください。** 停止中も AWS 上に残しているリソース（ECR・S3・Secrets Manager）は現在 state に載っておらず、この手順をそのまま実行すると名前の衝突で失敗します。先に `terraform import` での取り込みが必要です。
+
 ### 1. 変数ファイルを用意する
 
 ```bash
@@ -104,7 +109,9 @@ cd terraform/envs/prod
 cp terraform.tfvars.example terraform.tfvars
 ```
 
-`google_client_id` / `google_client_secret` / `gemini_api_key` の 3 つは既定値がなく、必須です。`*_image` は初回は空のままで構いません。
+`google_client_id` / `google_client_secret` / `gemini_api_key` の 3 つは既定値がなく、必須です。
+
+`*_image` の 3 行は、`terraform.tfvars.example` にプレースホルダの文字列が入っています。イメージを push する前は**空文字にするかコメントアウトしてください**。プレースホルダのまま apply すると、存在しないレジストリを指すタスク定義が作られます。
 
 ### 2. インフラを作成する
 
@@ -115,7 +122,7 @@ terraform apply
 
 ### 3. イメージをビルドして push する
 
-ECS タスクは backend・frontend・AI の 3 コンテナ構成です。backend は AI コンテナが healthy になるまで起動しないため、**AI イメージの push は必須**です。
+タスク定義は 2 つです。backend タスクが `backend` と `ai` の 2 コンテナ（AI をサイドカーとして同居）、frontend タスクが 1 コンテナという構成です。backend コンテナは `ai` コンテナが healthy になるまで起動しないため、**AI イメージの push は必須**です。
 
 ```bash
 REGION=ap-northeast-1
@@ -145,32 +152,41 @@ ai_image       = "<account-id>.dkr.ecr.ap-northeast-1.amazonaws.com/nokoroa-ai:l
 terraform apply
 ```
 
-以降のデプロイは GitHub Actions（`.github/workflows/deploy.yml`）が 3 イメージのビルドとタスク定義の更新を行います。
+以降のデプロイは GitHub Actions（`.github/workflows/deploy.yml`）が backend と frontend の 2 イメージについて、ビルドとタスク定義の更新を行います。**AI イメージは自動化されておらず、更新時は上記の手順で手動 push が必要です。** backend は `ai` コンテナの healthy に依存するため、ここは自動化したい箇所として残っています。
 
 ### 5. データベースをマイグレーションする
+
+NAT を置かない構成のため、**パブリックサブネットを指定し `assignPublicIp=ENABLED` にします**。これを `DISABLED` にすると ECR や Secrets Manager に到達できず起動しません。
 
 ```bash
 aws ecs run-task \
   --cluster nokoroa-prod-cluster \
   --task-definition nokoroa-prod-backend \
   --launch-type FARGATE \
-  --network-configuration "awsvpcConfiguration={subnets=[SUBNET_ID],securityGroups=[SG_ID],assignPublicIp=DISABLED}" \
+  --network-configuration "awsvpcConfiguration={subnets=[PUBLIC_SUBNET_ID],securityGroups=[ECS_SG_ID],assignPublicIp=ENABLED}" \
   --overrides '{"containerOverrides":[{"name":"backend","command":["npx","prisma","migrate","deploy"]}]}'
 ```
+
+サブネット ID とセキュリティグループ ID は `terraform output vpc_id` を起点に取得できます。
 
 ## 状態確認
 
 ```bash
 # ECS サービスの状態
-aws ecs describe-services --cluster nokoroa-prod-cluster --services nokoroa-prod-backend-service
+aws ecs describe-services --cluster nokoroa-prod-cluster --services nokoroa-prod-backend
 
-# ログ
-aws logs tail /ecs/nokoroa-prod-backend --follow
+# ログ（backend / frontend / ai の 3 つ）
+aws logs tail /ecs/nokoroa-prod/backend --follow
 ```
 
 ## 停止するには
 
-常時課金されるリソースだけを落とし、ドメインと成果物は残します。
+常時課金されるリソースを落とし、ドメインと成果物は残します。
+
+**事前に削除保護を外す必要があります。** `envs/prod/main.tf` の `module "rds"` にある `deletion_protection = true` を `false` に変えて `terraform apply` してください。これを飛ばすと destroy は次の 2 つで失敗します。
+
+- `Cannot delete protected DB Instance` — 削除保護が有効なため
+- `final_snapshot_identifier is required` — `skip_final_snapshot = !deletion_protection` の式により、保護が有効だとスナップショット名が必須になるため
 
 ```bash
 terraform destroy \
@@ -179,6 +195,8 @@ terraform destroy \
   -target=module.rds \
   -target=module.vpc
 ```
+
+**このコマンドは Secrets Manager も削除します。** `module.secrets` は `module.rds` に依存しているため、`-target=module.rds` を指定すると依存側として巻き込まれます。シークレットは `recovery_window_in_days` を明示していないため既定の 30 日間削除待ちに入り、**同じ名前での再作成が 30 日間できません**。短い間隔で停止と再構築を繰り返す場合は、`recovery_window_in_days = 0` を設定するか、停止対象をモジュール単位ではなくリソース単位で列挙してください。
 
 ## 既知の課題
 
