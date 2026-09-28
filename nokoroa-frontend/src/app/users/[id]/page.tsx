@@ -81,18 +81,8 @@ export default function UserProfilePage() {
       if (response.ok) {
         const data = await response.json();
         setUserData(data);
-      } else if (response.status === 401) {
-        // 認証エラーの場合は、認証なしで再度取得を試みる
-        const publicResponse = await fetch(API_CONFIG.buildUrl(endpoint));
-        if (publicResponse.ok) {
-          const data = await publicResponse.json();
-          setUserData(data);
-        } else {
-          // ユーザー情報の取得に失敗した場合の処理
-          toast.error('ユーザー情報の取得に失敗しました');
-        }
-      } else {
-        // ユーザー情報の取得に失敗した場合の処理
+      } else if (response.status !== 404) {
+        // 404 は下部の「ユーザーが見つかりません」表示に任せ、それ以外のみ通知する
         toast.error('ユーザー情報の取得に失敗しました');
       }
     } catch {

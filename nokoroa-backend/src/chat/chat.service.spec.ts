@@ -119,7 +119,7 @@ describe('ChatService', () => {
   function findStreamCall(): [string, StreamFetchInit] {
     const call = (
       global.fetch as jest.Mock<unknown, [string, StreamFetchInit]>
-    ).mock.calls.find(([url]) => url.includes('/api/chat/stream'));
+    ).mock.calls.find(([url]) => url.endsWith('/api/chat/stream'));
     if (!call) {
       throw new Error('fetch was not called with /api/chat/stream');
     }

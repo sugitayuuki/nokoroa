@@ -16,6 +16,7 @@ export const API_CONFIG = {
     users: '/users',
     userById: (id: string) => `/users/${id}`,
     userProfile: '/users/profile',
+    uploadAvatar: '/users/upload-avatar',
     follow: (userId: string) => `/users/${userId}/follow`,
     unfollow: (userId: string) => `/users/${userId}/unfollow`,
     followers: (userId: string) => `/users/${userId}/followers`,
