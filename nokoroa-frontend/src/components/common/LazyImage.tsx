@@ -60,8 +60,16 @@ export const LazyImage = ({
     };
   }, []);
 
-  // onLoad イベントと下の ref 経路の両方から呼ばれ得るため、通知は 1 回に抑える
+  // onLoad イベントと下の ref 経路の両方から呼ばれ得るため、通知は src につき 1 回に抑える
   const hasNotifiedLoadRef = useRef(false);
+
+  // src が差し替わったら読み込み状態を仕切り直す。リセットしないと
+  // 2 枚目以降の onLoad が発火せず、エラー時の /top.jpg 固定も解けない
+  useEffect(() => {
+    hasNotifiedLoadRef.current = false;
+    setHasLoaded(false);
+    setHasError(false);
+  }, [src]);
   const handleImageLoad = () => {
     if (hasNotifiedLoadRef.current) {
       return;

@@ -55,6 +55,7 @@ interface PostCardProps {
   /**
    * 親が既にブックマーク状態を知っている場合に渡す。
    * 渡すとカード毎のブックマーク状態問い合わせを省略できる。
+   * feed 変種でのみ有効(compact はブックマークボタンを持たない)。
    */
   isBookmarked?: boolean;
 }
@@ -99,15 +100,15 @@ export default function PostCard({
   };
 
   // 表示専用チップ。カードのリンク遷移を発火させない。
-  // onClick を渡すと MUI Chip は role="button" + tabIndex=0 になるため、
-  // 押しても何も起きない要素がフォーカス順に入らないよう tabIndex は -1 にする
+  // clickable={false} を明示すると MUI は素の div(role/tabIndex なし)で描画するため、
+  // 押しても何も起きない要素がフォーカス順・読み上げ対象に入らない
   const handleStaticChipClick = (e: MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
   };
   const staticChipProps = {
     onClick: handleStaticChipClick,
-    tabIndex: -1,
+    clickable: false,
   } as const;
 
   if (variant === 'compact') {

@@ -142,12 +142,21 @@ describe('PagePaginationDto (follows)', () => {
     expect(page.dto.limit).toBe(20);
   });
 
-  it('重複指定(?limit=10&limit=20 → 配列)は 400 にせず既定値へ倒す', () => {
+  it('重複指定(?limit=10&limit=30 → 配列)は 400 にせず既定値へ倒す', () => {
+    // 既定値(20)と重ならない値で「末尾採用ではなく既定値」であることを区別する
     const { dto, errors } = parseQuery(PagePaginationDto, {
-      limit: ['10', '20'],
+      limit: ['10', '30'],
     });
     expect(errors).toHaveLength(0);
     expect(dto.limit).toBe(20);
+  });
+
+  it('範囲内の指数表記(?limit=1e1)は Number 解釈で通る(旧 parseInt とは非互換)', () => {
+    // Number('1e1') === 10 / Number.isInteger も true のため @IsInt を通過する。
+    // 旧 parseInt('1e1') は 1 だったので、意図的な非互換として仕様固定する
+    const { dto, errors } = parseQuery(OffsetPaginationDto, { limit: '1e1' });
+    expect(errors).toHaveLength(0);
+    expect(dto.limit).toBe(10);
   });
 });
 

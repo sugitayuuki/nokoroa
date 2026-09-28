@@ -92,7 +92,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [user, setUser] = useState<AuthUser>();
 
-  const navigation = useSmoothNavigation();
+  // 戻り値オブジェクトは毎レンダー新しいため、useCallback 済みの push だけを
+  // 分解して依存する(オブジェクトごと依存すると下の useMemo が毎回無効化される)
+  const { push: navigatePush } = useSmoothNavigation();
   const pathname = usePathname();
 
   // ログアウトの push('/') が完了(パス変化)したらフラグを戻す。
@@ -201,13 +203,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     void mutate(() => true, undefined, { revalidate: false });
 
     // 即座にホームページにリダイレクト
-    navigation.push('/');
+    navigatePush('/');
 
     // トーストは少し遅らせて表示
     setTimeout(() => {
       toast.info('ログアウトしました');
     }, 100);
-  }, [pathname, navigation]);
+  }, [pathname, navigatePush]);
 
   const register = useCallback(
     async (name: string, email: string, password: string): Promise<boolean> => {

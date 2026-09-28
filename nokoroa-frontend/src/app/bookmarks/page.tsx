@@ -40,10 +40,7 @@ export default function BookmarksPage() {
   };
 
   if (!isReady) {
-    if (!isAuthLoading) {
-      return null;
-    }
-    return (
+    return isAuthLoading ? (
       <Box
         sx={{
           display: 'flex',
@@ -54,7 +51,7 @@ export default function BookmarksPage() {
       >
         <CircularProgress />
       </Box>
-    );
+    ) : null;
   }
 
   if (favoritesLoading) {

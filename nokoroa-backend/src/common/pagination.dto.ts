@@ -22,10 +22,9 @@ export const MAX_PAGE_OFFSET = 10_000_000;
  * 空文字が Number('') === 0 に化けて @Min で 400 になり、旧実装
  * (生 parseInt + falsy フォールバック)の「?limit= は既定値で 200」と
  * 非互換になるため。互換を保つのは「空文字・欠落・重複指定(配列)は
- * 既定値」の3ケースのみ。小数(?limit=12.5)は @IsInt で 400(旧 parseInt は
- * 黙って 12 に読み替えていた)。指数表記は Number.isInteger(1e1)===true のため
- * @IsInt を通り、範囲内なら旧 parseInt(1e1→1)と異なる値(10)で通る。
- * 範囲外は @Max/@Min で 400。不正入力の黙認より明示エラーを優先する方針。
+ * 既定値」の3ケースのみ。小数・指数表記など他の書式の扱いは
+ * pagination.dto.spec.ts が仕様として固定している(旧 parseInt と
+ * 意図的に非互換。不正入力の黙認より明示エラーを優先する方針)。
  */
 const toQueryInt =
   (fallback: number) =>

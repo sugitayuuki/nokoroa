@@ -31,10 +31,7 @@ export default function ChangePasswordPage() {
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
   if (!isReady) {
-    if (!isAuthLoading) {
-      return null;
-    }
-    return (
+    return isAuthLoading ? (
       <Box
         sx={{
           display: 'flex',
@@ -45,7 +42,7 @@ export default function ChangePasswordPage() {
       >
         <CircularProgress />
       </Box>
-    );
+    ) : null;
   }
 
   const validateForm = () => {
