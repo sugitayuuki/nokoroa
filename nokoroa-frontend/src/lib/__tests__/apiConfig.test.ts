@@ -1,6 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { API_CONFIG } from '@/lib/apiConfig';
+import {
+  API_CONFIG,
+  API_FETCH_OPTIONS,
+  createApiRequest,
+  createFormDataRequest,
+} from '@/lib/apiConfig';
 
 const { endpoints, buildUrl } = API_CONFIG;
 
@@ -100,6 +105,8 @@ describe('API_CONFIG.endpoints', () => {
 
   it('主要なパスがバックエンドのルートと一致する', () => {
     expect(endpoints.login).toBe('/auth/login');
+    expect(endpoints.logout).toBe('/auth/logout');
+    expect(endpoints.me).toBe('/auth/me');
     expect(endpoints.signup).toBe('/users/signup');
     expect(endpoints.googleAuth).toBe('/auth/google');
     expect(endpoints.posts).toBe('/posts');
@@ -132,20 +139,58 @@ describe('API_CONFIG.endpoints', () => {
   });
 });
 
-describe('API_CONFIG の認証ヘッダ (window が無い SSR 環境)', () => {
-  beforeEach(() => {
-    expect(typeof window).toBe('undefined');
+describe('認証の渡し方', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
-  it('JSON リクエストでは Content-Type だけを返し Authorization を付けない', () => {
-    expect(API_CONFIG.getAuthHeaders()).toEqual({
+  it('トークンをヘッダに載せる仕組みは残っていない', () => {
+    // JWT は httpOnly クッキーで渡すため、フロントがトークンを読んで
+    // Authorization を組み立てる経路は廃止した
+    expect(API_CONFIG).not.toHaveProperty('getAuthHeaders');
+    expect(API_CONFIG).not.toHaveProperty('getFormDataAuthHeaders');
+  });
+
+  it('API_FETCH_OPTIONS は認証クッキーを送る設定になっている', () => {
+    expect(API_FETCH_OPTIONS.credentials).toBe('include');
+  });
+
+  it('createApiRequest は credentials と Content-Type を付ける', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await createApiRequest(endpoints.me);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(buildUrl(endpoints.me));
+    expect(init.credentials).toBe('include');
+    expect(init.headers).toMatchObject({
       'Content-Type': 'application/json',
     });
   });
 
-  it('FormData リクエストでは Content-Type を付けない (boundary を壊さない)', () => {
-    const headers = API_CONFIG.getFormDataAuthHeaders();
-    expect(headers).toEqual({});
-    expect(headers).not.toHaveProperty('Content-Type');
+  it('createApiRequest の呼び出し側は credentials を上書きできない想定で使う', async () => {
+    // options を後ろに展開しているため method 等は上書きできるが、
+    // credentials を意図せず落とさないよう既定値として先に置いている
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await createApiRequest(endpoints.logout, { method: 'POST' });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init.method).toBe('POST');
+    expect(init.credentials).toBe('include');
+  });
+
+  it('createFormDataRequest は credentials を付け Content-Type を付けない', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await createFormDataRequest(endpoints.uploadPostImage, new FormData());
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init.credentials).toBe('include');
+    // multipart の boundary を壊さないため指定しない
+    expect(init.headers).toBeUndefined();
   });
 });

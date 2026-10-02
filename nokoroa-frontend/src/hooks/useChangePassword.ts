@@ -3,7 +3,7 @@
 import { useState } from 'react';
 
 import { API_CONFIG, createApiRequest } from '@/lib/apiConfig';
-import { getToken } from '@/utils/auth';
+import { useAuth } from '@/providers/AuthProvider';
 
 interface ChangePasswordData {
   currentPassword: string;
@@ -27,6 +27,8 @@ export function useChangePassword(): UseChangePasswordReturn {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  // 認証クッキーは httpOnly で読めないため、ログイン状態は useAuth() で見る
+  const { isAuthenticated } = useAuth();
 
   const changePassword = async (data: ChangePasswordData): Promise<boolean> => {
     try {
@@ -34,7 +36,7 @@ export function useChangePassword(): UseChangePasswordReturn {
       setError(null);
       setSuccess(false);
 
-      if (!getToken()) {
+      if (!isAuthenticated) {
         throw new Error('認証が必要です');
       }
 

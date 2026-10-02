@@ -1,6 +1,6 @@
 import useSWR from 'swr';
 
-import { API_CONFIG } from '@/lib/apiConfig';
+import { API_CONFIG, API_FETCH_OPTIONS } from '@/lib/apiConfig';
 
 import { SearchFilters, SearchResponse } from '../types/search';
 
@@ -14,11 +14,9 @@ export class SearchFetchError extends Error {
 }
 
 const fetcher = async (url: string): Promise<SearchResponse> => {
-  const isSemantic = url.includes(API_CONFIG.endpoints.semanticSearch);
-  const headers: Record<string, string> = isSemantic
-    ? API_CONFIG.getAuthHeaders()
-    : {};
-  const response = await fetch(url, { headers });
+  // セマンティック検索は本人の非公開投稿も対象になるため、認証クッキーを送る。
+  // 公開検索も同じ経路で問題ない(サーバーは未認証なら公開分だけ返す)
+  const response = await fetch(url, API_FETCH_OPTIONS);
   if (!response.ok) {
     throw new SearchFetchError(
       response.status,

@@ -1,15 +1,13 @@
 import useSWR from 'swr';
 
-import { API_CONFIG } from '@/lib/apiConfig';
+import { API_CONFIG, createApiRequest } from '@/lib/apiConfig';
 
 import { PostData } from '../types/post';
 
-// 非公開投稿は投稿者本人だけが取得できるため、認証ヘッダを付けて取得する。
-// 素の fetch だと本人が自分の非公開投稿の詳細ページを開けない。
+// 非公開投稿は投稿者本人だけが取得できるため、認証クッキーを送って取得する。
+// credentials を付けない fetch だと本人が自分の非公開投稿の詳細ページを開けない。
 const fetcher = async (endpoint: string): Promise<PostData> => {
-  const response = await fetch(API_CONFIG.buildUrl(endpoint), {
-    headers: API_CONFIG.getAuthHeaders(),
-  });
+  const response = await createApiRequest(endpoint);
   if (!response.ok) {
     throw new Error('Failed to fetch post');
   }

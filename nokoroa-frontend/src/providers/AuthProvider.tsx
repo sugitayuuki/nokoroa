@@ -14,7 +14,7 @@ import { mutate } from 'swr';
 
 import { useSmoothNavigation } from '@/hooks/useSmoothNavigation';
 import { API_CONFIG, createApiRequest } from '@/lib/apiConfig';
-import { getToken, removeToken, setToken } from '@/utils/auth';
+import { purgeLegacyStoredToken } from '@/utils/auth';
 
 /**
  * 認証セッションの本人情報。
@@ -36,7 +36,8 @@ type AuthContextType = {
   isLoggingOut: boolean;
   user?: AuthUser;
   login: (email: string, password: string) => Promise<boolean>;
-  logout: () => void;
+  /** 認証クッキーはサーバーしか消せないため、ログアウトは非同期になる */
+  logout: () => Promise<void>;
   register: (name: string, email: string, password: string) => Promise<boolean>;
 };
 
@@ -70,13 +71,17 @@ type FetchAuthUserResult =
   | { status: 'invalid' };
 
 /**
- * プロフィール API からユーザー情報を取得する。
+ * セッション API からログイン中のユーザーを取得する。
  * 「認証が無効(非 2xx / 通信失敗)」と「200 だが形が想定外」を区別して返す。
- * 後者でトークンを消すと、API 側の一時的な応答形不良だけで強制ログアウトになるため。
+ * 後者を未認証扱いにすると、API 側の一時的な応答形不良だけで
+ * 強制ログアウトになるため。
+ *
+ * 認証クッキーは httpOnly でフロントから読めないので、
+ * ログイン状態の判定はこの呼び出しの結果が唯一の手段になる。
  */
 const fetchAuthUser = async (): Promise<FetchAuthUserResult> => {
   try {
-    const response = await createApiRequest(API_CONFIG.endpoints.userProfile);
+    const response = await createApiRequest(API_CONFIG.endpoints.me);
     if (!response.ok) {
       return { status: 'invalid' };
     }
@@ -104,15 +109,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [pathname]);
 
   useEffect(() => {
-    const validateToken = async () => {
-      if (!getToken()) {
-        setIsAuthenticated(false);
-        setUser(undefined);
-        setIsLoading(false);
-        return;
-      }
+    // 旧実装が localStorage に残した JWT の後片付け。アプリ起動時に 1 回だけ。
+    purgeLegacyStoredToken();
 
-      // トークンの有効性を確認するため、プロフィールAPIを呼び出し
+    const restoreSession = async () => {
+      // クッキーは読めないので、セッションの有無はサーバーに聞くしかない
       const result = await fetchAuthUser();
 
       if (result.status === 'ok') {
@@ -120,15 +121,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setIsAuthenticated(true);
         setUser(result.user);
       } else {
-        // トークンが無効な場合は削除
-        removeToken();
         setIsAuthenticated(false);
         setUser(undefined);
       }
       setIsLoading(false);
     };
 
-    validateToken();
+    restoreSession();
   }, []);
 
   const login = useCallback(
@@ -146,29 +145,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           return false;
         }
 
+        // トークンはレスポンス本文から読まない。認証クッキー(httpOnly)を
+        // ブラウザが保存するので、フロントが触る必要がない。
+        // 本文の user は、下の /auth/me が形不良だったときの表示用の控え。
         const result = await response.json();
-
-        // access_token または token のいずれかを使用
-        const token = result.access_token || result.token;
-        if (!token) {
-          toast.error('認証トークンが取得できませんでした。');
-          return false;
-        }
 
         // トークン失効などで logout を経ずにユーザーが切り替わる場合があるため、
         // ログイン時にも前のユーザーのキャッシュを破棄する。
         void mutate(() => true, undefined, { revalidate: false });
 
-        setToken(token);
-
-        // ログイン後、プロフィールAPIを呼び出してユーザー情報を取得。
-        // 取得できなければログインレスポンスの user を使い、それも無ければ undefined のままにする。
-        // (取得失敗時に偽のユーザーを置くと、他人の名前でログインしたように見えてしまう)
+        // クッキーが実際に保存されたかはフロントから確認できない(httpOnly)。
+        // ここでセッションを引き直さないと、クッキーが保存されていない場合に
+        // 「ログインできたのに以降ずっと 401」という無言の詰みになる。
         const fetched = await fetchAuthUser();
-        setUser(
-          (fetched.status === 'ok' ? fetched.user : undefined) ??
-            toAuthUser(result.user),
-        );
+        if (fetched.status !== 'ok') {
+          toast.error(
+            'ログイン状態を保存できませんでした。ブラウザのCookie設定をご確認ください。',
+          );
+          return false;
+        }
+
+        // /auth/me が 200 でも形が想定外なら、ログインレスポンスの user を使う。
+        // どちらも使えない場合は undefined のままにする
+        // (偽のユーザーを置くと、他人の名前でログインしたように見えてしまう)
+        setUser(fetched.user ?? toAuthUser(result.user));
 
         setIsAuthenticated(true);
         toast.success('ログインしました');
@@ -184,7 +184,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [],
   );
 
-  const logout = useCallback(() => {
+  const logout = useCallback(async () => {
     // 認証状態を落とすと保護ページのガードが /login へ replace しようとするため、
     // 「意図的なログアウト」であることを先に立てて push('/') を勝たせる
     // (旧実装は全遷移に入っていた 100ms 遅延のおかげで偶然 '/' が勝っていた)。
@@ -193,7 +193,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (pathname !== '/') {
       setIsLoggingOut(true);
     }
-    removeToken();
+
+    // 認証クッキーは httpOnly なのでフロントからは消せない。サーバーに
+    // 消してもらうまで待つ: 待たずに画面を切り替えると、リロードで
+    // ログイン状態に戻ってしまう。
+    // 通信が失敗しても画面上はログアウトさせる(クッキーは有効期限で切れる)。
+    try {
+      await createApiRequest(API_CONFIG.endpoints.logout, { method: 'POST' });
+    } catch {
+      // ネットワーク断でもローカルの状態は落とす
+    }
+
     setIsAuthenticated(false);
     setUser(undefined);
 

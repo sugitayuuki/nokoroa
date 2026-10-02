@@ -22,7 +22,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 
 import PostCard from '@/components/post/PostCard';
-import { API_CONFIG } from '@/lib/apiConfig';
+import { API_CONFIG, API_FETCH_OPTIONS } from '@/lib/apiConfig';
 import { isComposingEvent } from '@/utils/ime';
 
 import { GoogleMap } from '../../components/map/GoogleMap';
@@ -64,7 +64,8 @@ export default function MapPage() {
 
       const url = `${API_CONFIG.buildUrl(API_CONFIG.endpoints.searchByLocation)}?${params.toString()}`;
 
-      const response = await fetch(url);
+      // 自社 API なので認証クッキーを送る(ログイン中は本人の非公開投稿も対象)
+      const response = await fetch(url, API_FETCH_OPTIONS);
 
       if (!response.ok) {
         throw new Error('投稿の検索に失敗しました');
