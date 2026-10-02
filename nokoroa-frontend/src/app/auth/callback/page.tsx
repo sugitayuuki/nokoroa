@@ -1,49 +1,67 @@
 'use client';
 
 import { CircularProgress, Container, Typography } from '@mui/material';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { Suspense, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { useEffect } from 'react';
 import { toast } from 'react-toastify';
 
-import { setToken } from '@/utils/auth';
+import { API_CONFIG, createApiRequest } from '@/lib/apiConfig';
 
-function AuthCallbackContent() {
+/**
+ * Google 認証後の着地ページ。
+ *
+ * トークンは URL ではなく httpOnly クッキーで渡ってくるため、ここでは
+ * クエリを一切読まない。クッキーが効いているかはフロントから確認できないので、
+ * /auth/me を 1 回呼んでログインできたかを判定する。
+ */
+export default function AuthCallbackPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
 
   useEffect(() => {
+    let cancelled = false;
+
     const handleCallback = async () => {
-      const token = searchParams.get('token');
-      const userString = searchParams.get('user');
-
-      if (token && userString) {
-        try {
-          // トークンを保存(キー名は utils/auth に集約)
-          setToken(token);
-
-          // ユーザー情報をパース
-          const user = JSON.parse(decodeURIComponent(userString));
-
-          // 成功メッセージ
-          toast.success(`ようこそ、${user.name}さん！`);
-
-          // ホームページにリダイレクト
-          setTimeout(() => {
-            window.location.href = '/';
-          }, 1000);
-        } catch {
-          // ユーザーデータの解析でエラーが発生した場合の処理
-          toast.error('認証エラーが発生しました');
-          router.push('/');
+      try {
+        const response = await createApiRequest(API_CONFIG.endpoints.me);
+        if (cancelled) {
+          return;
         }
-      } else {
+
+        if (!response.ok) {
+          toast.error('認証に失敗しました');
+          router.push('/');
+          return;
+        }
+
+        const user = await response.json();
+        if (cancelled) {
+          return;
+        }
+
+        toast.success(
+          user?.name ? `ようこそ、${user.name}さん！` : 'ログインしました',
+        );
+      } catch {
+        if (cancelled) {
+          return;
+        }
         toast.error('認証に失敗しました');
         router.push('/');
+        return;
       }
+
+      // AuthProvider はマウント時に 1 回だけセッションを引くため、SPA 遷移では
+      // ログイン状態が反映されない。トップへはフルリロードで移動する。
+      // replace にして、戻るボタンでこのページへ帰ってこないようにする。
+      window.location.replace('/');
     };
 
     handleCallback();
-  }, [searchParams, router]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
 
   return (
     <Container
@@ -62,28 +80,5 @@ function AuthCallbackContent() {
         まもなくリダイレクトされます
       </Typography>
     </Container>
-  );
-}
-
-export default function AuthCallbackPage() {
-  return (
-    <Suspense
-      fallback={
-        <Container
-          maxWidth="sm"
-          sx={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            minHeight: '100vh',
-          }}
-        >
-          <CircularProgress size={60} />
-        </Container>
-      }
-    >
-      <AuthCallbackContent />
-    </Suspense>
   );
 }

@@ -3,6 +3,7 @@ import { Logger } from '@nestjs/common';
 import { HttpAdapterHost, NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 
 import { AppModule } from './app.module';
@@ -30,6 +31,10 @@ async function bootstrap() {
     '/uploads',
     helmet.crossOriginResourcePolicy({ policy: 'cross-origin' }),
   );
+  // JWT は httpOnly クッキーで渡すため、req.cookies を使えるようにする。
+  // これが無いと JwtStrategy の Cookie 取り出しが常に空振りし、
+  // Authorization ヘッダのある Swagger だけ通る状態になる。
+  app.use(cookieParser());
   app.setGlobalPrefix('api');
 
   const config = new DocumentBuilder()

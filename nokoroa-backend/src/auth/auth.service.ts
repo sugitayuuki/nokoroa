@@ -45,6 +45,37 @@ export class AuthService {
     };
   }
 
+  /**
+   * ログインセッションの本人情報だけを返す。
+   *
+   * 「このブラウザは誰としてログインしているか」を答えるのが役目で、bio や
+   * 投稿一覧まで返す GET /users/profile とは意図的に別口にしている
+   * (プロフィール全体の正は UsersService 側)。
+   * トークンは httpOnly クッキーでフロントから読めないため、フロントは
+   * この呼び出しが成功するかどうかでログイン状態を判断する。
+   */
+  async getSessionUser(userId: number) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, email: true, name: true, avatar: true },
+    });
+
+    // JWT は有効なのにユーザーが消えている(退会・DB 入れ替えなど)状態。
+    // 認証済みとして返すとフロントが本人不明のままログイン状態になるため弾く。
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
+
+    return user;
+  }
+
+  /**
+   * Google 認証のユーザーでログインする。
+   *
+   * googleId が未知の場合は email で既存アカウントを探して紐付ける。
+   * この紐付けが安全なのは GoogleUser.email が「Google 側で確認済み」である
+   * という前提に依っており、その検証は GoogleStrategy.validate が担う。
+   */
   async googleLogin(googleUser: GoogleUser) {
     let user = await this.prisma.user.findUnique({
       where: { googleId: googleUser.googleId },

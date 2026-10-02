@@ -28,7 +28,6 @@ import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useUser } from '@/hooks/useUser';
 import { API_CONFIG, createApiRequest } from '@/lib/apiConfig';
 import { useAuth } from '@/providers/AuthProvider';
-import { getToken } from '@/utils/auth';
 
 import { PostData } from '../../types/post';
 import PostCard from './PostCard';
@@ -60,7 +59,7 @@ const MyPostCard = ({
   // 認証セッションの本人情報はアプリ全体で 1 回だけ取得済み。
   // ログイン直後の取得失敗等で authUser が無いときだけ useUser() に
   // フォールバックする(SWR キャッシュ共有のため N+1 にはならない)。
-  const { user: authUser } = useAuth();
+  const { user: authUser, isAuthenticated } = useAuth();
   const { user: profileUser } = useUser();
   const user = authUser ?? profileUser;
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -125,8 +124,8 @@ const MyPostCard = ({
 
   const handleVisibilityChange = async (isPublic: boolean) => {
     try {
-      if (!getToken()) {
-        // 認証トークンが見つからない場合の処理
+      if (!isAuthenticated) {
+        // 未ログインの場合の処理(認証クッキーは httpOnly なので useAuth で判定)
         toast.error('ログインが必要です');
         return;
       }

@@ -1,111 +1,98 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // environment は node のまま、window / localStorage を vi.stubGlobal で
-// スタブしてブラウザ経路(トークンの読み書きと Authorization ヘッダ付与)を検証する。
-// jsdom を依存に足すほどの DOM 操作はしないため、この方式で十分。
-// (delete による後始末は将来 jsdom テストが同居した時に本物の window を
-//  消してしまうため、復元可能な stubGlobal / unstubAllGlobals を使う)
-function installBrowserStub() {
+// 差し替える。モジュールは isBrowser() の判定後に読み込ませたいので動的 import。
+function stubBrowser() {
   const store = new Map<string, string>();
   const localStorageStub = {
-    getItem: (key: string) => (store.has(key) ? store.get(key)! : null),
-    setItem: (key: string, value: string) => {
-      store.set(key, String(value));
-    },
-    removeItem: (key: string) => {
-      store.delete(key);
-    },
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => void store.set(key, value),
+    removeItem: (key: string) => void store.delete(key),
     clear: () => store.clear(),
   };
   vi.stubGlobal('window', { localStorage: localStorageStub });
   vi.stubGlobal('localStorage', localStorageStub);
+  return store;
 }
 
-describe('utils/auth (ブラウザ環境スタブ)', () => {
+describe('purgeLegacyStoredToken', () => {
+  let store: Map<string, string>;
+
   beforeEach(() => {
-    installBrowserStub();
+    store = stubBrowser();
+    vi.resetModules();
   });
+
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it('setToken → getToken で同じ値が返り、キーは jwt に保存される', async () => {
-    const { getToken, setToken } = await import('@/utils/auth');
-    setToken('token-abc');
-    expect(getToken()).toBe('token-abc');
-    expect(localStorage.getItem('jwt')).toBe('token-abc');
-  });
+  it('旧実装が localStorage に残した jwt を削除する', async () => {
+    localStorage.setItem('jwt', 'legacy-token');
+    const { purgeLegacyStoredToken } = await import('@/utils/auth');
 
-  it('removeToken 後は null が返る', async () => {
-    const { getToken, removeToken, setToken } = await import('@/utils/auth');
-    setToken('token-abc');
-    removeToken();
-    expect(getToken()).toBeNull();
-  });
+    purgeLegacyStoredToken();
 
-  it('未保存なら getToken は null を返す', async () => {
-    const { getToken } = await import('@/utils/auth');
-    expect(getToken()).toBeNull();
-  });
-
-  it('exp が猶予(24h)を超えて過去の JWT は掃除して null を返す', async () => {
-    const { getToken, setToken } = await import('@/utils/auth');
-    const payload = Buffer.from(
-      JSON.stringify({ exp: Math.floor(Date.now() / 1000) - 25 * 60 * 60 }),
-    ).toString('base64url');
-    setToken(`header.${payload}.sig`);
-    expect(getToken()).toBeNull();
     expect(localStorage.getItem('jwt')).toBeNull();
   });
 
-  it('失効直後(猶予内)の JWT はそのまま返す(時計スキューでの誤爆防止)', async () => {
-    const { getToken, setToken } = await import('@/utils/auth');
-    const payload = Buffer.from(
-      JSON.stringify({ exp: Math.floor(Date.now() / 1000) - 60 }),
-    ).toString('base64url');
-    const token = `header.${payload}.sig`;
-    setToken(token);
-    expect(getToken()).toBe(token);
+  it('jwt 以外のキーは消さない', async () => {
+    localStorage.setItem('jwt', 'legacy-token');
+    localStorage.setItem('nokoroa:searchHistory', '["京都"]');
+    const { purgeLegacyStoredToken } = await import('@/utils/auth');
+
+    purgeLegacyStoredToken();
+
+    expect(localStorage.getItem('nokoroa:searchHistory')).toBe('["京都"]');
   });
 
-  it('exp が未来の JWT はそのまま返す', async () => {
-    const { getToken, setToken } = await import('@/utils/auth');
-    const payload = Buffer.from(
-      JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600 }),
-    ).toString('base64url');
-    const token = `header.${payload}.sig`;
-    setToken(token);
-    expect(getToken()).toBe(token);
+  it('保存されていなくてもエラーにならない', async () => {
+    const { purgeLegacyStoredToken } = await import('@/utils/auth');
+
+    expect(() => purgeLegacyStoredToken()).not.toThrow();
+    expect(store.size).toBe(0);
   });
 
-  it('JWT として読めないトークンは有効扱いで返す(判定はサーバに委ねる)', async () => {
-    const { getToken, setToken } = await import('@/utils/auth');
-    setToken('not-a-jwt');
-    expect(getToken()).toBe('not-a-jwt');
+  it('localStorage が使えない環境でも例外を投げない', async () => {
+    // プライベートモード等で removeItem が throw するブラウザがある。
+    // ここで落とすとアプリの初期化全体が止まる
+    vi.stubGlobal('window', {});
+    vi.stubGlobal('localStorage', {
+      removeItem: () => {
+        throw new Error('SecurityError');
+      },
+    });
+    const { purgeLegacyStoredToken } = await import('@/utils/auth');
+
+    expect(() => purgeLegacyStoredToken()).not.toThrow();
   });
 });
 
-describe('API_CONFIG.getAuthHeaders (ブラウザ環境スタブ)', () => {
+describe('purgeLegacyStoredToken (window が無い SSR 環境)', () => {
   beforeEach(() => {
-    installBrowserStub();
-  });
-  afterEach(() => {
-    vi.unstubAllGlobals();
+    vi.resetModules();
   });
 
-  it('トークンがあれば Authorization: Bearer が付く', async () => {
-    const { setToken } = await import('@/utils/auth');
-    const { API_CONFIG } = await import('@/lib/apiConfig');
-    setToken('token-xyz');
-    const headers = API_CONFIG.getAuthHeaders() as Record<string, string>;
-    expect(headers.Authorization).toBe('Bearer token-xyz');
-    expect(headers['Content-Type']).toBe('application/json');
+  it('window が無ければ何もしない', async () => {
+    expect(typeof window).toBe('undefined');
+    const { purgeLegacyStoredToken } = await import('@/utils/auth');
+
+    expect(() => purgeLegacyStoredToken()).not.toThrow();
+  });
+});
+
+describe('トークン保存 API の廃止', () => {
+  beforeEach(() => {
+    vi.resetModules();
   });
 
-  it('トークンが無ければ Authorization ヘッダ自体が付かない', async () => {
-    const { API_CONFIG } = await import('@/lib/apiConfig');
-    const headers = API_CONFIG.getAuthHeaders() as Record<string, string>;
-    expect(headers.Authorization).toBeUndefined();
-    expect(headers['Content-Type']).toBe('application/json');
+  it('getToken / setToken / removeToken は公開しない', async () => {
+    // 認証は httpOnly クッキーに移したため、フロントがトークンを
+    // 保持する経路は残っていない(残すと XSS で盗める面が復活する)
+    const authModule = await import('@/utils/auth');
+
+    expect(authModule).not.toHaveProperty('getToken');
+    expect(authModule).not.toHaveProperty('setToken');
+    expect(authModule).not.toHaveProperty('removeToken');
   });
 });

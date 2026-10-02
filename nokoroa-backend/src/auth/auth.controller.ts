@@ -2,20 +2,30 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
   Post,
   Req,
   Res,
   UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
-import { ApiTags, ApiOperation, ApiResponse, ApiBody } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBody,
+  ApiBearerAuth,
+} from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { Request, Response } from 'express';
 
+import { clearAuthCookie, setAuthCookie } from './auth-cookie';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { GoogleAuthGuard } from './guards/google-auth.guard';
+import { JwtAuthGuard } from './jwt-auth.guard';
 import { GoogleUser } from './strategies/google.strategy';
+import { AuthenticatedRequest } from '../common/authenticated-request';
 
 interface GoogleAuthRequest extends Request {
   user: GoogleUser;
@@ -31,13 +41,53 @@ export class AuthController {
   @Throttle({ default: { ttl: 60_000, limit: 5 } })
   @ApiOperation({
     summary: 'ログイン',
-    description: 'メールアドレスとパスワードでログインします',
+    description:
+      'メールアドレスとパスワードでログインし、JWT を httpOnly クッキーで発行します',
   })
   @ApiBody({ type: LoginDto })
-  @ApiResponse({ status: 200, description: 'ログイン成功' })
+  @ApiResponse({ status: 201, description: 'ログイン成功' })
   @ApiResponse({ status: 401, description: '認証失敗' })
-  async login(@Body() loginDto: LoginDto) {
-    return this.authService.login(loginDto.email, loginDto.password);
+  async login(
+    @Body() loginDto: LoginDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.authService.login(
+      loginDto.email,
+      loginDto.password,
+    );
+    setAuthCookie(res, result.access_token);
+    // access_token はレスポンス本文にも残している。ブラウザはこれを保存せず
+    // クッキーだけで認証するが、Swagger の Authorize と既存の E2E が
+    // Authorization ヘッダ経由で叩くために必要。
+    return result;
+  }
+
+  @Get('me')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'ログイン中のユーザー取得',
+    description:
+      'クッキー(または Authorization ヘッダ)の JWT から、ログイン中のユーザーを返します',
+  })
+  @ApiResponse({ status: 200, description: '取得成功' })
+  @ApiResponse({ status: 401, description: '未認証' })
+  async me(@Req() req: AuthenticatedRequest) {
+    return this.authService.getSessionUser(req.user.userId);
+  }
+
+  @Post('logout')
+  // 認証を要求しない。クッキーが既に無効でも「消す」は成功すべきで、
+  // 401 を返すとフロントがログアウトできない状態に陥る。
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'ログアウト',
+    description: '認証クッキーを削除します',
+  })
+  @ApiResponse({ status: 200, description: 'ログアウト成功' })
+  logout(@Res({ passthrough: true }) res: Response) {
+    clearAuthCookie(res);
+    return { message: 'ログアウトしました' };
   }
 
   @Get('google')
@@ -63,11 +113,11 @@ export class AuthController {
     @Res() res: Response,
   ) {
     const result = await this.authService.googleLogin(req.user);
+    setAuthCookie(res, result.access_token);
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-    res.redirect(
-      `${frontendUrl}/auth/callback?token=${result.access_token}&user=${encodeURIComponent(
-        JSON.stringify(result.user),
-      )}`,
-    );
+    // トークンとユーザー情報はクエリに載せない。URL に載せると
+    // ブラウザ履歴・アクセスログ・Referer にトークンが残るため、
+    // フロントは着地後に GET /auth/me で本人を取得する。
+    res.redirect(`${frontendUrl}/auth/callback`);
   }
 }

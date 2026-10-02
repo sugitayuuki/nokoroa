@@ -1,6 +1,9 @@
-import { API_CONFIG, createApiRequest } from '@/lib/apiConfig';
+import {
+  API_CONFIG,
+  API_FETCH_OPTIONS,
+  createApiRequest,
+} from '@/lib/apiConfig';
 import { UserFollowData } from '@/types/user';
-import { getToken } from '@/utils/auth';
 
 export interface FollowStats {
   followersCount: number;
@@ -20,17 +23,18 @@ export interface FollowListResponse {
   totalPages: number;
 }
 
+// 認証クッキーは httpOnly でここから読めず、React の外なので useAuth も
+// 使えない。未ログインかどうかの判定はサーバーの 401 に委ねている。
 export async function followUser(userId: number): Promise<void> {
-  if (!getToken()) {
-    throw new Error('認証が必要です');
-  }
-
   const response = await createApiRequest(
     API_CONFIG.endpoints.followUser(userId.toString()),
     { method: 'POST' },
   );
 
   if (!response.ok) {
+    if (response.status === 401) {
+      throw new Error('認証が必要です');
+    }
     if (response.status === 409) {
       throw new Error('すでにフォローしています');
     }
@@ -39,16 +43,15 @@ export async function followUser(userId: number): Promise<void> {
 }
 
 export async function unfollowUser(userId: number): Promise<void> {
-  if (!getToken()) {
-    throw new Error('認証が必要です');
-  }
-
   const response = await createApiRequest(
     API_CONFIG.endpoints.followUser(userId.toString()),
     { method: 'DELETE' },
   );
 
   if (!response.ok) {
+    if (response.status === 401) {
+      throw new Error('認証が必要です');
+    }
     if (response.status === 404) {
       throw new Error('フォロー関係が見つかりません');
     }
@@ -57,10 +60,7 @@ export async function unfollowUser(userId: number): Promise<void> {
 }
 
 export async function checkFollowStatus(userId: number): Promise<FollowStatus> {
-  if (!getToken()) {
-    return { isFollowing: false, followedAt: null };
-  }
-
+  // 状態確認は失敗してもUIを壊さない(未ログイン=401 も「未フォロー」扱い)
   const response = await createApiRequest(
     API_CONFIG.endpoints.checkFollow(userId.toString()),
   );
@@ -81,6 +81,7 @@ export async function getFollowers(
     API_CONFIG.buildUrl(
       `${API_CONFIG.endpoints.userFollowers(userId.toString())}?page=${page}&limit=${limit}`,
     ),
+    API_FETCH_OPTIONS,
   );
 
   if (!response.ok) {
@@ -99,6 +100,7 @@ export async function getFollowing(
     API_CONFIG.buildUrl(
       `${API_CONFIG.endpoints.userFollowing(userId.toString())}?page=${page}&limit=${limit}`,
     ),
+    API_FETCH_OPTIONS,
   );
 
   if (!response.ok) {
@@ -111,6 +113,7 @@ export async function getFollowing(
 export async function getFollowStats(userId: number): Promise<FollowStats> {
   const response = await fetch(
     API_CONFIG.buildUrl(API_CONFIG.endpoints.followStats(userId.toString())),
+    API_FETCH_OPTIONS,
   );
 
   if (!response.ok) {
