@@ -11,7 +11,6 @@ import {
   SESSION_HINT_COOKIE_NAME,
 } from '../src/auth/auth-cookie';
 import { OAUTH_STATE_COOKIE_NAME } from '../src/auth/oauth-state.store';
-import { applySharedHttpSetup } from '../src/common/http-setup';
 
 /**
  * Set-Cookie から目的のクッキー 1 件の生文字列を取り出す。
@@ -45,9 +44,6 @@ describe('Auth (e2e)', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
-    // 本番(main.ts)と同じ共通設定(cookie-parser + ValidationPipe)を使う。
-    // ここを本番と別に組むと、本番側の配線を消してもテストが緑のままになる。
-    applySharedHttpSetup(app);
     await app.init();
     server = app.getHttpServer() as Server;
   });
@@ -365,6 +361,53 @@ describe('Auth (e2e)', () => {
       expect(response.status).not.toBe(403);
     });
 
+    it('OAuth 経路でもトップレベル遷移以外は拒否する', async () => {
+      // 画像等の埋め込み(no-cors)でコールバックを叩かせると、
+      // 被害者の進行中ログインの state を消して妨害できてしまう
+      await request(server)
+        .get('/auth/google/callback?code=x&state=y')
+        .set('Sec-Fetch-Site', 'cross-site')
+        .set('Sec-Fetch-Mode', 'no-cors')
+        .expect(403);
+    });
+
+    it('Sec-Fetch-Site を送らないブラウザでも Origin で更新系を拒否する', async () => {
+      // Safari 16.3 以下 / Firefox 89 以下は Sec-Fetch-Site を送らない。
+      // ログイン CSRF を止めているのはこの検査だけなので、Origin で二重化する
+      await request(server)
+        .post('/auth/login')
+        .set('Origin', 'https://evil.example')
+        .send({ email: 'crosssite@example.com', password: 'password123' })
+        .expect(403);
+    });
+
+    it('許可オリジンからの更新系は通す', async () => {
+      // FRONTEND_URL は test/env.ts で http://localhost:3000
+      await request(server)
+        .post('/auth/login')
+        .set('Origin', 'http://localhost:3000')
+        .send({ email: 'crosssite@example.com', password: 'password123' })
+        .expect(201);
+    });
+
+    it('Origin 検査は参照系(GET)には効かせない', async () => {
+      // GET にまで Origin 必須にすると、画像や外部からの参照が壊れる
+      await request(server)
+        .get('/auth/me')
+        .set('Cookie', authCookie)
+        .set('Origin', 'https://evil.example')
+        .expect(200);
+    });
+
+    it('プレフィックスの無いルート直下も検査対象にする', async () => {
+      // ミドルウェアだと setGlobalPrefix 配下にしかマウントされず、
+      // ルート直下だけ素通りする。ガードにしているのでここも拒否される
+      await request(server)
+        .get('/')
+        .set('Sec-Fetch-Site', 'cross-site')
+        .expect(403);
+    });
+
     it('same-site(開発のポート違い)と same-origin は通す', async () => {
       await request(server)
         .get('/auth/me')
@@ -408,18 +451,18 @@ describe('Auth (e2e)', () => {
       );
     });
 
-    it('state クッキーが無いコールバックを拒否する', async () => {
+    it('state クッキーが無いコールバックでは認証クッキーを発行しない', async () => {
       // 攻撃者が取得した code を被害者にトップレベル遷移させる
       // ログイン CSRF（セッション固定）を塞ぐ経路
       const response = await request(server).get(
         '/auth/google/callback?code=attacker-code&state=attacker-state',
       );
 
-      expect(response.status).toBe(401);
       expect(findSetCookie(response, AUTH_COOKIE_NAME)).toBeUndefined();
+      expect(findSetCookie(response, SESSION_HINT_COOKIE_NAME)).toBeUndefined();
     });
 
-    it('state が一致しないコールバックを拒否する', async () => {
+    it('state が一致しないコールバックでは認証クッキーを発行しない', async () => {
       const start = await request(server).get('/auth/google').expect(302);
       const stateCookie = findSetCookie(start, OAUTH_STATE_COOKIE_NAME);
       if (!stateCookie) {
@@ -430,8 +473,37 @@ describe('Auth (e2e)', () => {
         .get('/auth/google/callback?code=attacker-code&state=not-the-same')
         .set('Cookie', toCookieHeader(stateCookie));
 
-      expect(response.status).toBe(401);
       expect(findSetCookie(response, AUTH_COOKIE_NAME)).toBeUndefined();
+    });
+
+    it('認証失敗はフロントへ戻す(API オリジンの生 JSON で行き止まりにしない)', async () => {
+      // state 切れ・複数タブ・?code= 付き URL のリロードはやり直せる失敗なので、
+      // ユーザーがアプリへ戻れる形にする。クエリは付けない
+      const response = await request(server).get(
+        '/auth/google/callback?code=x&state=y',
+      );
+
+      expect(response.status).toBe(302);
+      expect(response.headers['location']).toBe(
+        'http://localhost:3000/auth/callback',
+      );
+      expect(response.headers['location']).not.toContain('?');
+    });
+
+    it('state は 1 度使うと消える(再生を防ぐ)', async () => {
+      const start = await request(server).get('/auth/google').expect(302);
+      const stateCookie = findSetCookie(start, OAUTH_STATE_COOKIE_NAME);
+      if (!stateCookie) {
+        throw new Error('state クッキーが発行されていません');
+      }
+
+      const response = await request(server)
+        .get('/auth/google/callback?code=x&state=y')
+        .set('Cookie', toCookieHeader(stateCookie));
+
+      const cleared = findSetCookie(response, OAUTH_STATE_COOKIE_NAME);
+      expect(cleared).toBeDefined();
+      expect(cleared).toMatch(new RegExp(`^${OAUTH_STATE_COOKIE_NAME}=;`));
     });
   });
 

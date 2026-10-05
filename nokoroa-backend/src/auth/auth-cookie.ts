@@ -23,6 +23,11 @@ export const AUTH_COOKIE_NAME = 'nokoroa_token';
  * 必ず AUTH_COOKIE_NAME と同時に発行・削除する（下の set/clear が唯一の経路）。
  * 片方だけ残すと「ログイン中の表示なのに 401」「ログイン済みなのに未ログイン表示」
  * のどちらかになる。
+ *
+ * ⚠️ この名前はフロントエンドと**別リポジトリ階層にまたがる契約**。
+ * `nokoroa-frontend/src/utils/auth.ts` の SESSION_HINT_COOKIE_NAME と同じ値で
+ * なければならない。片方だけ変えると、ログイン済みの全ユーザーが未ログイン表示に
+ * なるが、両側のテストは緑のまま（型でもテストでも検出できない）。
  */
 export const SESSION_HINT_COOKIE_NAME = 'nokoroa_session';
 

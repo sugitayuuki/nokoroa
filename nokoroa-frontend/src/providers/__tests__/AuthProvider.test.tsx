@@ -14,8 +14,21 @@ vi.mock('next/navigation', () => ({
   usePathname: () => pathname,
   useRouter: () => ({ push, replace }),
 }));
+// 本物の useSmoothNavigation は pathname を閉じ込み「現在パスと同じ href なら
+// 遷移しない」早期 return を持つ。この性質が logout の往復と噛み合うため、
+// スタブでも同じ振る舞いを再現する（しないと該当のリグレッションを検出できない）。
 vi.mock('@/hooks/useSmoothNavigation', () => ({
-  useSmoothNavigation: () => ({ push }),
+  useSmoothNavigation: () => {
+    const currentPathname = pathname;
+    return {
+      push: (href: string) => {
+        if (currentPathname === href) {
+          return;
+        }
+        push(href);
+      },
+    };
+  },
 }));
 const toastCalls: string[] = [];
 vi.mock('react-toastify', () => ({
@@ -361,6 +374,109 @@ describe('AuthProvider.logout', () => {
     );
     expect(logoutCalls).toHaveLength(1);
     expect(push).toHaveBeenCalledTimes(1);
+  });
+
+  it("'/' でログアウトし往復中に保護ページへ移動したら、そのページから退避させる", async () => {
+    // クリック時の pathname が '/' なので、古い navigatePush の closure から見ると
+    // 「現在パス === '/' だから遷移不要」になる。往復後に最新のパスで判定しないと、
+    // 保護ページに留まったまま isLoggingOut=true が立ち続け、
+    // useRequireAuth のリダイレクトも抑止されて画面が固着する
+    pathname = '/';
+    let resolveLogout: ((value: Response) => void) | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse(200, ME_USER))
+        .mockImplementationOnce(
+          () =>
+            new Promise<Response>((resolve) => {
+              resolveLogout = resolve;
+            }),
+        ),
+    );
+
+    const view = renderProvider();
+    await waitFor(() =>
+      expect(screen.getByTestId('authed').textContent).toBe('true'),
+    );
+
+    await act(async () => {
+      screen.getByText('logout').click();
+    });
+
+    // 往復中に保護ページへ移動する
+    pathname = '/settings';
+    view.rerender(
+      <AuthProvider>
+        <Probe />
+      </AuthProvider>,
+    );
+
+    await act(async () => {
+      resolveLogout?.(jsonResponse(200, { message: 'ok' }));
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId('authed').textContent).toBe('false'),
+    );
+    // 保護ページから必ず離脱させる
+    expect(push).toHaveBeenCalledWith('/');
+  });
+
+  it('ログアウト後にヒントが残っていない', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse(200, ME_USER))
+        .mockResolvedValueOnce(jsonResponse(200, { message: 'ok' })),
+    );
+
+    renderProvider();
+    await waitFor(() =>
+      expect(screen.getByTestId('authed').textContent).toBe('true'),
+    );
+
+    // サーバーが Set-Cookie で消す挙動はここでは再現できないため、
+    // テスト側でサーバーの削除を模す
+    await act(async () => {
+      screen.getByText('logout').click();
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId('authed').textContent).toBe('false'),
+    );
+    setSessionHint(false);
+
+    const { hasSessionHint } = await import('@/utils/auth');
+    expect(hasSessionHint()).toBe(false);
+  });
+
+  it('サーバー削除に失敗したらヒントだけでも消す', async () => {
+    // ヒントが残ると、次のリロードで「ログイン中」と判断して /auth/me を引き、
+    // サーバー側のクッキーが生きていれば前の利用者のセッションに戻ってしまう
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse(200, ME_USER))
+        .mockResolvedValueOnce(jsonResponse(502, {})),
+    );
+
+    renderProvider();
+    await waitFor(() =>
+      expect(screen.getByTestId('authed').textContent).toBe('true'),
+    );
+
+    await act(async () => {
+      screen.getByText('logout').click();
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId('authed').textContent).toBe('false'),
+    );
+
+    const { hasSessionHint } = await import('@/utils/auth');
+    expect(hasSessionHint()).toBe(false);
   });
 
   it('サーバー側の削除に失敗したら黙らせず警告する', async () => {

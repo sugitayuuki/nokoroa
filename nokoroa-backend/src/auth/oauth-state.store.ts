@@ -1,4 +1,5 @@
 import { randomBytes, timingSafeEqual } from 'crypto';
+import { Logger } from '@nestjs/common';
 import { CookieOptions, Request } from 'express';
 
 import { isDevelopmentEnv } from '../common/environment';
@@ -7,10 +8,14 @@ import { isDevelopmentEnv } from '../common/environment';
 export const OAUTH_STATE_COOKIE_NAME = 'nokoroa_oauth_state';
 
 /**
- * state の寿命。Google の同意画面で迷っても足りる程度に短く取る。
- * 長くすると、盗んだ state を使い回せる窓が広がる。
+ * state の寿命。
+ *
+ * 短すぎると「同意画面でアカウントを選び迷っていたら、正規のログインが
+ * state 切れで失敗する」ことになる（この失敗は差分前には起きなかった退行）。
+ * 長すぎると盗んだ state を使い回せる窓が広がるため、同意画面の操作に
+ * 十分な 30 分に取る。
  */
-export const OAUTH_STATE_MAX_AGE_MS = 10 * 60 * 1000;
+export const OAUTH_STATE_MAX_AGE_MS = 30 * 60 * 1000;
 
 function stateCookieOptions(): CookieOptions {
   return {
@@ -61,6 +66,8 @@ type VerifyCallback = (
  * (`lib/strategy.js` の arity 判定)。store は 3、verify は 4 を保つこと。
  */
 export class OAuthStateCookieStore {
+  private readonly logger = new Logger(OAuthStateCookieStore.name);
+
   store(req: Request, _meta: unknown, callback: StoreCallback): void {
     const res = req.res;
     if (!res) {
@@ -89,6 +96,13 @@ export class OAuthStateCookieStore {
     req.res?.clearCookie(OAUTH_STATE_COOKIE_NAME, clearOptions);
 
     if (!expected || !providedState || !equals(expected, providedState)) {
+      // 失敗の理由はフロントまで届かない（passport が汎用の 401 に差し替える）。
+      // 攻撃だけでなく「同意画面で時間切れ」「複数タブで state が上書きされた」
+      // 「?code= 付き URL のリロード」でも起きるため、原因を追えるよう残す。
+      this.logger.warn(
+        'Rejected Google callback: OAuth state mismatch ' +
+          `(hasCookie=${Boolean(expected)} hasQuery=${Boolean(providedState)})`,
+      );
       callback(null, false, {
         message:
           'OAuth の state が一致しません。ログインをやり直してください。',

@@ -6,6 +6,7 @@ import {
   Post,
   Req,
   Res,
+  UseFilters,
   UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
@@ -26,6 +27,8 @@ import {
   setAuthCookie,
 } from './auth-cookie';
 import { AuthService } from './auth.service';
+import { GoogleAuthFailureFilter } from './google-auth-failure.filter';
+import { frontendBaseUrl } from '../common/frontend-url';
 import { LoginDto } from './dto/login.dto';
 import { GoogleAuthGuard } from './guards/google-auth.guard';
 import { JwtAuthGuard } from './jwt-auth.guard';
@@ -118,6 +121,10 @@ export class AuthController {
 
   @Get('google/callback')
   @UseGuards(AuthGuard('google'))
+  // 認証に失敗しても API オリジン上の生 JSON で行き止まりにしない。
+  // state 切れ・複数タブ・未確認メールはいずれもユーザーがやり直せる失敗なので、
+  // フロントへ戻して案内させる（詳細は GoogleAuthFailureFilter）。
+  @UseFilters(GoogleAuthFailureFilter)
   @ApiOperation({
     summary: 'Google認証コールバック',
     description: 'Google認証後のコールバック処理',
@@ -128,8 +135,10 @@ export class AuthController {
     @Res() res: Response,
   ) {
     const result = await this.authService.googleLogin(req.user);
+    // 302 も Set-Cookie を含むため、中間キャッシュに残さない
+    res.setHeader('Cache-Control', 'no-store');
     setAuthCookie(res, result.access_token);
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const frontendUrl = frontendBaseUrl();
     // トークンとユーザー情報はクエリに載せない。URL に載せると
     // ブラウザ履歴・アクセスログ・Referer にトークンが残るため、
     // フロントは着地後に GET /auth/me で本人を取得する。

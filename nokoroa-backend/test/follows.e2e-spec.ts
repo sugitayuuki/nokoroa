@@ -12,7 +12,6 @@ import {
   FollowStatsResponse,
 } from './types';
 import { AppModule } from '../src/app.module';
-import { applySharedHttpSetup } from '../src/common/http-setup';
 
 describe('Follows (e2e)', () => {
   let app: INestApplication;
@@ -27,9 +26,6 @@ describe('Follows (e2e)', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
-    // 本番(main.ts)と同じ共通設定(cookie-parser + ValidationPipe)を使う。
-    // ここを本番と別に組むと、本番側の配線を消してもテストが緑のままになる。
-    applySharedHttpSetup(app);
     await app.init();
     server = app.getHttpServer() as Server;
   });

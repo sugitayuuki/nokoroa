@@ -91,32 +91,21 @@ describe('auth-cookie', () => {
   });
 
   describe('setAuthCookie', () => {
-    it('規定の名前と属性でトークンを載せる', () => {
-      const cookie = jest.fn();
-      const res = { cookie } as unknown as Response;
-
-      setAuthCookie(res, 'jwt-token');
-
-      expect(cookie).toHaveBeenCalledWith(
-        AUTH_COOKIE_NAME,
-        'jwt-token',
-        authCookieOptions(),
-      );
-    });
-
-    it('ログイン状態ヒントを同時に発行する', () => {
+    // 「期待値を authCookieOptions() 自身から作る」比較は定義の言い直しになるため
+    // 置かない。属性値の正しさは上の authCookieOptions の各テストが担保する。
+    // ここで見るのは「2 本を同時に、正しい名前と値で出す」ことだけ。
+    it('トークンとログイン状態ヒントを同時に発行する', () => {
       // 片方だけ出すと「ログイン中の表示なのに 401」か
       // 「ログイン済みなのに未ログイン表示」になる
-      const cookie = jest.fn();
+      const cookie = jest.fn<void, [string, string, object]>();
       const res = { cookie } as unknown as Response;
 
       setAuthCookie(res, 'jwt-token');
 
-      expect(cookie).toHaveBeenCalledWith(
-        SESSION_HINT_COOKIE_NAME,
-        '1',
-        sessionHintCookieOptions(),
-      );
+      expect(cookie.mock.calls.map(([name, value]) => [name, value])).toEqual([
+        [AUTH_COOKIE_NAME, 'jwt-token'],
+        [SESSION_HINT_COOKIE_NAME, '1'],
+      ]);
     });
 
     it('ヒントにトークンを入れない(JS から読めるため)', () => {
@@ -134,28 +123,33 @@ describe('auth-cookie', () => {
   });
 
   describe('clearAuthCookie', () => {
-    it('発行時と同じ属性で消す。maxAge だけは外す', () => {
-      const clearCookie = jest.fn();
+    it('2 本とも消す', () => {
+      // ヒントだけ残ると「未ログインなのにログイン中として描画 → 401」になる
+      const clearCookie = jest.fn<void, [string, object]>();
       const res = { clearCookie } as unknown as Response;
-      // maxAge を渡さないことを完全一致で検出する(意図の明示)
-      const { maxAge: _maxAge, ...expected } = authCookieOptions();
 
       clearAuthCookie(res);
 
-      expect(clearCookie).toHaveBeenCalledWith(AUTH_COOKIE_NAME, expected);
+      expect(clearCookie.mock.calls.map(([name]) => name)).toEqual([
+        AUTH_COOKIE_NAME,
+        SESSION_HINT_COOKIE_NAME,
+      ]);
     });
 
-    it('ログイン状態ヒントも同時に消す', () => {
-      const clearCookie = jest.fn();
+    it('maxAge を渡さない(発行時の属性をそのまま渡さない)', () => {
+      // clearCookie は失効済みの expires を入れる。maxAge が同時に渡ると
+      // そちらから expires が再計算され、削除にならない実装もある
+      const clearCookie = jest.fn<void, [string, Record<string, unknown>]>();
       const res = { clearCookie } as unknown as Response;
-      const { maxAge: _maxAge, ...expected } = sessionHintCookieOptions();
 
       clearAuthCookie(res);
 
-      expect(clearCookie).toHaveBeenCalledWith(
-        SESSION_HINT_COOKIE_NAME,
-        expected,
-      );
+      for (const [, options] of clearCookie.mock.calls) {
+        expect(options).not.toHaveProperty('maxAge');
+        // Path / SameSite 等は発行時と一致していなければ上書きにならない
+        expect(options.path).toBe('/');
+        expect(options.sameSite).toBe('lax');
+      }
     });
   });
 });

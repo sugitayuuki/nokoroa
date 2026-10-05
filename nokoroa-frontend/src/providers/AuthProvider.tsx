@@ -15,7 +15,11 @@ import { mutate } from 'swr';
 
 import { useSmoothNavigation } from '@/hooks/useSmoothNavigation';
 import { API_CONFIG, createApiRequest } from '@/lib/apiConfig';
-import { hasSessionHint, purgeLegacyStoredToken } from '@/utils/auth';
+import {
+  clearSessionHint,
+  hasSessionHint,
+  purgeLegacyStoredToken,
+} from '@/utils/auth';
 
 /**
  * 認証セッションの本人情報。
@@ -115,6 +119,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // 食い違いうる。判定には常に最新を使う。
   const pathnameRef = useRef(pathname);
   pathnameRef.current = pathname;
+
+  // navigatePush は pathname を閉じ込んでおり、「現在パスと同じ href なら
+  // 遷移しない」早期 return を持つ。クリック時に掴んだ古い関数を往復後に呼ぶと、
+  // 例えば '/' でログアウトして往復中に保護ページへ移動した場合に
+  // 「古い closure から見れば現在パスは '/' なので遷移不要」と判断され、
+  // 遷移しないまま isLoggingOut が立ち続けて保護ページで固着する。
+  // 常に最新の関数を呼ぶ。
+  const navigatePushRef = useRef(navigatePush);
+  navigatePushRef.current = navigatePush;
 
   /** logout の実行中。連打で二重に走らせない */
   const isLoggingOutRef = useRef(false);
@@ -250,6 +263,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       serverCleared = false;
     }
 
+    if (!serverCleared) {
+      // ヒントだけは JS から消せる。消さないと次のリロードで
+      // 「ログイン中」と判断してサーバーに問い合わせ、クッキーが生きていれば
+      // 前の利用者のセッションに戻ってしまう
+      clearSessionHint();
+    }
+
     // 認証状態を落とすと保護ページのガードが /login へ replace しようとするため、
     // 「意図的なログアウト」であることを先に立てて push('/') を勝たせる。
     // すでに '/' に居る場合は push が遷移しない=パス変化のリセットが走らないため、
@@ -269,20 +289,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     void mutate(() => true, undefined, { revalidate: false });
 
     // 即座にホームページにリダイレクト
-    navigatePush('/');
+    navigatePushRef.current('/');
 
     // トーストは少し遅らせて表示
     setTimeout(() => {
       if (serverCleared) {
         toast.info('ログアウトしました');
       } else {
-        // クッキーが残っている可能性がある。共用端末では致命的なので黙らせない
+        // 認証クッキーが残っている可能性がある。共用端末では致命的なので
+        // 黙らせない。Max-Age 付きの永続クッキーなのでブラウザを閉じても
+        // 消えない点を踏まえた案内にする
         toast.warn(
-          'ログアウトしましたが、サーバー側の解除を確認できませんでした。共用の端末ではブラウザを閉じてください。',
+          'ログアウトしましたが、サーバー側の解除を確認できませんでした。共用の端末では、時間を置いて再度ログアウトするかブラウザのCookieを削除してください。',
         );
       }
     }, 100);
-  }, [navigatePush]);
+  }, []);
 
   const register = useCallback(
     async (name: string, email: string, password: string): Promise<boolean> => {

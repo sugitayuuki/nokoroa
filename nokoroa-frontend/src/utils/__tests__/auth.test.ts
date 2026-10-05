@@ -127,6 +127,44 @@ describe('hasSessionHint', () => {
   });
 });
 
+describe('clearSessionHint', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('ヒントを失効させる書き込みをする', async () => {
+    const writes: string[] = [];
+    vi.stubGlobal('document', {
+      get cookie() {
+        return 'nokoroa_session=1';
+      },
+      set cookie(value: string) {
+        writes.push(value);
+      },
+    });
+    const { clearSessionHint } = await import('@/utils/auth');
+
+    clearSessionHint();
+
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toContain('nokoroa_session=');
+    // 発行時と同じ Path でないと上書きにならない
+    expect(writes[0]).toContain('Path=/');
+    expect(writes[0]).toContain('Max-Age=0');
+  });
+
+  it('document が無い SSR 環境では何もしない', async () => {
+    expect(typeof document).toBe('undefined');
+    const { clearSessionHint } = await import('@/utils/auth');
+
+    expect(() => clearSessionHint()).not.toThrow();
+  });
+});
+
 describe('トークン保存 API の廃止', () => {
   beforeEach(() => {
     vi.resetModules();

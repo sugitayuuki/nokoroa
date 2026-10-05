@@ -3,12 +3,12 @@ import { Logger } from '@nestjs/common';
 import { HttpAdapterHost, NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import { NextFunction, Request, Response } from 'express';
 import helmet from 'helmet';
 
 import { AppModule } from './app.module';
 import { AUTH_COOKIE_NAME } from './auth/auth-cookie';
 import { assertKnownEnv, isDevelopmentEnv } from './common/environment';
-import { applySharedHttpSetup } from './common/http-setup';
 import { PrismaExceptionFilter } from './common/prisma-exception.filter';
 
 async function bootstrap() {
@@ -31,9 +31,15 @@ async function bootstrap() {
     '/uploads',
     helmet.crossOriginResourcePolicy({ policy: 'cross-origin' }),
   );
-  // cookie-parser と ValidationPipe は E2E と必ず同じでなければならないため、
-  // 共通の設定関数に集約している（詳細は common/http-setup.ts）。
-  applySharedHttpSetup(app);
+  // 認証をクッキーに移すと、RFC 9111 の「Authorization 付きの応答は共有キャッシュに
+  // 保存しない」という保護が外れる。応答はログイン中のユーザーによって変わるため、
+  // 共有キャッシュが別ユーザーへ再利用しないよう Vary を明示する。
+  app.use((_req: Request, res: Response, next: NextFunction) => {
+    res.setHeader('Vary', 'Cookie');
+    next();
+  });
+  // cookie-parser / ValidationPipe / クロスサイト拒否は AppModule が登録する。
+  // ここに書くと E2E（アプリを自前で組む）と乖離し、本番だけ壊れる形になるため。
   app.setGlobalPrefix('api');
 
   const config = new DocumentBuilder()

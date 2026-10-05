@@ -100,18 +100,24 @@ Google OAuth は、パスワードを覚えてもらう前提のサービスに�
 
 ### CSRF — Cookie に移したことで開く面をどう閉じたか
 
-ブラウザが認証情報を自動で付けるようになると、localStorage + 明示ヘッダでは成立しなかった CSRF が成立します。これは 3 段で閉じています。
+ブラウザが認証情報を自動で付けるようになると、localStorage + 明示ヘッダでは成立しなかった CSRF が成立します。
 
 | 攻撃 | 閉じ方 |
 | --- | --- |
 | クロスサイトからの POST / PUT / DELETE | `SameSite=Lax`（クッキーが乗らない） |
-| クロスサイトのトップレベル GET 遷移（`window.open` で課金 API を踏ませる等） | Fetch Metadata。`Sec-Fetch-Site: cross-site` を 403 で拒否（`SameSite=Lax` はこの経路にクッキーを乗せるため、Lax だけでは防げません） |
-| クロスサイトのフォーム POST で「攻撃者のアカウントでログインさせる」 | 同上。NestJS は既定で urlencoded を受けるため、これが無いと成立します |
+| クロスサイトのフォーム POST で「攻撃者のアカウントでログインさせる」 | **`Origin` の検査**。ログインは既存クッキーを必要とせず `Set-Cookie` の受理も `SameSite` の対象外なので、Lax では止まりません。NestJS は既定で urlencoded を受けるため、これが無いと成立します |
+| クロスサイトのトップレベル GET 遷移（`window.open` で課金 API を踏ませる等） | **`Sec-Fetch-Site`** が `cross-site` なら拒否（Lax はこの経路にクッキーを乗せます）。あわせて意味検索にユーザー単位のレート制限を入れ、踏ませられる量も抑えています |
 | OAuth コールバックの `code` を踏ませてセッションを固定する | OAuth の `state` をクッキーに預けて照合（`nokoroa-backend/src/auth/oauth-state.store.ts`） |
 
-Fetch Metadata は `Sec-Fetch-Site` を送らないクライアント（curl / Swagger / 古いブラウザ）を通します。ブラウザはこのヘッダの送信を省略できないので、攻撃者が「ヘッダを消して回避する」ことはできません。
+判定は `FetchMetadataGuard`（`nokoroa-backend/src/common/fetch-metadata.guard.ts`）にまとめています。どちらのヘッダも無いリクエスト（curl / Swagger / サーバー間）は通します。ここを必須にすると API クライアントが使えなくなるためです。
 
-**残っている面**: 同一サイト・別オリジンは通します（`SameSite` も Fetch Metadata も「同一サイト」は区別しません）。同じ登録ドメイン配下にホストが増えると、そこからは CSRF が成立します。クッキー名に `__Host-` を付ければ Cookie tossing も塞げますが、`__Host-` は `Secure` 必須で開発環境（http）と両立しないため採用していません。
+**検査を 2 本立てにしている理由**: `Sec-Fetch-Site` は **Safari 16.3 以下と Firefox 89 以下では送信されません**。つまり「ブラウザはこのヘッダを省略できない」とは言えず、古いブラウザでは素通りします。一方 `Origin` はクロスオリジンの POST 等に必ず付き JS からは取り除けないので、**被害の大きいログイン CSRF は `Origin` 側で閉じています**。
+
+**残っている面**:
+
+- `Sec-Fetch-Site` を送らない古いブラウザでは、**クロスサイトのトップレベル GET 遷移**は止まりません（`Origin` が付かない経路のため）。意味検索のレート制限が被害の上限になります。
+- 同一サイト・別オリジンは通します（`SameSite` も Fetch Metadata も「同一サイト」は区別しません）。同じ登録ドメイン配下にホストが増えると、そこからは CSRF が成立します。
+- クッキー名に `__Host-` を付ければ Cookie tossing も塞げますが、`__Host-` は `Secure` 必須で開発環境（http）と両立しないため採用していません。
 
 ### 初回表示の速さと httpOnly のトレードオフ
 

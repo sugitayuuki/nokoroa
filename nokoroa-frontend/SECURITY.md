@@ -15,10 +15,11 @@
 ### 対応済みのリスク
 1. **XSS によるトークン盗用** — `HttpOnly` により JavaScript から読めない
 2. **URL / ログへのトークン露出** — Google コールバックはクエリにトークンを載せず、着地後に `GET /api/auth/me` で本人を取得する
-3. **CSRF** — 多層で閉じている
+3. **CSRF** — 多層で閉じている（`nokoroa-backend/src/common/fetch-metadata.guard.ts`）
    - `SameSite=Lax`: クロスサイトの POST / PUT / DELETE にクッキーを乗せない
-   - `FetchMetadataMiddleware`（`nokoroa-backend/src/common/fetch-metadata.middleware.ts`）: `Sec-Fetch-Site: cross-site` のリクエストを拒否。
-     Lax が通してしまう**クロスサイトのトップレベル GET 遷移**と、クロスサイトのフォーム POST によるログイン CSRF をここで止める
+   - `Origin` の検査（更新系メソッドのみ）: ログイン CSRF を止める。
+     ログインは既存クッキーを必要とせず `Set-Cookie` の受理も `SameSite` の対象外なので、Lax では止まらない
+   - `Sec-Fetch-Site` の検査: Lax が通してしまう**クロスサイトのトップレベル GET 遷移**を止める
    - OAuth の `state`（`nokoroa-backend/src/auth/oauth-state.store.ts`）: コールバックが本人の開始した認証の続きであることを検証し、強制セッション固定を防ぐ
 4. **Google アカウントの不正連携** — `email_verified` が true でない場合はログインを拒否（未確認メールでの既存アカウント乗っ取りを防ぐ）
 
@@ -31,6 +32,13 @@
 3. **同一サイト・別オリジン** — `SameSite` と Fetch Metadata はどちらも「同一サイト」を通すため、
    同じ登録ドメイン配下に別ホストが増えると、そこからは CSRF が成立する。
    クッキー名に `__Host-` を付けていないため Cookie tossing も残る（`Secure` 必須で開発の http と両立しないため採用していない）
+4. **`Sec-Fetch-Site` 非対応ブラウザでのトップレベル GET 遷移** — Safari 16.3 以下 / Firefox 89 以下は
+   このヘッダを送らないため、クロスサイトのトップレベル GET 遷移は止まらない
+   （`Origin` が付かない経路のため `Origin` 検査では代替できない）。
+   被害の上限は各エンドポイントのレート制限で抑えている
+5. **ログアウトの取り消し不能性** — `POST /api/auth/logout` が失敗した場合、
+   フロントは非 httpOnly のヒントだけ消せるが `nokoroa_token` は消せない。
+   失効リストが無いため、そのクッキーは有効期限まで有効
 
 ## データ保護
 
