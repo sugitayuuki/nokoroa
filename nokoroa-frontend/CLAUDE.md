@@ -69,8 +69,10 @@ src/
 ### Authentication
 - Login page (`/login`)
 - Signup page (`/signup`)
-- JWT token stored in localStorage
-- Auth context provider for global auth state
+- JWT is stored in an httpOnly cookie (`nokoroa_token`) issued by the backend.
+  The frontend never reads or stores the token.
+- Auth context provider for global auth state (`providers/AuthProvider.tsx`)
+- Logout calls `POST /api/auth/logout` (only the server can clear an httpOnly cookie)
 
 ### Posts
 - Home feed (`/`) - Shows all public posts
@@ -97,15 +99,31 @@ src/
 ## Component Patterns
 
 ### API Calls
+Always go through `createApiRequest` (or spread `API_FETCH_OPTIONS`) so the
+auth cookie is sent. A plain `fetch` without `credentials: 'include'` is treated
+as unauthenticated, and that failure shows up as a 401 or as "only public data
+is returned" — never as an obvious missing-header error.
+
 ```typescript
-const token = localStorage.getItem('token');
-const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/endpoint`, {
-  headers: {
-    'Authorization': `Bearer ${token}`,
-    'Content-Type': 'application/json'
-  }
+import { API_CONFIG, createApiRequest } from '@/lib/apiConfig';
+
+const response = await createApiRequest(API_CONFIG.endpoints.posts, {
+  method: 'POST',
+  body: JSON.stringify(payload),
 });
 ```
+
+When a raw `fetch` is unavoidable (e.g. an SWR fetcher that receives a full URL):
+
+```typescript
+import { API_FETCH_OPTIONS } from '@/lib/apiConfig';
+
+const response = await fetch(url, API_FETCH_OPTIONS);
+```
+
+Never read the token from `localStorage` — it is not there (and must not be put
+there). To branch on login state, use `useAuth()` inside React, or handle the
+API's 401 outside React.
 
 ### Error Handling
 - Always check response.ok before parsing
@@ -167,7 +185,12 @@ onClick={(e) => {
 ```
 
 ### Authentication Errors
-- Check if token exists in localStorage
+- Check that the request went through `createApiRequest` / `API_FETCH_OPTIONS`
+  (a missing `credentials: 'include'` looks exactly like "not logged in")
+- Check the `nokoroa_token` cookie in DevTools > Application > Cookies.
+  It is httpOnly, so `document.cookie` will not show it
+- In development, `NODE_ENV` must be `development`; otherwise the backend sets
+  `Secure` and the browser silently drops the cookie over http
 - Verify API_URL is correct
 - Handle 401 errors gracefully
 

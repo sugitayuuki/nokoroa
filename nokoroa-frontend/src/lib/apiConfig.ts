@@ -84,12 +84,15 @@ export const createApiRequest = async (
   const url = API_CONFIG.buildUrl(endpoint);
 
   return fetch(url, {
-    ...API_FETCH_OPTIONS,
     ...options,
     headers: {
       'Content-Type': 'application/json',
       ...options.headers,
     },
+    // options より後に置く。先に置くと呼び出し側が credentials を上書き・削除でき、
+    // そのリクエストだけ無認証で飛んで「401 か公開データのみ」という
+    // 原因の見えない壊れ方をする。ここを通す以上は必ず認証クッキーを送る。
+    ...API_FETCH_OPTIONS,
   });
 };
 
@@ -101,8 +104,8 @@ export const createFormDataRequest = async (
 
   // Content-Type は指定しない。指定すると multipart の boundary が壊れる
   return fetch(url, {
-    ...API_FETCH_OPTIONS,
     method: 'POST',
     body: formData,
+    ...API_FETCH_OPTIONS,
   });
 };

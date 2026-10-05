@@ -3,48 +3,34 @@
 ## 認証セキュリティ
 
 ### 現在の実装
-- JWTトークンはlocalStorageに保存（セキュリティリスクあり）
-- トークンの自動リフレッシュ機能
-- 自動ログアウト機能（60分）
+- JWT は **httpOnly クッキー** `nokoroa_token` に保存（属性は `nokoroa-backend/src/auth/auth-cookie.ts` が単一の正）
+  - `HttpOnly` / `SameSite=Lax` / `Path=/`、`Secure` は開発環境以外で付与
+  - 寿命は JWT の有効期限（1 日）と同じ。`AUTH_COOKIE_MAX_AGE_MS` から `expiresIn` を導出しているのでずれない
+- フロントエンドはトークンを保持しない（`localStorage` には保存しない）
+  - ログイン状態の表示判定にだけ、秘密を含まない非 httpOnly クッキー `nokoroa_session=1` を使う
+- 自社 API への fetch はすべて `credentials: 'include'`（`lib/apiConfig.ts` の `API_FETCH_OPTIONS`）
+- ログアウトは `POST /api/auth/logout`（httpOnly クッキーはサーバーしか消せない）
+- トークンの自動リフレッシュ・自動ログアウト（60分）は**未実装**
 
-### セキュリティリスク
-1. **XSS攻撃によるトークン盗用**
-   - localStorageはJavaScriptからアクセス可能
-   - 悪意のあるスクリプトによりトークンが盗まれる可能性
+### 対応済みのリスク
+1. **XSS によるトークン盗用** — `HttpOnly` により JavaScript から読めない
+2. **URL / ログへのトークン露出** — Google コールバックはクエリにトークンを載せず、着地後に `GET /api/auth/me` で本人を取得する
+3. **CSRF** — 多層で閉じている
+   - `SameSite=Lax`: クロスサイトの POST / PUT / DELETE にクッキーを乗せない
+   - `FetchMetadataMiddleware`（`nokoroa-backend/src/common/fetch-metadata.middleware.ts`）: `Sec-Fetch-Site: cross-site` のリクエストを拒否。
+     Lax が通してしまう**クロスサイトのトップレベル GET 遷移**と、クロスサイトのフォーム POST によるログイン CSRF をここで止める
+   - OAuth の `state`（`nokoroa-backend/src/auth/oauth-state.store.ts`）: コールバックが本人の開始した認証の続きであることを検証し、強制セッション固定を防ぐ
+4. **Google アカウントの不正連携** — `email_verified` が true でない場合はログインを拒否（未確認メールでの既存アカウント乗っ取りを防ぐ）
 
-2. **CSRF攻撃**
-   - 現在はCSRF対策が不十分
-   - 悪意のあるサイトからの不正リクエスト
-
-### 推奨改善策
-
-#### 1. httpOnlyクッキーの使用
-```typescript
-// バックエンドでのクッキー設定例
-res.cookie('authToken', token, {
-  httpOnly: true,
-  secure: true, // HTTPS必須
-  sameSite: 'strict',
-  maxAge: 15 * 60 * 1000, // 15分
-});
-```
-
-#### 2. トークンリフレッシュ戦略
-```typescript
-// 短い有効期限のアクセストークン + 長期間有効なリフレッシュトークン
-interface TokenPair {
-  accessToken: string; // 15分
-  refreshToken: string; // 7日
-}
-```
-
-#### 3. CSRF対策
-```typescript
-// CSRFトークンの実装
-const csrfToken = await fetch('/api/csrf-token');
-// リクエストヘッダーに含める
-headers['X-CSRF-Token'] = csrfToken;
-```
+### 残っているリスク
+1. **トークンの失効ができない** — リフレッシュトークンと失効リストが未実装。
+   `POST /api/auth/logout` はクッキーを消すだけで、発行済み JWT は有効期限（1 日）まで有効なまま
+2. **メールアドレス確認のない signup** — パスワード登録にメール確認が無いため、
+   「他人のメールアドレスで先に登録し、後からその人の Google ログインで紐付けられるのを待つ」経路が残っている
+   （`email_verified` チェックは Google 側の未確認メールだけを塞いでいる）
+3. **同一サイト・別オリジン** — `SameSite` と Fetch Metadata はどちらも「同一サイト」を通すため、
+   同じ登録ドメイン配下に別ホストが増えると、そこからは CSRF が成立する。
+   クッキー名に `__Host-` を付けていないため Cookie tossing も残る（`Secure` 必須で開発の http と両立しないため採用していない）
 
 ## データ保護
 
@@ -94,6 +80,8 @@ const rateLimitConfig = {
 3. 認証フローのテスト
    - 不正アクセスの防止
    - セッションハイジャック対策
+   - 自動テスト: `nokoroa-backend/test/auth.e2e-spec.ts`（クッキー属性 / クロスサイト拒否 / OAuth state）、
+     `src/auth/auth-cookie.spec.ts`、`nokoroa-frontend/src/providers/__tests__/AuthProvider.test.tsx`
 
 ### ログ監視
 ```typescript
@@ -110,34 +98,35 @@ const logSecurityEvent = (event: string, details: any) => {
 ## 実装優先順位
 
 ### 高優先度
-1. httpOnlyクッキーへの移行
-2. CSRFトークンの実装
-3. トークンリフレッシュ機能
+1. ~~httpOnly クッキーへの移行~~ ✅ 完了
+2. ~~CSRF 対策~~ ✅ `SameSite=Lax` + Fetch Metadata + OAuth state で対応済み
+   （CSRF トークン方式は、フロントと API が同一サイトである限り不要と判断）
+3. トークンリフレッシュ機能 / 失効リスト — 未実装
+4. signup のメールアドレス確認 — 未実装（上記「残っているリスク」2）
 
 ### 中優先度
-1. セッション管理の改善
-2. レート制限の実装
-3. セキュリティヘッダーの設定
+1. セッション管理の改善（API が 401 を返したときにクライアント側の認証状態を落とす経路）
+2. ~~レート制限の実装~~ ✅ `ThrottlerModule`（IP 単位）+ `UserThrottlerGuard`（ユーザー単位）
+3. ~~セキュリティヘッダーの設定~~ ✅ `helmet()`（`nokoroa-backend/src/main.ts`）
 
 ### 低優先度
 1. 詳細な監査ログ
 2. 異常検出システム
 3. セキュリティダッシュボード
 
-## 移行計画
+## 認証の移行（完了）
 
-### Phase 1: 基盤整備
-- SecureAuthManagerの実装完了 ✅
-- 既存認証システムとの互換性維持 ✅
+localStorage ベースから httpOnly クッキーへの移行は完了している。実装の所在:
 
-### Phase 2: サーバー側実装
-- httpOnlyクッキー対応のAPIエンドポイント作成
-- CSRFトークン生成・検証機能
+| 関心 | 場所 |
+| --- | --- |
+| クッキーの名前・属性・発行・削除 | `nokoroa-backend/src/auth/auth-cookie.ts` |
+| JWT の取り出し（クッキー優先 → Bearer） | `nokoroa-backend/src/auth/jwt.strategy.ts` |
+| セッション確認 / ログアウト | `nokoroa-backend/src/auth/auth.controller.ts`（`GET /auth/me` / `POST /auth/logout`） |
+| クロスサイト拒否 | `nokoroa-backend/src/common/fetch-metadata.middleware.ts` |
+| OAuth の state 検証 | `nokoroa-backend/src/auth/oauth-state.store.ts` |
+| フロントの認証状態 | `nokoroa-frontend/src/providers/AuthProvider.tsx` |
+| 自社 API への fetch 設定 | `nokoroa-frontend/src/lib/apiConfig.ts`（`API_FETCH_OPTIONS`） |
 
-### Phase 3: フロントエンド移行
-- クッキーベース認証への切り替え
-- 既存のlocalStorage使用箇所の更新
-
-### Phase 4: セキュリティ強化
-- レート制限の実装
-- セキュリティ監査機能の追加
+`Authorization: Bearer` も引き続き受け付ける（Swagger と E2E 用）。
+クッキーがある場合はクッキーが優先されるため、Swagger で別ユーザーを試すときはクッキーを消すこと。

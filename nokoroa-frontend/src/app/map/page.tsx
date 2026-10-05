@@ -64,7 +64,9 @@ export default function MapPage() {
 
       const url = `${API_CONFIG.buildUrl(API_CONFIG.endpoints.searchByLocation)}?${params.toString()}`;
 
-      // 自社 API なので認証クッキーを送る(ログイン中は本人の非公開投稿も対象)
+      // 自社 API への fetch は認証クッキーを送る設定で統一する。
+      // このエンドポイント自体は認証を見ない(公開投稿のみ返す)が、
+      // 「付けるかどうかを都度判断する」運用にすると付け忘れと区別できなくなる
       const response = await fetch(url, API_FETCH_OPTIONS);
 
       if (!response.ok) {

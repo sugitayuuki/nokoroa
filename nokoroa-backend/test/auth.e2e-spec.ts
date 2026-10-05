@@ -1,14 +1,17 @@
 import { Server } from 'http';
 import { INestApplication } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import cookieParser from 'cookie-parser';
 import request from 'supertest';
 
 import { cleanupDatabase } from './setup';
 import { LoginResponse, SignupResponse, UserProfile } from './types';
 import { AppModule } from '../src/app.module';
-import { AUTH_COOKIE_NAME } from '../src/auth/auth-cookie';
-import { createValidationPipe } from '../src/common/validation';
+import {
+  AUTH_COOKIE_NAME,
+  SESSION_HINT_COOKIE_NAME,
+} from '../src/auth/auth-cookie';
+import { OAUTH_STATE_COOKIE_NAME } from '../src/auth/oauth-state.store';
+import { applySharedHttpSetup } from '../src/common/http-setup';
 
 /**
  * Set-Cookie から目的のクッキー 1 件の生文字列を取り出す。
@@ -42,11 +45,9 @@ describe('Auth (e2e)', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
-    // 本番(main.ts)と同一オプションのパイプを使う(素の ValidationPipe だと transform が効かない)
-    app.useGlobalPipes(createValidationPipe());
-    // 本番(main.ts)と同じく cookie-parser を有効にする。
-    // 無いと req.cookies が空のままで、クッキー認証が通らない
-    app.use(cookieParser());
+    // 本番(main.ts)と同じ共通設定(cookie-parser + ValidationPipe)を使う。
+    // ここを本番と別に組むと、本番側の配線を消してもテストが緑のままになる。
+    applySharedHttpSetup(app);
     await app.init();
     server = app.getHttpServer() as Server;
   });
@@ -162,6 +163,39 @@ describe('Auth (e2e)', () => {
       expect(setCookie).toMatch(/SameSite=Lax/i);
       expect(setCookie).toMatch(/Path=\//i);
       expect(setCookie).toMatch(/Max-Age=86400\b/i);
+      // NODE_ENV=test は開発環境ではないので Secure が付く。
+      // 属性の環境別の正しさは auth-cookie.spec.ts が担保する
+      expect(setCookie).toMatch(/Secure/i);
+    });
+
+    it('ログイン状態ヒントは httpOnly にしない(フロントが同期で読むため)', async () => {
+      const response = await request(server)
+        .post('/auth/login')
+        .send({
+          email: 'login@example.com',
+          password: 'password123',
+        })
+        .expect(201);
+
+      const hint = findSetCookie(response, SESSION_HINT_COOKIE_NAME);
+      expect(hint).toBeDefined();
+      expect(hint).not.toMatch(/HttpOnly/i);
+      // 秘密は入れない。寿命と送信条件は認証クッキーと揃える
+      expect(hint).toMatch(new RegExp(`^${SESSION_HINT_COOKIE_NAME}=1;`));
+      expect(hint).toMatch(/Max-Age=86400\b/i);
+      expect(hint).toMatch(/SameSite=Lax/i);
+    });
+
+    it('トークンとヒントをキャッシュに残さない', async () => {
+      const response = await request(server)
+        .post('/auth/login')
+        .send({
+          email: 'login@example.com',
+          password: 'password123',
+        })
+        .expect(201);
+
+      expect(response.headers['cache-control']).toBe('no-store');
     });
 
     it('ログイン失敗時はクッキーを発行しない', async () => {
@@ -231,6 +265,174 @@ describe('Auth (e2e)', () => {
         .set('Cookie', `${AUTH_COOKIE_NAME}=invalid-token`)
         .expect(401);
     });
+
+    it('クッキーと Authorization が両方あるとクッキーが勝つ', async () => {
+      // passport-jwt は最初に非 null を返した抽出器で確定するため、
+      // クッキーがある限り Bearer は評価されない。Swagger でブラウザの
+      // ログイン状態に引っ張られるのはこの性質によるので、契約として固定する
+      const other = await request(server).post('/users/signup').send({
+        email: 'other@example.com',
+        password: 'password123',
+        name: 'Other User',
+      });
+      expect(other.status).toBe(201);
+      const otherLogin = await request(server).post('/auth/login').send({
+        email: 'other@example.com',
+        password: 'password123',
+      });
+      const otherToken = (otherLogin.body as LoginResponse).access_token;
+
+      const response = await request(server)
+        .get('/auth/me')
+        .set('Cookie', authCookie)
+        .set('Authorization', `Bearer ${otherToken}`)
+        .expect(200);
+
+      expect((response.body as UserProfile).email).toBe('me@example.com');
+    });
+
+    it('クッキーが壊れていると Authorization にフォールバックしない', async () => {
+      // 上の「クッキー優先」の裏返し。壊れたクッキーが残っている端末では
+      // 有効な Bearer を付けても 401 になる
+      await request(server)
+        .get('/auth/me')
+        .set('Cookie', `${AUTH_COOKIE_NAME}=invalid-token`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(401);
+    });
+
+    it('本人の情報をキャッシュに残さない', async () => {
+      const response = await request(server)
+        .get('/auth/me')
+        .set('Cookie', authCookie)
+        .expect(200);
+
+      expect(response.headers['cache-control']).toBe('no-store');
+    });
+  });
+
+  describe('クロスサイトからのリクエスト (Fetch Metadata)', () => {
+    let authCookie: string;
+
+    beforeEach(async () => {
+      await request(server).post('/users/signup').send({
+        email: 'crosssite@example.com',
+        password: 'password123',
+        name: 'Cross Site User',
+      });
+      const loginResponse = await request(server).post('/auth/login').send({
+        email: 'crosssite@example.com',
+        password: 'password123',
+      });
+      const setCookie = findSetCookie(loginResponse, AUTH_COOKIE_NAME);
+      if (!setCookie) {
+        throw new Error('ログインで認証クッキーが発行されていません');
+      }
+      authCookie = toCookieHeader(setCookie);
+    });
+
+    it('クロスサイトのトップレベル GET 遷移を拒否する', async () => {
+      // SameSite=Lax はこの経路に Cookie を乗せるため、Lax だけでは防げない。
+      // 攻撃者ページから window.open で保護 API を踏ませる CSRF を閉じる
+      await request(server)
+        .get('/auth/me')
+        .set('Cookie', authCookie)
+        .set('Sec-Fetch-Site', 'cross-site')
+        .set('Sec-Fetch-Mode', 'navigate')
+        .expect(403);
+    });
+
+    it('クロスサイトのフォーム POST でログインできない', async () => {
+      // Nest は既定で urlencoded を受けるため、これが無いとクロスサイトの
+      // HTML フォームから「攻撃者アカウントでログインさせる」ことができる
+      await request(server)
+        .post('/auth/login')
+        .type('form')
+        .set('Sec-Fetch-Site', 'cross-site')
+        .set('Sec-Fetch-Mode', 'navigate')
+        .send({ email: 'crosssite@example.com', password: 'password123' })
+        .expect(403);
+    });
+
+    it('Google の認証開始とコールバックはクロスサイトでも通す', async () => {
+      // Google からのリダイレクトはクロスサイトのトップレベル遷移で届くため、
+      // ここを塞ぐと正規のログインが成立しない(代わりに state で検証する)
+      const response = await request(server)
+        .get('/auth/google')
+        .set('Sec-Fetch-Site', 'cross-site')
+        .set('Sec-Fetch-Mode', 'navigate');
+
+      expect(response.status).not.toBe(403);
+    });
+
+    it('same-site(開発のポート違い)と same-origin は通す', async () => {
+      await request(server)
+        .get('/auth/me')
+        .set('Cookie', authCookie)
+        .set('Sec-Fetch-Site', 'same-site')
+        .expect(200);
+
+      await request(server)
+        .get('/auth/me')
+        .set('Cookie', authCookie)
+        .set('Sec-Fetch-Site', 'same-origin')
+        .expect(200);
+    });
+
+    it('ヘッダを送らないクライアント(curl / Swagger / supertest)は通す', async () => {
+      // ブラウザは Sec-Fetch-Site を省略できないので、ヘッダ無しを通しても
+      // 攻撃者が検査を回避する手段にはならない
+      await request(server)
+        .get('/auth/me')
+        .set('Cookie', authCookie)
+        .expect(200);
+    });
+  });
+
+  describe('Google OAuth の state', () => {
+    it('認証開始時に state を発行し、URL にも載せる', async () => {
+      const response = await request(server).get('/auth/google').expect(302);
+
+      const stateCookie = findSetCookie(response, OAUTH_STATE_COOKIE_NAME);
+      expect(stateCookie).toBeDefined();
+      expect(stateCookie).toMatch(/HttpOnly/i);
+      // コールバックはクロスサイトのトップレベル遷移なので Lax が必須
+      expect(stateCookie).toMatch(/SameSite=Lax/i);
+
+      const location = response.headers['location'];
+      const state = new URL(location).searchParams.get('state');
+      expect(state).toBeTruthy();
+      // URL の state とクッキーの state が一致していること
+      expect(toCookieHeader(stateCookie as string)).toBe(
+        `${OAUTH_STATE_COOKIE_NAME}=${state}`,
+      );
+    });
+
+    it('state クッキーが無いコールバックを拒否する', async () => {
+      // 攻撃者が取得した code を被害者にトップレベル遷移させる
+      // ログイン CSRF（セッション固定）を塞ぐ経路
+      const response = await request(server).get(
+        '/auth/google/callback?code=attacker-code&state=attacker-state',
+      );
+
+      expect(response.status).toBe(401);
+      expect(findSetCookie(response, AUTH_COOKIE_NAME)).toBeUndefined();
+    });
+
+    it('state が一致しないコールバックを拒否する', async () => {
+      const start = await request(server).get('/auth/google').expect(302);
+      const stateCookie = findSetCookie(start, OAUTH_STATE_COOKIE_NAME);
+      if (!stateCookie) {
+        throw new Error('state クッキーが発行されていません');
+      }
+
+      const response = await request(server)
+        .get('/auth/google/callback?code=attacker-code&state=not-the-same')
+        .set('Cookie', toCookieHeader(stateCookie));
+
+      expect(response.status).toBe(401);
+      expect(findSetCookie(response, AUTH_COOKIE_NAME)).toBeUndefined();
+    });
   });
 
   describe('POST /auth/logout', () => {
@@ -263,6 +465,12 @@ describe('Auth (e2e)', () => {
       expect(clearedCookie).toMatch(/HttpOnly/i);
       expect(clearedCookie).toMatch(/SameSite=Lax/i);
       expect(clearedCookie).toMatch(/Path=\//i);
+
+      // ログイン状態ヒントも同時に消さないと、未ログインなのに
+      // ログイン中として描画され /auth/me で 401 を引く
+      const clearedHint = findSetCookie(response, SESSION_HINT_COOKIE_NAME);
+      expect(clearedHint).toBeDefined();
+      expect(clearedHint).toMatch(new RegExp(`^${SESSION_HINT_COOKIE_NAME}=;`));
     });
 
     it('未ログインでも成功する(クッキーを消すだけなので冪等)', async () => {

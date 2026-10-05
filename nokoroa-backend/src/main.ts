@@ -3,13 +3,13 @@ import { Logger } from '@nestjs/common';
 import { HttpAdapterHost, NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
-import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 
 import { AppModule } from './app.module';
+import { AUTH_COOKIE_NAME } from './auth/auth-cookie';
 import { assertKnownEnv, isDevelopmentEnv } from './common/environment';
+import { applySharedHttpSetup } from './common/http-setup';
 import { PrismaExceptionFilter } from './common/prisma-exception.filter';
-import { createValidationPipe } from './common/validation';
 
 async function bootstrap() {
   // NODE_ENV の打ち間違いは「無言で防御が緩む」形で効くため、起動前に弾く
@@ -31,10 +31,9 @@ async function bootstrap() {
     '/uploads',
     helmet.crossOriginResourcePolicy({ policy: 'cross-origin' }),
   );
-  // JWT は httpOnly クッキーで渡すため、req.cookies を使えるようにする。
-  // これが無いと JwtStrategy の Cookie 取り出しが常に空振りし、
-  // Authorization ヘッダのある Swagger だけ通る状態になる。
-  app.use(cookieParser());
+  // cookie-parser と ValidationPipe は E2E と必ず同じでなければならないため、
+  // 共通の設定関数に集約している（詳細は common/http-setup.ts）。
+  applySharedHttpSetup(app);
   app.setGlobalPrefix('api');
 
   const config = new DocumentBuilder()
@@ -52,6 +51,9 @@ async function bootstrap() {
       },
       'JWT-auth',
     )
+    // ブラウザの主経路は httpOnly クッキー。Swagger UI から値を入れることは
+    // できないが、仕様書が実際の認証方式を取り違えないよう宣言しておく。
+    .addCookieAuth(AUTH_COOKIE_NAME)
     .addTag('auth', '認証関連')
     .addTag('users', 'ユーザー関連')
     .addTag('posts', '投稿関連')
@@ -64,8 +66,6 @@ async function bootstrap() {
     const document = SwaggerModule.createDocument(app, config);
     SwaggerModule.setup('api/docs', app, document);
   }
-
-  app.useGlobalPipes(createValidationPipe());
 
   const { httpAdapter } = app.get(HttpAdapterHost);
   app.useGlobalFilters(new PrismaExceptionFilter(httpAdapter));

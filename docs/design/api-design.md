@@ -2,8 +2,13 @@
 
 ## 1. 概要
 
-- ベースURL: `https://api.nokoroa.com` (本番) / `http://localhost:4000` (開発)
-- 認証: Bearer Token (JWT)
+- ベースURL: `https://nokoroa.com/api` (本番、フロントと同一オリジン) / `http://localhost:4000/api` (開発)
+- 認証: **httpOnly クッキー `nokoroa_token`**（JWT）。ブラウザからの経路はこれが正。
+  - `Authorization: Bearer <JWT>` も受け付ける（Swagger / E2E 用）。
+    両方ある場合は**クッキーが優先**される（`src/auth/jwt.strategy.ts`）。
+  - ブラウザからの fetch は `credentials: 'include'` が必須。
+  - クロスサイト（`Sec-Fetch-Site: cross-site`）からのリクエストは
+    `/auth/google` と `/auth/google/callback` を除き 403 で拒否される。
 - フォーマット: JSON
 
 ---
@@ -21,7 +26,18 @@
 }
 ```
 
-**レスポンス (200)**
+**レスポンス (201)**
+
+`Set-Cookie` で認証クッキーとログイン状態ヒントを発行する。
+`Cache-Control: no-store` 付き。
+
+```
+Set-Cookie: nokoroa_token=<JWT>; Max-Age=86400; Path=/; HttpOnly; Secure; SameSite=Lax
+Set-Cookie: nokoroa_session=1; Max-Age=86400; Path=/; Secure; SameSite=Lax
+```
+
+本文の `access_token` は Swagger / E2E 用に残している。ブラウザは使わない。
+
 ```json
 {
   "access_token": "eyJhbGciOiJIUzI1NiIs...",
@@ -43,8 +59,45 @@
 
 ---
 
+### GET /auth/me
+ログイン中のユーザーを返す（要認証）
+
+セッションの本人情報のみを返す。bio や投稿一覧まで必要な場合は
+`GET /users/profile` を使う。`Cache-Control: no-store` 付き。
+
+**レスポンス (200)**
+```json
+{
+  "id": 1,
+  "email": "user@example.com",
+  "name": "User Name",
+  "avatar": null
+}
+```
+
+**エラー (401)**: 未認証、またはユーザーが存在しない
+
+---
+
+### POST /auth/logout
+認証クッキーを削除する
+
+httpOnly クッキーはフロントから削除できないため、サーバー側で消す。
+**認証は不要**（クッキーが既に失効していてもログアウトできる必要があるため）。
+冪等。
+
+**レスポンス (200)**
+```json
+{ "message": "ログアウトしました" }
+```
+
+---
+
 ### GET /auth/google
 Google OAuth認証開始
+
+CSRF 検証用に `nokoroa_oauth_state` クッキー（httpOnly / SameSite=Lax / 10分）を
+発行し、同じ値を認可 URL の `state` に載せる。
 
 **レスポンス**: Googleログイン画面へリダイレクト
 
@@ -53,7 +106,13 @@ Google OAuth認証開始
 ### GET /auth/google/callback
 Google OAuth認証コールバック
 
-**レスポンス**: フロントエンドへリダイレクト(JWTトークン付与)
+`state` がクッキーと一致しない場合は 401（ログイン CSRF / セッション固定の防止）。
+Google 側で未確認のメールアドレスも 401 で拒否する。
+
+**レスポンス (302)**: `Set-Cookie` で認証クッキーを発行し、
+`${FRONTEND_URL}/auth/callback` へリダイレクトする。
+**トークンもユーザー情報も URL に載せない**（履歴・アクセスログ・Referer に残るため）。
+フロントは着地後に `GET /auth/me` で本人を取得する。
 
 ---
 

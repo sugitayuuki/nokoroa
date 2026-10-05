@@ -9,6 +9,7 @@ import { AuthModule } from './auth/auth.module';
 import { ChatModule } from './chat/chat.module';
 import { CommonModule } from './common/common.module';
 import { isTestEnv } from './common/environment';
+import { FetchMetadataMiddleware } from './common/fetch-metadata.middleware';
 import { USER_THROTTLER, trackedUserId } from './common/user-throttler.guard';
 import { FavoritesModule } from './favorites/favorites.module';
 import { FollowsModule } from './follows/follows.module';
@@ -56,6 +57,9 @@ import { UsersModule } from './users/users.module';
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
-    consumer.apply(LoggerMiddleware).forRoutes('*');
+    // FetchMetadata は認証クッキーを使う全経路より前に効かせる必要があるため、
+    // ガードではなくミドルウェアとして最初に置く。AppModule に置くことで
+    // E2E も同じ経路を通る（main.ts だけに書くと E2E が本番と乖離する）。
+    consumer.apply(FetchMetadataMiddleware, LoggerMiddleware).forRoutes('*');
   }
 }

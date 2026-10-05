@@ -5,63 +5,41 @@ import { useRouter } from 'next/navigation';
 import { useEffect } from 'react';
 import { toast } from 'react-toastify';
 
-import { API_CONFIG, createApiRequest } from '@/lib/apiConfig';
+import { useAuth } from '@/providers/AuthProvider';
 
 /**
  * Google 認証後の着地ページ。
  *
  * トークンは URL ではなく httpOnly クッキーで渡ってくるため、ここでは
- * クエリを一切読まない。クッキーが効いているかはフロントから確認できないので、
- * /auth/me を 1 回呼んでログインできたかを判定する。
+ * クエリを一切読まない。
+ *
+ * ログイン状態の確認もこのページでは行わない: このページは OAuth の
+ * リダイレクトによる**新規ドキュメント**として読み込まれるので、
+ * AuthProvider のマウント時のセッション復元が（クッキー付きで）既に走っている。
+ * ここで `/auth/me` を呼ぶと同じ問い合わせが二重になる。
  */
 export default function AuthCallbackPage() {
   const router = useRouter();
+  const { isLoading, isAuthenticated, user } = useAuth();
 
   useEffect(() => {
-    let cancelled = false;
+    if (isLoading) {
+      return;
+    }
 
-    const handleCallback = async () => {
-      try {
-        const response = await createApiRequest(API_CONFIG.endpoints.me);
-        if (cancelled) {
-          return;
-        }
+    if (!isAuthenticated) {
+      toast.error('認証に失敗しました');
+    } else {
+      toast.success(
+        user?.name ? `ようこそ、${user.name}さん！` : 'ログインしました',
+      );
+    }
 
-        if (!response.ok) {
-          toast.error('認証に失敗しました');
-          router.push('/');
-          return;
-        }
-
-        const user = await response.json();
-        if (cancelled) {
-          return;
-        }
-
-        toast.success(
-          user?.name ? `ようこそ、${user.name}さん！` : 'ログインしました',
-        );
-      } catch {
-        if (cancelled) {
-          return;
-        }
-        toast.error('認証に失敗しました');
-        router.push('/');
-        return;
-      }
-
-      // AuthProvider はマウント時に 1 回だけセッションを引くため、SPA 遷移では
-      // ログイン状態が反映されない。トップへはフルリロードで移動する。
-      // replace にして、戻るボタンでこのページへ帰ってこないようにする。
-      window.location.replace('/');
-    };
-
-    handleCallback();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [router]);
+    // SPA 遷移にする。フルリロードにすると react-toastify のキューごと
+    // 破棄され、上のトーストが一瞬も表示されない。
+    // replace にして、戻るボタンでこのページへ帰ってこないようにする。
+    router.replace('/');
+  }, [isLoading, isAuthenticated, user, router]);
 
   return (
     <Container

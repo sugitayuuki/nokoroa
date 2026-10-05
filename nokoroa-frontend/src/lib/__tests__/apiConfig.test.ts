@@ -169,9 +169,7 @@ describe('認証の渡し方', () => {
     });
   });
 
-  it('createApiRequest の呼び出し側は credentials を上書きできない想定で使う', async () => {
-    // options を後ろに展開しているため method 等は上書きできるが、
-    // credentials を意図せず落とさないよう既定値として先に置いている
+  it('呼び出し側は method を指定できる', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true });
     vi.stubGlobal('fetch', fetchMock);
 
@@ -180,6 +178,21 @@ describe('認証の渡し方', () => {
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(init.method).toBe('POST');
     expect(init.credentials).toBe('include');
+  });
+
+  it('呼び出し側は credentials を上書きできない', async () => {
+    // 上書きできると、そのリクエストだけ無認証で飛んで
+    // 「401 か公開データのみ」という原因の見えない壊れ方をする
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await createApiRequest(endpoints.me, { credentials: 'omit' });
+    await createApiRequest(endpoints.me, { credentials: undefined });
+
+    for (const call of fetchMock.mock.calls) {
+      const [, init] = call as [string, RequestInit];
+      expect(init.credentials).toBe('include');
+    }
   });
 
   it('createFormDataRequest は credentials を付け Content-Type を付けない', async () => {

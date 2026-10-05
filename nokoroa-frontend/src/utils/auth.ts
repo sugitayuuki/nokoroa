@@ -26,3 +26,30 @@ export const purgeLegacyStoredToken = (): void => {
     // 消せなくても機能は動く(読む側が既に居ない)
   }
 };
+
+/**
+ * バックエンドがトークンと同時に発行する「ログイン中かどうか」のヒント。
+ * httpOnly ではないのでここから読める（値は `1` 固定で秘密は入っていない）。
+ */
+const SESSION_HINT_COOKIE_NAME = 'nokoroa_session';
+
+/**
+ * ログイン中らしいかを**同期で**判定する。
+ *
+ * JWT は httpOnly クッキーなので、本来ログイン状態は `/auth/me` を 1 往復しないと
+ * 分からない。それを全訪問者に待たせると（認証確定まで画面を出さないため）
+ * 未ログインの初回表示が丸ごと 1 RTT 遅くなる。
+ * ヒントがあるときだけサーバーに確認し、無ければ即「未ログイン」と判断する。
+ *
+ * **これは認可の判断には使えない**。JS から書き換えられるため、保護リソースを
+ * 守るのはあくまでサーバー側の JWT 検証。ここでの用途は初期表示の分岐だけで、
+ * ヒントが嘘だった場合も `/auth/me` の結果で必ず上書きされる。
+ */
+export const hasSessionHint = (): boolean => {
+  if (typeof document === 'undefined') {
+    return false;
+  }
+  return document.cookie
+    .split(';')
+    .some((entry) => entry.trim().startsWith(`${SESSION_HINT_COOKIE_NAME}=`));
+};

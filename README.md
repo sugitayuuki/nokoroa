@@ -90,13 +90,36 @@ App Router を選んだのは、React Server Components を実際に触ってみ
 トークンの置き場所は httpOnly クッキー（`nokoroa_token`）です。属性は `HttpOnly` / `SameSite=Lax` / `Path=/`、`Secure` は開発環境以外で付けます。寿命は JWT の有効期限（1日）と揃えています。
 
 - **`HttpOnly`**: JavaScript から読めないため、XSS が 1 つあってもトークンを持ち出せません。localStorage に置いていた頃はここが無防備でした。
-- **`SameSite=Lax`**: フロントと API は同一サイト（本番は同一オリジン、開発は localhost のポート違い）なので Lax で届きます。同時に、クッキー認証に移すと開く CSRF の面をこれで閉じています（クロスサイトからの POST / PUT / DELETE にクッキーが乗らない）。
-- Google 認証後のリダイレクトでも、**トークンを URL のクエリに載せません**。載せるとブラウザ履歴・アクセスログ・Referer に残るためです。フロントは着地後に `GET /api/auth/me` を 1 回呼んでログイン状態を確認します。
-- `Authorization: Bearer` も引き続き受け付けます。Swagger の Authorize と E2E テストがこの経路を使うためで、ブラウザ側はクッキーだけで認証します。
+- **`SameSite=Lax`**: フロントと API は同一サイト（本番は同一オリジン、開発は localhost のポート違い）なので Lax で届きます。`Strict` にすると Google のコールバック着地でクッキーが送られず、正規のログインが成立しません。
+- Google 認証後のリダイレクトでも、**トークンを URL のクエリに載せません**。載せるとブラウザ履歴・アクセスログ・Referer に残るためです。フロントは着地後に `GET /api/auth/me` でログイン状態を確認します。
+- `Authorization: Bearer` も引き続き受け付けます。Swagger の Authorize と E2E テストがこの経路を使うためです。ただし**クッキーがある場合はクッキーが優先**されるので、Swagger で別ユーザーを試すときはクッキーを消す必要があります。
 
 Google OAuth は、パスワードを覚えてもらう前提のサービスにしたくなかったため追加しています。既存アカウントへの自動連携は、**Google 側で確認済みのメールアドレスのときだけ**行います（未確認のメールを信じると、同じアドレスで作った別の Google アカウントから既存ユーザーを乗っ取れてしまうためです）。
 
-リフレッシュトークンとトークンの失効リストは未実装です。ログアウトはサーバーがクッキーを削除する方式で、発行済み JWT 自体は有効期限まで有効なままです。
+リフレッシュトークンとトークンの失効リストは未実装です。ログアウト（`POST /api/auth/logout`）はサーバーがクッキーを削除する方式で、発行済み JWT 自体は有効期限まで有効なままです。
+
+### CSRF — Cookie に移したことで開く面をどう閉じたか
+
+ブラウザが認証情報を自動で付けるようになると、localStorage + 明示ヘッダでは成立しなかった CSRF が成立します。これは 3 段で閉じています。
+
+| 攻撃 | 閉じ方 |
+| --- | --- |
+| クロスサイトからの POST / PUT / DELETE | `SameSite=Lax`（クッキーが乗らない） |
+| クロスサイトのトップレベル GET 遷移（`window.open` で課金 API を踏ませる等） | Fetch Metadata。`Sec-Fetch-Site: cross-site` を 403 で拒否（`SameSite=Lax` はこの経路にクッキーを乗せるため、Lax だけでは防げません） |
+| クロスサイトのフォーム POST で「攻撃者のアカウントでログインさせる」 | 同上。NestJS は既定で urlencoded を受けるため、これが無いと成立します |
+| OAuth コールバックの `code` を踏ませてセッションを固定する | OAuth の `state` をクッキーに預けて照合（`nokoroa-backend/src/auth/oauth-state.store.ts`） |
+
+Fetch Metadata は `Sec-Fetch-Site` を送らないクライアント（curl / Swagger / 古いブラウザ）を通します。ブラウザはこのヘッダの送信を省略できないので、攻撃者が「ヘッダを消して回避する」ことはできません。
+
+**残っている面**: 同一サイト・別オリジンは通します（`SameSite` も Fetch Metadata も「同一サイト」は区別しません）。同じ登録ドメイン配下にホストが増えると、そこからは CSRF が成立します。クッキー名に `__Host-` を付ければ Cookie tossing も塞げますが、`__Host-` は `Secure` 必須で開発環境（http）と両立しないため採用していません。
+
+### 初回表示の速さと httpOnly のトレードオフ
+
+JWT が読めなくなると、フロントは `GET /api/auth/me` を 1 往復するまでログイン状態を知れません。これを全訪問者に待たせると、未ログインの初回表示が丸ごと 1 RTT 遅くなります（認証が確定するまで画面を描画しないため）。
+
+そこで、**秘密を含まない**ログイン状態ヒント（`nokoroa_session=1`、httpOnly ではない）をトークンと同時に発行し、フロントはこれを同期で読んで分岐します。ヒントが無ければ即「未ログイン」として描画し、API を叩きません。ヒントがある場合だけサーバーに確認します。
+
+ヒントは JavaScript から書き換えられますが、**認可の判断には使っていません**。保護リソースを守るのはサーバー側の JWT 検証で、ヒントが嘘だった場合も `/api/auth/me` の結果で必ず上書きされます。
 
 ### インフラ: AWS ECS Fargate + Terraform
 
@@ -127,6 +150,8 @@ cd nokoroa
 # 1. バックエンド + DB + AI サービスの環境変数を用意
 #    .env.example には NODE_ENV=development が入っています。
 #    未設定だと本番相当とみなされ FRONTEND_URL / AWS_BUCKET_NAME が必須になります。
+#    さらに認証クッキーに Secure が付くため、http://localhost ではブラウザが
+#    クッキーを破棄し「ログインは通るのに認証が維持されない」状態になります。
 cd nokoroa-backend
 cp .env.example .env
 export JWT_SECRET=$(openssl rand -base64 32)   # 32文字未満だと起動しません
@@ -311,6 +336,8 @@ nokoroa/
 ├── nokoroa-backend/
 │   ├── src/
 │   │   ├── auth/                # 認証モジュール (JWT, Google OAuth)
+│   │   │   ├── auth-cookie.ts   # 認証クッキーの名前・属性の単一の正
+│   │   │   ├── oauth-state.store.ts # OAuth の state 検証 (ログインCSRF対策)
 │   │   │   ├── strategies/      # Passport認証戦略
 │   │   │   ├── auth.controller.ts
 │   │   │   ├── auth.service.ts

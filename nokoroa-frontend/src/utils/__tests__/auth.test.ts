@@ -81,6 +81,52 @@ describe('purgeLegacyStoredToken (window が無い SSR 環境)', () => {
   });
 });
 
+describe('hasSessionHint', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('ヒントのクッキーがあれば true', async () => {
+    vi.stubGlobal('document', { cookie: 'a=1; nokoroa_session=1; b=2' });
+    const { hasSessionHint } = await import('@/utils/auth');
+
+    expect(hasSessionHint()).toBe(true);
+  });
+
+  it('ヒントのクッキーが無ければ false', async () => {
+    vi.stubGlobal('document', { cookie: 'a=1; b=2' });
+    const { hasSessionHint } = await import('@/utils/auth');
+
+    expect(hasSessionHint()).toBe(false);
+  });
+
+  it('前方一致する別名のクッキーに誤反応しない', async () => {
+    // nokoroa_session_v2 等が増えても「ログイン中」と誤判定しない
+    vi.stubGlobal('document', { cookie: 'nokoroa_session_v2=1' });
+    const { hasSessionHint } = await import('@/utils/auth');
+
+    expect(hasSessionHint()).toBe(false);
+  });
+
+  it('クッキーが空文字でも落ちない', async () => {
+    vi.stubGlobal('document', { cookie: '' });
+    const { hasSessionHint } = await import('@/utils/auth');
+
+    expect(hasSessionHint()).toBe(false);
+  });
+
+  it('document が無い SSR 環境では false', async () => {
+    expect(typeof document).toBe('undefined');
+    const { hasSessionHint } = await import('@/utils/auth');
+
+    expect(hasSessionHint()).toBe(false);
+  });
+});
+
 describe('トークン保存 API の廃止', () => {
   beforeEach(() => {
     vi.resetModules();

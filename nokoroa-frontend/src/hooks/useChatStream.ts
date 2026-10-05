@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { API_CONFIG, API_FETCH_OPTIONS } from '@/lib/apiConfig';
+import { API_CONFIG, createApiRequest } from '@/lib/apiConfig';
 import { PostData } from '@/types/post';
 
 export interface ChatMessage {
@@ -112,14 +112,8 @@ async function requestChatStream(
     content: msg.content.slice(0, MAX_HISTORY_CONTENT_LENGTH),
   }));
 
-  // createApiRequest ではなく素の fetch のままにしている。
-  // ストリームを読むため signal を渡す必要があり、createApiRequest の
-  // options 経由でも渡せるが、ここは SSE 固有の扱いを近くに置いておきたい。
-  // 認証クッキーを送るため credentials は必須。
-  return fetch(API_CONFIG.buildUrl(API_CONFIG.endpoints.chatStream), {
-    ...API_FETCH_OPTIONS,
+  return createApiRequest(API_CONFIG.endpoints.chatStream, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       message: userMessage,
       history,
@@ -260,12 +254,10 @@ export function useChatStream({
     signal: AbortSignal,
   ) => {
     try {
-      const suggestionsRes = await fetch(
-        API_CONFIG.buildUrl(API_CONFIG.endpoints.chatSuggestions),
+      const suggestionsRes = await createApiRequest(
+        API_CONFIG.endpoints.chatSuggestions,
         {
-          ...API_FETCH_OPTIONS,
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             message: userMessage,
             ai_response: fullResponse,

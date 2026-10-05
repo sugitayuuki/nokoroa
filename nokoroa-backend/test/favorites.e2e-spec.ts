@@ -11,7 +11,7 @@ import {
   PostResponse,
 } from './types';
 import { AppModule } from '../src/app.module';
-import { createValidationPipe } from '../src/common/validation';
+import { applySharedHttpSetup } from '../src/common/http-setup';
 
 describe('Favorites (e2e)', () => {
   let app: INestApplication;
@@ -25,8 +25,9 @@ describe('Favorites (e2e)', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
-    // 本番(main.ts)と同一オプションのパイプを使う(素の ValidationPipe だと transform が効かない)
-    app.useGlobalPipes(createValidationPipe());
+    // 本番(main.ts)と同じ共通設定(cookie-parser + ValidationPipe)を使う。
+    // ここを本番と別に組むと、本番側の配線を消してもテストが緑のままになる。
+    applySharedHttpSetup(app);
     await app.init();
     server = app.getHttpServer() as Server;
   });

@@ -7,6 +7,9 @@ import { AuthService } from './auth.service';
 import { GoogleUser } from './strategies/google.strategy';
 import { AuthenticatedRequest } from '../common/authenticated-request';
 
+/** googleAuthRedirect が読むのは req.user だけ。型を落とさず最小で満たす。 */
+type GoogleAuthRequest = Parameters<AuthController['googleAuthRedirect']>[0];
+
 describe('AuthController', () => {
   let controller: AuthController;
 
@@ -21,11 +24,13 @@ describe('AuthController', () => {
     const cookie = jest.fn<void, [string, string, object]>();
     const clearCookie = jest.fn<void, [string, object]>();
     const redirect = jest.fn<void, [string]>();
+    const setHeader = jest.fn<void, [string, string]>();
     return {
-      res: { cookie, clearCookie, redirect } as unknown as Response,
+      res: { cookie, clearCookie, redirect, setHeader } as unknown as Response,
       cookie,
       clearCookie,
       redirect,
+      setHeader,
     };
   };
 
@@ -42,7 +47,13 @@ describe('AuthController', () => {
   });
 
   afterEach(() => {
-    process.env.FRONTEND_URL = originalFrontendUrl;
+    // 元が未設定なら delete する。代入すると文字列 "undefined" が入り、
+    // 未設定時の挙動を後からテストしたときに原因不明の偽陽性になる
+    if (originalFrontendUrl === undefined) {
+      delete process.env.FRONTEND_URL;
+    } else {
+      process.env.FRONTEND_URL = originalFrontendUrl;
+    }
   });
 
   describe('login', () => {
@@ -80,15 +91,34 @@ describe('AuthController', () => {
   });
 
   describe('me', () => {
+    /** me は setHeader しか使わない */
+    const createHeaderResponse = () => {
+      const setHeader = jest.fn<void, [string, string]>();
+      return { res: { setHeader } as unknown as Response, setHeader };
+    };
+
     it('JWT の userId でセッションのユーザーを引く', async () => {
-      mockAuthService.getSessionUser.mockResolvedValue({ id: 7 });
+      mockAuthService.getSessionUser.mockResolvedValue({ id: 42 });
+      // id と userId を別値にして「どちらを使うか」を区別できるようにする
       const req = {
-        user: { id: 7, userId: 7, email: 'test@example.com' },
+        user: { id: 7, userId: 42, email: 'test@example.com' },
       } as AuthenticatedRequest;
 
-      await controller.me(req);
+      await controller.me(req, createHeaderResponse().res);
 
-      expect(mockAuthService.getSessionUser).toHaveBeenCalledWith(7);
+      expect(mockAuthService.getSessionUser).toHaveBeenCalledWith(42);
+    });
+
+    it('本人の情報をキャッシュさせない', async () => {
+      mockAuthService.getSessionUser.mockResolvedValue({ id: 7 });
+      const { res, setHeader } = createHeaderResponse();
+
+      await controller.me(
+        { user: { id: 7, userId: 7, email: 'a@b.c' } } as AuthenticatedRequest,
+        res,
+      );
+
+      expect(setHeader).toHaveBeenCalledWith('Cache-Control', 'no-store');
     });
   });
 
@@ -114,7 +144,10 @@ describe('AuthController', () => {
     it('JWT をクッキーで渡す', async () => {
       const { res, cookie } = createResponse();
 
-      await controller.googleAuthRedirect({ user: googleUser } as never, res);
+      await controller.googleAuthRedirect(
+        { user: googleUser } as GoogleAuthRequest,
+        res,
+      );
 
       expect(cookie).toHaveBeenCalledWith(
         AUTH_COOKIE_NAME,
@@ -126,7 +159,10 @@ describe('AuthController', () => {
     it('リダイレクト先 URL にトークンもユーザー情報も載せない', async () => {
       const { res, redirect } = createResponse();
 
-      await controller.googleAuthRedirect({ user: googleUser } as never, res);
+      await controller.googleAuthRedirect(
+        { user: googleUser } as GoogleAuthRequest,
+        res,
+      );
 
       // URL に載せると履歴・アクセスログ・Referer に残るため、
       // クエリ無しの固定パスであることを固定する

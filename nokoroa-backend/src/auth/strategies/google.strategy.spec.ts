@@ -14,7 +14,13 @@ describe('GoogleStrategy', () => {
       })[key],
   } as unknown as ConfigService;
 
-  const strategy = new GoogleStrategy(configService);
+  // describe 本体で new すると、コンストラクタが throw した場合に
+  // 個別テストの失敗ではなくスイート全体の収集エラーになり原因が読めない
+  let strategy: GoogleStrategy;
+
+  beforeAll(() => {
+    strategy = new GoogleStrategy(configService);
+  });
 
   const buildProfile = (emails: Profile['emails']): Profile =>
     ({
