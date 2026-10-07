@@ -170,6 +170,7 @@ module "vpc" {
 # RDS Module
 module "rds" {
   source = "../../modules/rds"
+  count  = var.runtime_enabled ? 1 : 0
 
   project_name            = var.project_name
   environment             = var.environment
@@ -181,16 +182,39 @@ module "rds" {
   instance_class          = "db.t4g.micro"
   allocated_storage       = 20
   backup_retention_period = 14
-  deletion_protection     = true
+
+  # 削除保護は使わない。停止のたびに手で true → false へ書き換えて apply する運用になり、
+  # その書き換えを忘れた状態で destroy が失敗する形が以前の詰まりだった。
+  # データは最終スナップショットで守り、停止は 1 変数で完結させる。
+  # 代償として、誤って runtime_enabled = false を apply したときに AWS 側の保護は働かない
+  # （スナップショットは残るので復元は可能）。
+  deletion_protection       = false
+  final_snapshot_identifier = var.db_final_snapshot_identifier
+  snapshot_identifier       = var.db_snapshot_identifier
 }
 
 # Secrets Module
 module "secrets" {
   source = "../../modules/secrets"
 
-  project_name         = var.project_name
-  environment          = var.environment
-  db_host              = module.rds.db_instance_address
+  project_name = var.project_name
+  environment  = var.environment
+
+  # secrets モジュールには count を付けない（停止しても消さない）。
+  # recovery_window_in_days を明示していないため destroy は既定 30 日の削除待ちに入り、
+  # 同名のシークレットを 30 日間作り直せなくなる = 次の再開ができない。月 $2.8 で残す方が安い。
+  #
+  # その結果、常時保持の secrets が条件付きの rds を参照する形になるため、停止中は
+  # 参照先が存在しない。RDS は復元ごとにエンドポイントが変わりうるので database-url は
+  # 再開時に必ず書き換わる必要があり、停止中だけ無効値になるのは許容できる
+  # （この値を読む ECS タスクは同じ apply より後に起動するため、無効値を掴むことはない）。
+  # .invalid は RFC 2606 で予約された絶対に解決しない TLD。万一参照されても
+  # 無関係なホストへ接続せず DNS 解決で即失敗する。
+  #
+  # 却下案: aws_secretsmanager_secret_version 側に count を付けて停止中はバージョンを消す。
+  # シークレットの最後のバージョンを削除できるかが API 依存で、空のシークレットを経由すると
+  # 再開時の復旧がバージョン作成順に依存する。ここでリスクを取る理由がない。
+  db_host              = coalesce(one(module.rds[*].db_instance_address), "rds-not-provisioned.invalid")
   db_port              = 5432
   db_name              = var.db_name
   db_username          = var.db_username
@@ -218,6 +242,7 @@ module "s3" {
 # ALB Module
 module "alb" {
   source = "../../modules/alb"
+  count  = var.runtime_enabled ? 1 : 0
 
   project_name          = var.project_name
   environment           = var.environment
@@ -233,8 +258,13 @@ module "alb" {
 }
 
 # ECS Module
+# count = 0 ではクラスタ・サービス・タスク定義に加えて、このモジュールが抱える
+# IAM ロール 2 種と CloudWatch ロググループ 3 種も消える。IAM は再作成が無料、
+# ログは保持 30 日のデモ環境なので履歴に価値が薄いと判断し、モジュールごと落とす。
+# 停止するとログ履歴が失われる点は README に明記している。
 module "ecs" {
   source = "../../modules/ecs"
+  count  = var.runtime_enabled ? 1 : 0
 
   project_name = var.project_name
   environment  = var.environment
@@ -268,10 +298,12 @@ module "ecs" {
   secrets_read_policy_arn     = module.secrets.secrets_read_policy_arn
 
   # ALB
-  backend_target_group_arn  = module.alb.backend_target_group_arn
-  frontend_target_group_arn = module.alb.frontend_target_group_arn
-  backend_lb_listener_arn   = module.alb.listener_arn
-  frontend_lb_listener_arn  = module.alb.listener_arn
+  # [0] で直接引けるのは alb と ecs が同一の runtime_enabled で生死を共にしているため。
+  # 片方だけ条件を変えると存在しないインスタンスを参照して落ちる。
+  backend_target_group_arn  = module.alb[0].backend_target_group_arn
+  frontend_target_group_arn = module.alb[0].frontend_target_group_arn
+  backend_lb_listener_arn   = module.alb[0].listener_arn
+  frontend_lb_listener_arn  = module.alb[0].listener_arn
 
   # Scaling
   backend_desired_count  = 1
@@ -283,14 +315,21 @@ module "ecs" {
 }
 
 # Route 53 A Record for ALB
+# ALB と生死を共にする。alias レコードは実在するターゲットを必須とするため、ALB を消して
+# レコードだけ残すことはできない。ホストゾーン自体は data 参照で Terraform の管理外なので
+# ネームサーバは変わらず、停止中は apex の A が引けなくなるだけで済む。
+# ACM の DNS 検証レコード（aws_route53_record.cert_validation）は条件を付けていないため
+# 残り、証明書は検証済みのまま維持される = 再開時に DNS 検証の待ち時間が発生しない。
 resource "aws_route53_record" "alb" {
+  count = var.runtime_enabled ? 1 : 0
+
   zone_id = data.aws_route53_zone.main.zone_id
   name    = var.app_domain
   type    = "A"
 
   alias {
-    name                   = module.alb.alb_dns_name
-    zone_id                = module.alb.alb_zone_id
+    name                   = module.alb[0].alb_dns_name
+    zone_id                = module.alb[0].alb_zone_id
     evaluate_target_health = true
   }
 }
@@ -298,13 +337,15 @@ resource "aws_route53_record" "alb" {
 # Route 53 A Record for www subdomain
 # www で来たリクエストは ALB のリスナールールで apex へ 301 リダイレクトする
 resource "aws_route53_record" "www" {
+  count = var.runtime_enabled ? 1 : 0
+
   zone_id = data.aws_route53_zone.main.zone_id
   name    = "www.${var.app_domain}"
   type    = "A"
 
   alias {
-    name                   = module.alb.alb_dns_name
-    zone_id                = module.alb.alb_zone_id
+    name                   = module.alb[0].alb_dns_name
+    zone_id                = module.alb[0].alb_zone_id
     evaluate_target_health = true
   }
 }

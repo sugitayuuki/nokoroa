@@ -31,11 +31,39 @@ variable "availability_zones" {
   default     = ["ap-northeast-1a", "ap-northeast-1c"]
 }
 
+# 時間課金されるリソース（ALB / ECS サービス / RDS インスタンス）を作るかどうか。
+# 面談・デモの前に立ち上げ、終わったら落とす運用のためのスイッチ。
+#
+# 既定値を置かない理由: default = false にすると素の `terraform apply` が稼働中の本番を
+# 破壊し、default = true にすると素の `apply` が課金を開始する。どちらも事故るため、
+# 実行者に毎回明示させる（未指定なら Terraform が入力を促して止まる）。
+variable "runtime_enabled" {
+  description = "Create the hourly-billed resources (ALB / ECS services / RDS instance). No default: every apply must state the intent explicitly"
+  type        = bool
+}
+
 # Database variables
 variable "db_name" {
   description = "Database name"
   type        = string
   default     = "nokoroa_db"
+}
+
+# 停止時に作る最終スナップショットの名前。サイクルごとに一意な値を **起動時の apply で**
+# 渡す（destroy 時に渡しても state から読まれるため効かない。
+# modules/rds/variables.tf の落とし穴を参照）。
+variable "db_final_snapshot_identifier" {
+  description = "Name of the final RDS snapshot taken when runtime_enabled flips to false. Pass a value unique per cycle at start-up time"
+  type        = string
+  default     = null
+}
+
+# 前回の停止で作ったスナップショットから復元する場合にその名前を渡す。
+# null だと空の DB で起動するため、再開時は指定を忘れないこと。
+variable "db_snapshot_identifier" {
+  description = "Restore the database from this snapshot. Leave null only when intentionally starting from an empty database"
+  type        = string
+  default     = null
 }
 
 variable "db_username" {

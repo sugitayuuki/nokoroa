@@ -1,11 +1,14 @@
+# runtime_enabled = false のとき、以下 3 つのモジュールはインスタンスを持たない。
+# one() は要素 0 の場合に null を返すため、停止中でも `terraform output` が
+# 「存在しないインデックス参照」で落ちない（[0] 直書きだと落ちる）。
 output "alb_dns_name" {
-  description = "DNS name of the load balancer"
-  value       = module.alb.alb_dns_name
+  description = "DNS name of the load balancer (null while runtime_enabled = false)"
+  value       = one(module.alb[*].alb_dns_name)
 }
 
 output "rds_endpoint" {
-  description = "RDS instance endpoint"
-  value       = module.rds.db_instance_endpoint
+  description = "RDS instance endpoint (null while runtime_enabled = false)"
+  value       = one(module.rds[*].db_instance_endpoint)
 }
 
 output "s3_bucket_name" {
@@ -14,8 +17,8 @@ output "s3_bucket_name" {
 }
 
 output "ecs_cluster_name" {
-  description = "Name of the ECS cluster"
-  value       = module.ecs.cluster_name
+  description = "Name of the ECS cluster (null while runtime_enabled = false)"
+  value       = one(module.ecs[*].cluster_name)
 }
 
 output "vpc_id" {

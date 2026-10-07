@@ -1,3 +1,13 @@
+# runtime_enabled / db_snapshot_identifier / db_final_snapshot_identifier は
+# **このファイルに書かないこと**。稼働と停止はサイクルごとにコマンドラインで明示する:
+#
+#   terraform apply -var runtime_enabled=true  -var db_snapshot_identifier=... \
+#                   -var db_final_snapshot_identifier=...
+#   terraform apply -var runtime_enabled=false
+#
+# tfvars に固定すると、素の `terraform apply` が意図せず課金を始めたり
+# 稼働中の本番を落としたりする（どちらに固定しても片方の事故が起きる）。
+
 # Public domain (Route 53 hosted zone / ACM / application URLs)
 # 既定値は nokoroa.com。別ドメインで立てる場合のみ指定する。
 # app_domain = "nokoroa.com"

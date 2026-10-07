@@ -6,14 +6,16 @@ Nokoroa の AWS インフラを Terraform で管理しています。
 
 **本番環境は停止中です。** 個人開発のためコストを抑える目的で、常時課金が発生するリソース（ECS サービス・RDS・ALB）を削除しています。
 
+稼働と停止は **`runtime_enabled` 変数ひとつ**で切り替えます。手順・所要時間・月額は「[停止と再開](#停止と再開)」を参照してください。
+
 ただし**インフラの定義はすべてこのディレクトリに残っています。** 空の state から `plan` を実行すると、この構成が定義しているリソースの全量が出ます。
 
 ```
-$ terraform plan
+$ terraform plan -var runtime_enabled=true
 Plan: 79 to add, 0 to change, 0 to destroy.
 ```
 
-この 79 件は「停止によって削除された分」ではなく「定義されている全量」です。停止中も残しているリソース（下記）が state に載っていないため、現状の `plan` はそれらも新規作成として数えます。実際に再構築で作られるのは、それらを `import` で取り込んだあとの差分になります。
+この 79 件は「停止によって削除された分」ではなく「`runtime_enabled = true` で定義されている全量」です。停止中も残しているリソース（下記）が state に載っていないため、現状の `plan` はそれらも新規作成として数えます。実際に再構築で作られるのは、それらを `import` で取り込んだあとの差分になります。
 
 | モジュール | 作成されるリソース数 |
 |---|---:|
@@ -30,17 +32,21 @@ CI が毎コミットで `terraform fmt -check` / `init` / `validate` を実行�
 
 ### 停止中も残しているもの
 
-消すと復旧が面倒なもの、削除待ち期間があるものは残しています（月 $2〜3 程度）。
+消すと復旧が面倒なもの、削除待ち期間があるものは残しています（**月 $5〜6 程度**）。`runtime_enabled` に `count` を付けていないリソースがこれに該当します。
 
-| リソース | 理由 |
-|---|---|
-| Route 53 ホストゾーン | そもそも Terraform の管理対象外（`data` 参照）。削除するとネームサーバが変わりドメインが使えなくなる |
-| ACM 証明書 | 無料。再発行には DNS 検証の待ち時間が必要 |
-| ECR リポジトリ | ビルド済みイメージの保管場所 |
-| S3 アップロードバケット | 投稿画像の実データ |
-| Secrets Manager | 削除すると 30 日間は同名で作り直せない。1 件あたり月 $0.40（下記参照） |
+| リソース | 月額 | 理由 |
+|---|---:|---|
+| Route 53 ホストゾーン | $0.50 | そもそも Terraform の管理対象外（`data` 参照）。削除するとネームサーバが変わりドメインが使えなくなる |
+| ACM 証明書 | $0 | 無料。再発行には DNS 検証の待ち時間が必要 |
+| ECR リポジトリ | 約 $1 | ビルド済みイメージの保管場所（3 リポジトリ × 最大 10 世代） |
+| S3 バケット | 約 $1 | 投稿画像の実データと state 保管先 |
+| Secrets Manager | $2.80 | 削除すると 30 日間は同名で作り直せない。1 件 $0.40 × 7 件（下記参照） |
+| RDS スナップショット | 約 $0.30 | 停止時の最終スナップショット。これが次回の再開時のデータ源になる |
+| VPC・サブネット・SG・IGW | $0 | NAT を置いていないため無料。消す理由がない |
 
-`modules/secrets` が定義しているシークレットは **7 件**です（`db-password`(現在アプリからは未消費。接続は `database-url` を使用) / `jwt-secret` / `database-url` / `google-client-id` / `google-client-secret` / `gemini-api-key` / `internal-api-key`）。停止時の `terraform destroy` はこの 7 件すべてを削除対象にしていますが、`recovery_window_in_days` を明示していないため既定の **30 日間の削除待ち**に入り、待機中も課金対象として残ります。請求上「2 件分」しか見えていないのは、残りが削除待ち期間を終えて消えた後の状態と考えられます（AWS 上の実数は未確認）。
+`module "secrets"` に `count` を付けていないのは意図的です。destroy すると `recovery_window_in_days` 既定の 30 日間削除待ちに入り、**同名のシークレットを 30 日間作り直せない = 次の再開ができなくなる**ためです。月 $2.80 を払って残す方が安く済みます。
+
+`modules/secrets` が定義しているシークレットは **7 件**です（`db-password`(現在アプリからは未消費。接続は `database-url` を使用) / `jwt-secret` / `database-url` / `google-client-id` / `google-client-secret` / `gemini-api-key` / `internal-api-key`）。**過去の停止（`-target=module.rds` を指定した destroy）は、依存側としてこの 7 件を巻き込んで削除しました。** `recovery_window_in_days` を明示していないため既定の **30 日間の削除待ち**に入り、待機中も課金対象として残ります。請求上「2 件分」しか見えていないのは、残りが削除待ち期間を終えて消えた後の状態と考えられます（AWS 上の実数は未確認）。`runtime_enabled` を導入した現在はシークレットを destroy 対象に含めないため、この巻き込みは再発しません。
 
 つまり再構築時は、**AWS に実在する分は `terraform import` が必要、削除待ちが残っている分は待機満了か `aws secretsmanager restore-secret` が必要**です。どちらに該当するかは事前に確認してください。
 
@@ -147,8 +153,13 @@ cp terraform.tfvars.example terraform.tfvars
 
 ```bash
 terraform init
-terraform apply
+
+terraform apply \
+  -var runtime_enabled=true \
+  -var db_final_snapshot_identifier="nokoroa-prod-$(date +%Y%m%d-%H%M)"
 ```
+
+`db_final_snapshot_identifier` は**停止時に作るスナップショットの名前**で、起動時に渡しておく必要があります（理由は「[停止と再開](#停止と再開)」）。初回は復元元が無いため `db_snapshot_identifier` は指定しません（空の DB で起動します）。
 
 ### 3. イメージをビルドして push する
 
@@ -179,8 +190,12 @@ ai_image       = "<account-id>.dkr.ecr.ap-northeast-1.amazonaws.com/nokoroa-ai:l
 ```
 
 ```bash
-terraform apply
+terraform apply \
+  -var runtime_enabled=true \
+  -var db_final_snapshot_identifier="<1 回目と同じ値>"
 ```
+
+> `runtime_enabled` には既定値がありません。付け忘れると Terraform が入力を促して止まります（黙って何かを壊すより良い、という設計です）。`db_final_snapshot_identifier` を 1 回目と変えると plan に差分が 1 行出ますが、API 呼び出しは発生しません。
 
 以降のデプロイは GitHub Actions（`.github/workflows/deploy.yml`）が担います。backend・ai・frontend の 3 イメージを ARM64 でビルドして push し、ECS のサービスを更新します。
 
@@ -215,24 +230,66 @@ aws ecs describe-services --cluster nokoroa-prod-cluster --services nokoroa-prod
 aws logs tail /ecs/nokoroa-prod/backend --follow
 ```
 
-## 停止するには
+## 停止と再開
 
-常時課金されるリソースを落とし、ドメインと成果物は残します。
+面談やデモの前に立ち上げ、終わったら落とす運用を想定しています。切り替えは `runtime_enabled` ひとつで、`-target` も手でのコード書き換えも不要です。
 
-**事前に削除保護を外す必要があります。** `envs/prod/main.tf` の `module "rds"` にある `deletion_protection = true` を `false` に変えて `terraform apply` してください。これを飛ばすと destroy は次の 2 つで失敗します。
+### 月額とサイクル単価
 
-- `Cannot delete protected DB Instance` — 削除保護が有効なため
-- `final_snapshot_identifier is required` — `skip_final_snapshot = !deletion_protection` の式により、保護が有効だとスナップショット名が必須になるため
+| 状態 | 内容 | 金額 |
+|---|---|---:|
+| 停止中 | Secrets $2.80 + Route 53 $0.50 + ECR 約 $1 + S3 約 $1 + スナップショット約 $0.30 | **月 $5〜6** |
+| 稼働中（24 時間） | ALB $0.65 + Fargate $0.89 + RDS $0.69 + パブリック IPv4 $0.48 | **1 回 $2.70** |
+| 常時稼働した場合 | 上記 + CloudWatch・データ転送 | 月 $95〜130 |
+
+価格は AWS Price List API の `ap-northeast-1` 実値（2026-10 時点）に基づく概算です。Fargate は ARM64 単価（$0.04045/vCPU 時・$0.00442/GB 時）、RDS は `db.t4g.micro` Single-AZ（$0.025/時）+ gp3 20GB（$0.138/GB 月）で計算しています。
+
+### 停止する
 
 ```bash
-terraform destroy \
-  -target=module.ecs \
-  -target=module.alb \
-  -target=module.rds \
-  -target=module.vpc
+terraform apply -var runtime_enabled=false
 ```
 
-**このコマンドは Secrets Manager も削除します。** `module.secrets` は `module.rds` に依存しているため、`-target=module.rds` を指定すると依存側として巻き込まれます。シークレットは `recovery_window_in_days` を明示していないため既定の 30 日間削除待ちに入り、**同じ名前での再作成が 30 日間できません**。短い間隔で停止と再構築を繰り返す場合は、`recovery_window_in_days = 0` を設定するか、停止対象をモジュール単位ではなくリソース単位で列挙してください。
+消えるのは ALB・ECS（クラスタ・サービス・タスク定義・IAM ロール・ロググループ）・RDS インスタンス・apex と www の A レコードです。RDS は `db_final_snapshot_identifier` で指定した名前の最終スナップショットを作ってから削除されます。所要時間は ALB と ECS が即時、RDS のスナップショット作成が 5〜10 分です。
+
+**停止すると CloudWatch のログ履歴が失われます。** `modules/ecs` がロググループ 3 種（backend / frontend / ai）を抱えているため、モジュールごと消えると過去のログも消えます。保持期間は 30 日設定でデモ環境のログ履歴に価値が薄いと判断して分割しませんでした。残したい場合はロググループを `runtime_enabled` の外側へ切り出してください。
+
+### 再開する
+
+```bash
+# 直前の停止で作られたスナップショット名を確認する
+aws rds describe-db-snapshots \
+  --snapshot-type manual \
+  --query 'reverse(sort_by(DBSnapshots,&SnapshotCreateTime))[:5].[DBSnapshotIdentifier,SnapshotCreateTime]' \
+  --output table
+
+terraform apply \
+  -var runtime_enabled=true \
+  -var db_snapshot_identifier="<上で確認した名前>" \
+  -var db_final_snapshot_identifier="nokoroa-prod-$(date +%Y%m%d-%H%M)"
+```
+
+所要時間の目安は **合計 25〜35 分**です。
+
+| 工程 | 時間 |
+|---|---|
+| RDS スナップショットからの復元 | 10〜20 分 |
+| ALB 作成 | 3〜5 分 |
+| ECS タスク起動 + ヘルスチェック通過 | 2〜3 分 |
+
+ACM 証明書と DNS 検証レコードは停止しても残しているため、**証明書の再発行と DNS 検証の待ち時間は発生しません**。A レコードは Route 53 のエイリアスなので、作成後ほぼ即時に引けるようになります。面談の 30 分前ではなく前日に立てることを勧めます。
+
+`db_snapshot_identifier` を省くと**空の DB で起動します**。意図的に初期化したいとき以外は必ず指定してください。デモデータを入れ直す場合は `nokoroa-backend/prisma/seed.ts` を使います。
+
+### 設計上の注意点
+
+**`db_final_snapshot_identifier` は停止時ではなく起動時に渡す。** Terraform は破棄するリソースの属性を **state から** 読むため、`terraform apply -var runtime_enabled=false -var db_final_snapshot_identifier=...` のように停止と同時に渡しても無視されます。インスタンスが存在するうちの apply で state に入れておく必要があります。`modules/rds` の `lifecycle.precondition` が、スナップショット名なしの起動（= 停止時にデータを失う構成）を apply の時点で弾きます。
+
+**スナップショット名はサイクルごとに一意にする。** 同名のスナップショットは 2 つ作れないため、前回と同じ名前のまま停止すると destroy が失敗します。上のコマンド例では `$(date +%Y%m%d-%H%M)` を付けています。`timestamp()` で自動生成しないのは、毎回値が変わって plan に差分が出続け「変更なし」を確認できなくなるためです。
+
+**削除保護は使っていません。** 以前は `deletion_protection = true` で、停止のたびに手でコードを `false` へ書き換えて apply する必要があり、その書き換え忘れで destroy が失敗していました。データは最終スナップショットで守る方針に変え、停止を 1 変数で完結させています。代償として、誤って `runtime_enabled=false` を apply したときに AWS 側の保護は働きません（スナップショットは作られるので復元は可能です）。
+
+**`runtime_enabled` を `terraform.tfvars` に書かないこと。** `true` で固定すると素の `terraform apply` が課金を開始し、`false` で固定すると稼働中の本番を落とします。既定値を持たせていないのも同じ理由です。
 
 ## 既知の課題
 

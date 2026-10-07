@@ -72,3 +72,35 @@ variable "deletion_protection" {
   type        = bool
   default     = false
 }
+
+# 削除時にスナップショットを取らずデータを捨てる。既定を false にしているのは、
+# 「指定を忘れた」状態でデータが消えないようにするため。true は捨てて良いと
+# 分かっている環境（stg / 使い捨て検証）でのみ明示する。
+variable "skip_final_snapshot" {
+  description = "Destroy the instance without taking a final snapshot (data loss)"
+  type        = bool
+  default     = false
+}
+
+# 削除時に作る最終スナップショットの名前。
+#
+# 落とし穴: この値は destroy 時に **state から** 読まれる。destroy と同じ
+# コマンドで `-var` に渡しても、破棄されるリソースへ新しい設定値は適用されないため
+# 無視される。したがって「インスタンスが存在するうちに apply で state へ入れておく」
+# 必要があり、停止・再開を繰り返す運用では **起動時に** サイクルごと一意な名前を
+# 渡す（停止時ではない）。
+#
+# timestamp() で自動生成しない理由: 毎回値が変わるため plan に差分が出続け、
+# 「変更なし」を確認できなくなる。
+variable "final_snapshot_identifier" {
+  description = "Name of the final snapshot taken on destroy. Must be set while the instance exists (read from state at destroy time), and must be unique per stop/start cycle"
+  type        = string
+  default     = null
+}
+
+# 既存スナップショットから復元する場合にその名前を渡す。null なら空の DB を新規作成。
+variable "snapshot_identifier" {
+  description = "Restore from this snapshot instead of creating an empty database"
+  type        = string
+  default     = null
+}
