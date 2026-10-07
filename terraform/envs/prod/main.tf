@@ -1,4 +1,6 @@
 # ECR Repositories
+# runtime_enabled の count を付けていない（停止しても消さない）。リポジトリ自体の保管料は
+# 月 $1 程度で、消すと再開のたびに 3 イメージを ARM64 でビルドし直すことになる。
 resource "aws_ecr_repository" "backend" {
   name                 = "${var.project_name}-backend"
   image_tag_mutability = "MUTABLE"
@@ -102,6 +104,14 @@ resource "aws_ecr_lifecycle_policy" "frontend" {
 }
 
 # Random Password for RDS
+#
+# このリソースに count を付けてはならず、再生成させてもならない（停止中も state に残す）。
+# 停止・再開は RDS をスナップショットから復元する形で回るが、スナップショット内の
+# master password は取得時点の値である。Terraform 経由の復元は provider が restore 後の
+# ModifyDBInstance で新しいパスワードを当て直すため一見通るが、
+# スナップショットを AWS CLI / コンソールから直接復元した場合（障害時の緊急復旧経路）は
+# Secrets Manager に入っている値で認証できなくなる。
+# 「他の時間課金リソースに揃える」名目で count や keepers を足さないこと。
 resource "random_password" "db_password" {
   length           = 16
   special          = true
@@ -187,7 +197,10 @@ module "rds" {
   # その書き換えを忘れた状態で destroy が失敗する形が以前の詰まりだった。
   # データは最終スナップショットで守り、停止は 1 変数で完結させる。
   # 代償として、誤って runtime_enabled = false を apply したときに AWS 側の保護は働かない
-  # （スナップショットは残るので復元は可能）。
+  # （最終スナップショットは取られるので復元は可能）。
+  # runtime_enabled を経由しない破壊（素の terraform destroy / -target）への備えは、
+  # 常時保持する側に寄せている: modules/s3 のバケットと modules/secrets の
+  # シークレット 7 件に prevent_destroy を入れ、そこでフェイルクローズさせる。
   deletion_protection       = false
   final_snapshot_identifier = var.db_final_snapshot_identifier
   snapshot_identifier       = var.db_snapshot_identifier
@@ -207,9 +220,14 @@ module "secrets" {
   # その結果、常時保持の secrets が条件付きの rds を参照する形になるため、停止中は
   # 参照先が存在しない。RDS は復元ごとにエンドポイントが変わりうるので database-url は
   # 再開時に必ず書き換わる必要があり、停止中だけ無効値になるのは許容できる
-  # （この値を読む ECS タスクは同じ apply より後に起動するため、無効値を掴むことはない）。
+  # （この値を読む主体は modules/ecs のタスク定義の valueFrom だけで、停止中は
+  #   そのタスクが存在しない。再開時の順序は module "ecs" の
+  #   depends_on = [module.secrets] で担保している。あれを外すとバージョン書き込みと
+  #   タスク起動が並列になり、placeholder を掴む窓が開く）。
   # .invalid は RFC 2606 で予約された絶対に解決しない TLD。万一参照されても
   # 無関係なホストへ接続せず DNS 解決で即失敗する。
+  # なお「placeholder」はホストだけが無効で、ユーザー名とパスワードは実値のまま
+  # シークレットのバージョン履歴に積まれる。無害な文字列ではない。
   #
   # 却下案: aws_secretsmanager_secret_version 側に count を付けて停止中はバージョンを消す。
   # シークレットの最後のバージョンを削除できるかが API 依存で、空のシークレットを経由すると
@@ -232,6 +250,11 @@ module "s3" {
 
   project_name = var.project_name
   environment  = var.environment
+
+  # runtime_enabled の count を付けていない（停止しても消さない）。投稿画像の実データと
+  # terraform state の保管先が入っているため、消すと復旧できない。
+  # 誤 destroy への備えは modules/s3 側の prevent_destroy で持つ。
+
   # 本番バケットにローカル開発用オリジンは許可しない。
   # www は ALB で apex へ 301 されるため通常到達しないが、リダイレクト設定が
   # 外れた場合に画像表示まで巻き添えにしない保険として残している。
@@ -312,6 +335,13 @@ module "ecs" {
   backend_memory         = 512
   frontend_cpu           = 256
   frontend_memory        = 512
+
+  # 上の database_url_secret_arn が参照しているのはシークレット「本体」の ARN であり、
+  # 値を書き込む aws_secretsmanager_secret_version との間に順序エッジが無い。
+  # それだけだとタスク起動とバージョン更新が並列に走り、再開時にタスクが停止中の
+  # placeholder (rds-not-provisioned.invalid) を掴んでクラッシュループする窓が残る。
+  # module 単位で待たせて閉じる。
+  depends_on = [module.secrets]
 }
 
 # Route 53 A Record for ALB

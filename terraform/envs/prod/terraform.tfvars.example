@@ -7,6 +7,11 @@
 #
 # tfvars に固定すると、素の `terraform apply` が意図せず課金を始めたり
 # 稼働中の本番を落としたりする（どちらに固定しても片方の事故が起きる）。
+#
+# 同じ理由で `TF_VAR_runtime_enabled` もシェルや direnv に置かないこと。
+# 既定値を置かないガードが塞ぐのは default と tfvars の 2 経路だけで、
+# 環境変数は素通りする。`export TF_VAR_runtime_enabled=false` が残っていると、
+# 以降の apply が無言で稼働中の本番を落とす。
 
 # Public domain (Route 53 hosted zone / ACM / application URLs)
 # 既定値は nokoroa.com。別ドメインで立てる場合のみ指定する。

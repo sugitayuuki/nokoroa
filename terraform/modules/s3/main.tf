@@ -6,6 +6,15 @@ resource "aws_s3_bucket" "uploads" {
     Name        = "${var.project_name}-${var.environment}-uploads"
     Environment = var.environment
   }
+
+  # 投稿画像の実データが入っており、消すと復旧できない。
+  # envs/prod が RDS の deletion_protection をやめた（停止を 1 変数で完結させるため）結果、
+  # 素の terraform destroy を止めるものが構成全体から無くなったため、ここで塞ぐ。
+  # runtime_enabled による停止・再開はこのバケットを destroy 対象にしないので干渉しない。
+  # 本当に消す場合はこの 3 行を外してから destroy する。
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 # S3 Bucket Versioning
@@ -82,6 +91,12 @@ resource "aws_s3_bucket" "terraform_state" {
   tags = {
     Name        = "${var.project_name}-terraform-state"
     Environment = "global"
+  }
+
+  # state の保管先そのものなので、destroy すると以降インフラを管理できなくなる。
+  # 理由は uploads バケットと同じ（prevent_destroy のコメント参照）。
+  lifecycle {
+    prevent_destroy = true
   }
 }
 

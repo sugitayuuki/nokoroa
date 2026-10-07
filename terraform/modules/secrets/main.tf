@@ -21,6 +21,20 @@ resource "aws_secretsmanager_secret" "db_password" {
   tags = {
     Name = "${var.project_name}-${var.environment}-db-password"
   }
+
+  # このモジュールの 7 件のシークレットはすべて prevent_destroy で守る。
+  # recovery_window_in_days を明示していないため destroy は既定 30 日の削除待ちに入り、
+  # その間は同名で作り直せない = 停止・再開サイクルの「再開」ができなくなる。
+  # envs/prod が RDS の deletion_protection をやめた結果、素の terraform destroy や
+  # -target を止めるものが構成全体から無くなったため、ここでフェイルクローズさせる。
+  # runtime_enabled による停止・再開はこのモジュールを destroy 対象にしないので干渉しない。
+  #
+  # recovery_window_in_days = 0 にはしない。即時完全削除になり「誤 destroy からの復旧」が
+  # 一切できなくなるため、事故耐性が下がる。30 日待ちは事故時の保険として機能しており、
+  # 問題は「同名で作り直せない」ことだけなので、destroy させない方で解く。
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_secretsmanager_secret_version" "db_password" {
@@ -35,6 +49,11 @@ resource "aws_secretsmanager_secret" "jwt_secret" {
 
   tags = {
     Name = "${var.project_name}-${var.environment}-jwt-secret"
+  }
+
+  # 理由は db_password の prevent_destroy のコメント参照。
+  lifecycle {
+    prevent_destroy = true
   }
 }
 
@@ -51,6 +70,11 @@ resource "aws_secretsmanager_secret" "database_url" {
   tags = {
     Name = "${var.project_name}-${var.environment}-database-url"
   }
+
+  # 理由は db_password の prevent_destroy のコメント参照。
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_secretsmanager_secret_version" "database_url" {
@@ -65,6 +89,11 @@ resource "aws_secretsmanager_secret" "google_client_id" {
 
   tags = {
     Name = "${var.project_name}-${var.environment}-google-client-id"
+  }
+
+  # 理由は db_password の prevent_destroy のコメント参照。
+  lifecycle {
+    prevent_destroy = true
   }
 }
 
@@ -81,6 +110,11 @@ resource "aws_secretsmanager_secret" "google_client_secret" {
   tags = {
     Name = "${var.project_name}-${var.environment}-google-client-secret"
   }
+
+  # 理由は db_password の prevent_destroy のコメント参照。
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_secretsmanager_secret_version" "google_client_secret" {
@@ -96,6 +130,11 @@ resource "aws_secretsmanager_secret" "gemini_api_key" {
   tags = {
     Name = "${var.project_name}-${var.environment}-gemini-api-key"
   }
+
+  # 理由は db_password の prevent_destroy のコメント参照。
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_secretsmanager_secret_version" "gemini_api_key" {
@@ -110,6 +149,11 @@ resource "aws_secretsmanager_secret" "internal_api_key" {
 
   tags = {
     Name = "${var.project_name}-${var.environment}-internal-api-key"
+  }
+
+  # 理由は db_password の prevent_destroy のコメント参照。
+  lifecycle {
+    prevent_destroy = true
   }
 }
 

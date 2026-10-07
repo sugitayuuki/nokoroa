@@ -15,7 +15,7 @@ $ terraform plan -var runtime_enabled=true
 Plan: 79 to add, 0 to change, 0 to destroy.
 ```
 
-この 79 件は「停止によって削除された分」ではなく「`runtime_enabled = true` で定義されている全量」です。停止中も残しているリソース（下記）が state に載っていないため、現状の `plan` はそれらも新規作成として数えます。実際に再構築で作られるのは、それらを `import` で取り込んだあとの差分になります。
+この 79 件は「停止によって削除された分」ではなく「`runtime_enabled = true` で定義されている全量」です。AWS 上に実在するのに state に載っていないリソース（下記）があるため、現状の `plan` はそれらも新規作成として数えます。実際に再構築で作られるのは、それらを `import` で取り込んだあとの差分になります。
 
 | モジュール | 作成されるリソース数 |
 |---|---:|
@@ -30,21 +30,31 @@ Plan: 79 to add, 0 to change, 0 to destroy.
 
 CI が毎コミットで `terraform fmt -check` / `init` / `validate` を実行しており、構文エラー・型の不整合・存在しない参照は検出されます。ただし `plan` は認証情報が必要なため CI では実行しておらず、**apply 時にしか現れない問題は検出できません**。プロバイダのバージョンは `.terraform.lock.hcl` をコミットして固定しているため、いつ誰が実行しても同じバージョンで解決されます。
 
-### 停止中も残しているもの
+### `runtime_enabled = false` で残るもの
 
-消すと復旧が面倒なもの、削除待ち期間があるものは残しています（**月 $5〜6 程度**）。`runtime_enabled` に `count` を付けていないリソースがこれに該当します。
+停止しても destroy 対象にしないリソースです（`count` を付けていないもの）。定常運用に入ったあとの停止中コストは **月 $5〜6** になります。
 
 | リソース | 月額 | 理由 |
 |---|---:|---|
 | Route 53 ホストゾーン | $0.50 | そもそも Terraform の管理対象外（`data` 参照）。削除するとネームサーバが変わりドメインが使えなくなる |
 | ACM 証明書 | $0 | 無料。再発行には DNS 検証の待ち時間が必要 |
 | ECR リポジトリ | 約 $1 | ビルド済みイメージの保管場所（3 リポジトリ × 最大 10 世代） |
-| S3 バケット | 約 $1 | 投稿画像の実データと state 保管先 |
+| S3 バケット | 約 $1 | 投稿画像の実データ。state 用バケットも作るが backend は未設定（「既知の課題」参照） |
 | Secrets Manager | $2.80 | 削除すると 30 日間は同名で作り直せない。1 件 $0.40 × 7 件（下記参照） |
-| RDS スナップショット | 約 $0.30 | 停止時の最終スナップショット。これが次回の再開時のデータ源になる |
+| RDS スナップショット | 約 $0.30 | 停止時の最終スナップショット。次回の再開時のデータ源になる |
 | VPC・サブネット・SG・IGW | $0 | NAT を置いていないため無料。消す理由がない |
 
-`module "secrets"` に `count` を付けていないのは意図的です。destroy すると `recovery_window_in_days` 既定の 30 日間削除待ちに入り、**同名のシークレットを 30 日間作り直せない = 次の再開ができなくなる**ためです。月 $2.80 を払って残す方が安く済みます。
+> **この表は新しい設計で「残すことにしたもの」であり、いま AWS 上に実在するものの一覧ではありません。**
+> 前回の停止はこの設計より前に行われたため、実際に残っているのは **ECR・S3・Secrets Manager の 3 つだけ**です（「既知の課題」参照）。VPC 一式は旧手順の `-target=module.vpc` で削除済み、最終スナップショットも当時は作られていません。したがって:
+>
+> - **初回の再開は空の DB になります**（`db_snapshot_identifier` に渡せるスナップショットが存在しない）
+> - 現在の実際の請求は、保持しているシークレットが 7 件に満たないため $5〜6 より低くなります
+
+`module "secrets"` と `module "s3"` に `count` を付けていないのは意図的です。シークレットを destroy すると `recovery_window_in_days` 既定の 30 日間削除待ちに入り、**同名のシークレットを 30 日間作り直せない = 次の再開ができなくなる**ためです。月 $2.80 を払って残す方が安く済みます。
+
+どちらのモジュールも `lifecycle { prevent_destroy = true }` で保護しています（シークレット 7 件 + バケット 2 件）。RDS の `deletion_protection` をやめた（停止を 1 変数で完結させるため）結果、素の `terraform destroy` を止めるものが構成から無くなったので、**消えて困るものだけをコード側で止める**形に寄せました。`runtime_enabled` による停止・再開はこれらを destroy 対象にしないため干渉しません。
+
+なお `recovery_window_in_days = 0` にはしていません。即時完全削除になって誤 destroy からの復旧が一切できなくなり、事故耐性が下がるためです。30 日待ちは事故時の保険として機能していて、困るのは「同名で作り直せない」ことだけなので、destroy させない方で解いています。
 
 `modules/secrets` が定義しているシークレットは **7 件**です（`db-password`(現在アプリからは未消費。接続は `database-url` を使用) / `jwt-secret` / `database-url` / `google-client-id` / `google-client-secret` / `gemini-api-key` / `internal-api-key`）。**過去の停止（`-target=module.rds` を指定した destroy）は、依存側としてこの 7 件を巻き込んで削除しました。** `recovery_window_in_days` を明示していないため既定の **30 日間の削除待ち**に入り、待機中も課金対象として残ります。請求上「2 件分」しか見えていないのは、残りが削除待ち期間を終えて消えた後の状態と考えられます（AWS 上の実数は未確認）。`runtime_enabled` を導入した現在はシークレットを destroy 対象に含めないため、この巻き込みは再発しません。
 
@@ -190,12 +200,19 @@ ai_image       = "<account-id>.dkr.ecr.ap-northeast-1.amazonaws.com/nokoroa-ai:l
 ```
 
 ```bash
+# 2 で渡した値を state から読み出す（$(date) で作ったので記憶に残っていないはず）
+SNAP=$(terraform state show 'module.rds[0].aws_db_instance.main' \
+  | sed -n 's/.*final_snapshot_identifier *= *"\(.*\)"/\1/p')
+echo "$SNAP"
+
 terraform apply \
   -var runtime_enabled=true \
-  -var db_final_snapshot_identifier="<1 回目と同じ値>"
+  -var db_final_snapshot_identifier="$SNAP"
 ```
 
-> `runtime_enabled` には既定値がありません。付け忘れると Terraform が入力を促して止まります（黙って何かを壊すより良い、という設計です）。`db_final_snapshot_identifier` を 1 回目と変えると plan に差分が 1 行出ますが、API 呼び出しは発生しません。
+> `runtime_enabled` には既定値がありません。付け忘れると Terraform が入力を促して止まります（黙って何かを壊すより良い、という設計です）。
+>
+> `db_final_snapshot_identifier` は 2 と同じ値を渡します。違う値でも plan に差分が 1 行出るだけで API 呼び出しは起きませんが、**停止時に作られるスナップショットの名前が静かに変わる**ため、サイクル中は同じ値を使い回すのが安全です。
 
 以降のデプロイは GitHub Actions（`.github/workflows/deploy.yml`）が担います。backend・ai・frontend の 3 イメージを ARM64 でビルドして push し、ECS のサービスを更新します。
 
@@ -240,9 +257,16 @@ aws logs tail /ecs/nokoroa-prod/backend --follow
 |---|---|---:|
 | 停止中 | Secrets $2.80 + Route 53 $0.50 + ECR 約 $1 + S3 約 $1 + スナップショット約 $0.30 | **月 $5〜6** |
 | 稼働中（24 時間） | ALB $0.65 + Fargate $0.89 + RDS $0.69 + パブリック IPv4 $0.48 | **1 回 $2.70** |
-| 常時稼働した場合 | 上記 + CloudWatch・データ転送 | 月 $95〜130 |
+| 常時稼働した場合 | 下記参照 | 月 $95〜130 |
 
 価格は AWS Price List API の `ap-northeast-1` 実値（2026-10 時点）に基づく概算です。Fargate は ARM64 単価（$0.04045/vCPU 時・$0.00442/GB 時）、RDS は `db.t4g.micro` Single-AZ（$0.025/時）+ gp3 20GB（$0.138/GB 月）で計算しています。
+
+**「常時稼働」は上 2 行の足し算にはなりません。** 稼働 24 時間 $2.70 × 30 日 + 停止中 $5.60 では約 $87 で、$95〜130 には届きません。差分は 1 日単位の利用では無視できる次の項目です。
+
+- **CloudWatch**: `modules/ecs` が Container Insights を有効にしており（`containerInsights = enabled`）、カスタムメトリクス $0.30/個 × 推定 30〜60 個で月 $10〜18。ログ取り込みは $0.76/GB。いずれも稼働時間ではなくメトリクス本数に比例するため、日割りに乗らない
+- **ALB の LCU** とデータ転送: トラフィック量に依存し、常時公開だと月数ドル規模になる
+
+常時稼働を選ぶなら Container Insights を切る（`modules/ecs/main.tf` の `value = "enabled"` → `disabled`）だけで月 $10〜18 下がります。停止・再開運用では稼働時間が短く効きが小さいため、そのままにしています。
 
 ### 停止する
 
@@ -250,7 +274,16 @@ aws logs tail /ecs/nokoroa-prod/backend --follow
 terraform apply -var runtime_enabled=false
 ```
 
-消えるのは ALB・ECS（クラスタ・サービス・タスク定義・IAM ロール・ロググループ）・RDS インスタンス・apex と www の A レコードです。RDS は `db_final_snapshot_identifier` で指定した名前の最終スナップショットを作ってから削除されます。所要時間は ALB と ECS が即時、RDS のスナップショット作成が 5〜10 分です。
+消えるのは次のものです。RDS は `db_final_snapshot_identifier` で指定した名前の最終スナップショットを作ってから削除されます。
+
+- ALB（リスナー・ターゲットグループを含む）
+- ECS のクラスタ・サービス・タスク定義・IAM ロール 2 種・ロググループ 3 種
+- RDS インスタンス、**および DB サブネットグループとパラメータグループ**（`modules/rds` の 3 リソースはまとめて消えます）
+- apex と www の A レコード
+
+所要時間は 10〜20 分程度です。「ALB と ECS は即時」ではありません。ECS サービスの削除はタスクのドレインを待ち、ターゲットグループの登録解除遅延（既定 300 秒）と ALB 本体の削除も即時には終わりません。RDS のスナップショット作成に 5〜10 分かかります。
+
+パラメータグループが毎サイクル作り直される点に注意してください。`shared_preload_libraries` が `apply_method = "pending-reboot"` なので、復元直後のインスタンスで `vector` 拡張が有効になるのは初回起動後です。
 
 **停止すると CloudWatch のログ履歴が失われます。** `modules/ecs` がロググループ 3 種（backend / frontend / ai）を抱えているため、モジュールごと消えると過去のログも消えます。保持期間は 30 日設定でデモ環境のログ履歴に価値が薄いと判断して分割しませんでした。残したい場合はロググループを `runtime_enabled` の外側へ切り出してください。
 
@@ -269,30 +302,61 @@ terraform apply \
   -var db_final_snapshot_identifier="nokoroa-prod-$(date +%Y%m%d-%H%M)"
 ```
 
-所要時間の目安は **合計 25〜35 分**です。
+| 工程 | 時間 | 備考 |
+|---|---|---|
+| RDS スナップショットからの復元 | 10〜20 分 | ALB 作成と並列に走る |
+| ALB 作成 | 3〜5 分 | RDS 復元と並列に走る |
+| ECS タスク起動 + ヘルスチェック通過 | 2〜3 分 | ALB のターゲットグループが必要なので ALB の後 |
+| **apply 完了まで** | **12〜23 分** | 上記の並列を考慮した壁時計（直列合計ではない） |
+| DNS のネガティブキャッシュ解消 | 最大 15 分 | 下記参照 |
 
-| 工程 | 時間 |
-|---|---|
-| RDS スナップショットからの復元 | 10〜20 分 |
-| ALB 作成 | 3〜5 分 |
-| ECS タスク起動 + ヘルスチェック通過 | 2〜3 分 |
+`module "alb"` と `module "rds"` の間に依存関係は無いため Terraform は両方を同時に作ります。したがって壁時計は `max(RDS, ALB) + ECS` になります。
 
-ACM 証明書と DNS 検証レコードは停止しても残しているため、**証明書の再発行と DNS 検証の待ち時間は発生しません**。A レコードは Route 53 のエイリアスなので、作成後ほぼ即時に引けるようになります。面談の 30 分前ではなく前日に立てることを勧めます。
+ACM 証明書と DNS 検証レコードは停止しても残しているため、**証明書の再発行と DNS 検証の待ち時間は発生しません**。
 
-`db_snapshot_identifier` を省くと**空の DB で起動します**。意図的に初期化したいとき以外は必ず指定してください。デモデータを入れ直す場合は `nokoroa-backend/prisma/seed.ts` を使います。
+ただし **A レコードそのものは停止中に消えている**（ALB と生死を共にするため）ので、停止中にドメインを引いたリゾルバは NXDOMAIN をホストゾーンの SOA minimum TTL ぶんキャッシュします（Route 53 の既定は 900 秒）。再開直後に同じリゾルバ経由でアクセスすると最大 15 分引けません。**面談の 30 分前ではなく前日に立てることを強く勧めます。**
+
+`db_snapshot_identifier` を省くと**空の DB で起動します**。意図的に初期化したいとき以外は必ず指定してください。
+
+空の DB から始める場合は、**先にスキーマを適用してから** seed を流します。テーブルが無い状態で seed を実行すると全 INSERT が `relation does not exist` で失敗します。
+
+1. 「[5. データベースをマイグレーションする](#5-データベースをマイグレーションする)」の `run-task` で `prisma migrate deploy` を実行する
+2. そのうえで `nokoroa-backend/prisma/seed.ts`（`npm run seed`）でデモデータを入れる
+
+**復元を指定し忘れて空の DB で起動してしまった場合**は、正しい名前を付けて再 apply すれば plan に `must be replaced` が出ます（`snapshot_identifier` を `ignore_changes` に入れていないため、是正が効きます）。その replace でも最終スナップショットは取られるので、空 DB に書き込んでしまった分も失われません。
 
 ### 設計上の注意点
 
-**`db_final_snapshot_identifier` は停止時ではなく起動時に渡す。** Terraform は破棄するリソースの属性を **state から** 読むため、`terraform apply -var runtime_enabled=false -var db_final_snapshot_identifier=...` のように停止と同時に渡しても無視されます。インスタンスが存在するうちの apply で state に入れておく必要があります。`modules/rds` の `lifecycle.precondition` が、スナップショット名なしの起動（= 停止時にデータを失う構成）を apply の時点で弾きます。
+**`db_final_snapshot_identifier` は停止時ではなく起動時に渡す。** Terraform は破棄するリソースの属性を **state から** 読むため、`terraform apply -var runtime_enabled=false -var db_final_snapshot_identifier=...` のように停止と同時に渡しても無視されます。インスタンスが存在するうちの apply で state に入れておく必要があります。
 
-**スナップショット名はサイクルごとに一意にする。** 同名のスナップショットは 2 つ作れないため、前回と同じ名前のまま停止すると destroy が失敗します。上のコマンド例では `$(date +%Y%m%d-%H%M)` を付けています。`timestamp()` で自動生成しないのは、毎回値が変わって plan に差分が出続け「変更なし」を確認できなくなるためです。
+`modules/rds` の `lifecycle.precondition` は、名前を渡さないままの起動を apply の時点で弾きます。**この場合の実際の挙動はデータ損失ではなく「停止 apply が『名前が必須』で失敗して止まる」こと**です（prod は `skip_final_snapshot` を渡しておらず常に `false`）。データが失われるのは `skip_final_snapshot = true` を明示したときだけです。それでも事前に弾くのは、失敗する時点では `-var` で直せず、起動し直してからやり直すしかないためです。
 
-**削除保護は使っていません。** 以前は `deletion_protection = true` で、停止のたびに手でコードを `false` へ書き換えて apply する必要があり、その書き換え忘れで destroy が失敗していました。データは最終スナップショットで守る方針に変え、停止を 1 変数で完結させています。代償として、誤って `runtime_enabled=false` を apply したときに AWS 側の保護は働きません（スナップショットは作られるので復元は可能です）。
+**この precondition は no-op の plan でも評価されます。** つまり稼働中は、差分確認のための `terraform plan` にも毎回 `-var db_final_snapshot_identifier=...` が必要です。これは仕様として受け入れています（渡さないと通らない方が、渡し忘れたまま停止できてしまうより安全）。ただし **`$(date)` で毎回生成し直さないこと。** state に入っている値が静かに差し替わり、停止時に作られるスナップショット名が実行者の記憶と合わなくなります。サイクル中は同じ値を使い回してください。いま state に入っている値は次で確認できます。
 
-**`runtime_enabled` を `terraform.tfvars` に書かないこと。** `true` で固定すると素の `terraform apply` が課金を開始し、`false` で固定すると稼働中の本番を落とします。既定値を持たせていないのも同じ理由です。
+```bash
+terraform state show 'module.rds[0].aws_db_instance.main' | grep final_snapshot_identifier
+```
+
+**スナップショット名はサイクルごとに一意にし、復元元と別名にする。** 同名のスナップショットは 2 つ作れないため、前回と同じ名前のまま停止すると destroy が失敗します。さらに `db_snapshot_identifier`（復元元）と同じ名前を渡すと、ALB・ECS・A レコードが先に消えた後で RDS の削除だけが `DBSnapshotAlreadyExists` で失敗し、**アプリは消えたのに RDS だけ課金が続く**状態になります。2 つの `-var` は隣接行に並ぶのでコピペに注意してください。`precondition` がこの同名ケースと AWS の識別子規則違反（英字始まり / 連続ハイフン不可 / ハイフン終わり不可 / 255 字以内）は弾きますが、**過去のスナップショットとの衝突は検知できません**（AWS に問い合わせないため）。`timestamp()` で自動生成しないのは、毎回値が変わって plan に差分が出続け「変更なし」を確認できなくなるためです。
+
+**削除保護は使っていません。** 以前は `deletion_protection = true` で、停止のたびに手でコードを `false` へ書き換えて apply する必要があり、その書き換え忘れで destroy が失敗していました。データは最終スナップショットで守る方針に変え、停止を 1 変数で完結させています。
+
+代わりに、**消えて困るものを `prevent_destroy` で止めています**（Secrets Manager 7 件 + S3 バケット 2 件）。素の `terraform destroy` や `-target` はこれらに当たって失敗するので、`runtime_enabled` を経由しない破壊でも投稿画像とシークレットは残ります。RDS インスタンス自体には付けられません（`runtime_enabled = false` が destroy なので、付けると停止そのものができなくなる）。RDS は最終スナップショットで守る形です。
+
+**`runtime_enabled` は `terraform.tfvars` にも環境変数にも入れないこと。** `true` で固定すると素の `terraform apply` が課金を開始し、`false` で固定すると稼働中の本番を落とします。既定値を持たせていないのも同じ理由です。ただし既定値を置かないガードが塞ぐのは `default` と `tfvars` の 2 経路だけで、**`TF_VAR_runtime_enabled` 環境変数は素通りします**。`export TF_VAR_runtime_enabled=false` をシェルや direnv に残すと、以降の `terraform apply` が無言で本番を落とします。
+
+**`count` の導入で state 上のアドレスが変わりました。** `module.alb` / `module.ecs` / `module.rds` 配下の全リソースと `aws_route53_record.alb` / `.www` が `[0]` 付きになります。index 無しで保持している既存の state（停止前のローカル state、別マシンの state）にこのコードを apply すると、**全部が destroy + create として計画されます**。本番 state は現在空なので今は踏みませんが、該当する state を持っている場合は先にアドレスを移してください。
+
+```bash
+terraform state mv 'aws_route53_record.alb' 'aws_route53_record.alb[0]'
+terraform state mv 'aws_route53_record.www' 'aws_route53_record.www[0]'
+terraform state mv 'module.alb' 'module.alb[0]'
+terraform state mv 'module.ecs' 'module.ecs[0]'
+terraform state mv 'module.rds' 'module.rds[0]'
+```
 
 ## 既知の課題
 
 - **state が S3 に置かれていない**: `versions.tf` の S3 backend がコメントアウトされたままで、state はローカル管理です。保管先のバケットと DynamoDB ロックテーブルは `modules/s3` に定義済みですが、state を置くバケット自身を同じ設定で作る循環があるため、ブートストラップを分ける必要があります。
-- **残しているリソースが state に載っていない**: 上記の「停止中も残しているもの」は AWS 上に実在する一方、現在の state には記録されていません。このため今のまま `terraform apply` を実行すると、ECR・S3・Secrets Manager が既存と衝突します。再構築の前に `terraform import` で state に取り込む必要があります。Secrets Manager は削除待ち中のものが混ざりうるため、`import` の前に `list-secrets --include-planned-deletion` で状態を確認してください（削除待ちのものは `import` できず、`restore-secret` か待機満了が必要です）。
-- **変数の `validation` が未設定**: 94 個の変数すべてに `description` と `type` はありますが、値域の検証は入れていません。
+- **残しているリソースが state に載っていない**: AWS 上に実在する ECR・S3・Secrets Manager が、現在の state には記録されていません。このため今のまま `terraform apply` を実行すると、ECR・S3・Secrets Manager が既存と衝突します。再構築の前に `terraform import` で state に取り込む必要があります。Secrets Manager は削除待ち中のものが混ざりうるため、`import` の前に `list-secrets --include-planned-deletion` で状態を確認してください（削除待ちのものは `import` できず、`restore-secret` か待機満了が必要です）。
+- **変数の `validation` がほぼ未設定**: 99 個の変数すべてに `description` と `type` はありますが、値域の検証が入っているのは `final_snapshot_identifier`（AWS の識別子規則）の 1 個だけです。

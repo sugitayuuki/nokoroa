@@ -96,6 +96,19 @@ variable "final_snapshot_identifier" {
   description = "Name of the final snapshot taken on destroy. Must be set while the instance exists (read from state at destroy time), and must be unique per stop/start cycle"
   type        = string
   default     = null
+
+  # AWS のスナップショット識別子は「英字始まり / 英数字とハイフンのみ / 連続ハイフン不可 /
+  # ハイフン終わり不可 / 255 字以内」。違反は destroy の瞬間に InvalidParameterValue で
+  # 失敗するが、その時点では -var で直せない（上記の落とし穴）ので apply 前に弾く。
+  # coalesce で "x" に倒しているのは null（= skip_final_snapshot 側で扱う）を通すため。
+  validation {
+    condition = (
+      can(regex("^[a-zA-Z][a-zA-Z0-9-]{0,254}$", coalesce(var.final_snapshot_identifier, "x"))) &&
+      !can(regex("--", coalesce(var.final_snapshot_identifier, "x"))) &&
+      !can(regex("-$", coalesce(var.final_snapshot_identifier, "x")))
+    )
+    error_message = "final_snapshot_identifier は英字で始まり、英数字とハイフンのみ、連続ハイフンとハイフン終わりは不可、255 文字以内にしてください。"
+  }
 }
 
 # 既存スナップショットから復元する場合にその名前を渡す。null なら空の DB を新規作成。
