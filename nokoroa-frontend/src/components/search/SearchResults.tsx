@@ -107,6 +107,17 @@ export const SearchResults = ({
   }
 
   if (!hasResults) {
+    // total が未確定 = 現在の検索のレスポンスをまだ観測していない。
+    // 同じ条件を再検索して SWR がキャッシュを即返す場合、isLoading は false
+    // なのに累積は reset 済みで空なので、ここで「該当なし」と言うと
+    // 取り込み effect が走る前の 1 フレームだけ誤表示が出る。
+    if (total === undefined) {
+      return (
+        <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+          <CircularProgress />
+        </Box>
+      );
+    }
     return (
       <Box sx={{ p: 4, textAlign: 'center' }}>
         <Typography variant="h6" color="text.secondary">
