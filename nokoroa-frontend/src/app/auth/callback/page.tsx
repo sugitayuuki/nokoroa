@@ -1,49 +1,108 @@
 'use client';
 
-import { CircularProgress, Container, Typography } from '@mui/material';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { Suspense, useEffect } from 'react';
+import {
+  Alert,
+  Button,
+  CircularProgress,
+  Container,
+  Typography,
+} from '@mui/material';
+import { useSearchParams } from 'next/navigation';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 
-import { setToken } from '@/utils/auth';
+import { fetchAuthSession } from '@/lib/authSession';
+import { removeToken, setToken } from '@/utils/auth';
+
+type CallbackState =
+  | { phase: 'verifying' }
+  | { phase: 'failed'; message: string; detail?: string };
 
 function AuthCallbackContent() {
-  const router = useRouter();
   const searchParams = useSearchParams();
+  const [state, setState] = useState<CallbackState>({ phase: 'verifying' });
+  // StrictMode は effect を 2 回実行する。素通しすると成功トーストが 2 回出て、
+  // プロフィール API も二重に叩かれる。
+  const hasRunRef = useRef(false);
 
   useEffect(() => {
-    const handleCallback = async () => {
+    if (hasRunRef.current) return;
+    hasRunRef.current = true;
+
+    const completeLogin = async () => {
       const token = searchParams.get('token');
-      const userString = searchParams.get('user');
-
-      if (token && userString) {
-        try {
-          // トークンを保存(キー名は utils/auth に集約)
-          setToken(token);
-
-          // ユーザー情報をパース
-          const user = JSON.parse(decodeURIComponent(userString));
-
-          // 成功メッセージ
-          toast.success(`ようこそ、${user.name}さん！`);
-
-          // ホームページにリダイレクト
-          setTimeout(() => {
-            window.location.href = '/';
-          }, 1000);
-        } catch {
-          // ユーザーデータの解析でエラーが発生した場合の処理
-          toast.error('認証エラーが発生しました');
-          router.push('/');
-        }
-      } else {
-        toast.error('認証に失敗しました');
-        router.push('/');
+      if (!token) {
+        setState({
+          phase: 'failed',
+          message: 'ログインに失敗しました',
+          detail: '認証情報が受け取れませんでした。もう一度お試しください。',
+        });
+        return;
       }
+
+      setToken(token);
+
+      // トークンを保存しただけでは「ログインできた」とは言えない。
+      // 実際にセッションが使えることを確かめてから成功を名乗る。
+      // ここを省くと、サーバ側が落ちていても成功トーストが出たうえで
+      // 直後に AuthProvider がログアウト扱いにする、という嘘の成功になる。
+      const session = await fetchAuthSession();
+
+      if (session.status === 'ok') {
+        toast.success(
+          session.user
+            ? `ようこそ、${session.user.name}さん！`
+            : 'ログインしました',
+        );
+        // 保存したトークンを URL に残したまま履歴へ積まないよう置換で遷移する
+        window.location.replace('/');
+        return;
+      }
+
+      // 失敗したらトークンは残さない。残すと他の画面で中途半端に
+      // 「ログイン済みのように見えて全部 401」という状態になる。
+      removeToken();
+
+      if (session.status === 'unauthenticated') {
+        setState({
+          phase: 'failed',
+          message: 'ログインに失敗しました',
+          detail:
+            '認証情報が受け付けられませんでした。お手数ですがもう一度ログインしてください。',
+        });
+        return;
+      }
+
+      setState({
+        phase: 'failed',
+        message: 'ログインを完了できませんでした',
+        detail:
+          'サーバーに接続できませんでした。時間をおいてもう一度お試しください。',
+      });
     };
 
-    handleCallback();
-  }, [searchParams, router]);
+    void completeLogin();
+  }, [searchParams]);
+
+  if (state.phase === 'failed') {
+    return (
+      <Container maxWidth="sm" sx={{ py: 8 }}>
+        <Alert severity="error" sx={{ mb: 3 }}>
+          <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+            {state.message}
+          </Typography>
+          {state.detail && (
+            <Typography variant="body2" sx={{ mt: 0.5 }}>
+              {state.detail}
+            </Typography>
+          )}
+        </Alert>
+        <Button variant="contained" href="/login">
+          ログイン画面へ
+        </Button>
+      </Container>
+    );
+  }
 
   return (
     <Container

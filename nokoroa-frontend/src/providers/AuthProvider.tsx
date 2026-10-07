@@ -14,20 +14,8 @@ import { mutate } from 'swr';
 
 import { useSmoothNavigation } from '@/hooks/useSmoothNavigation';
 import { API_CONFIG, createApiRequest } from '@/lib/apiConfig';
+import { AuthUser, fetchAuthSession, toAuthUser } from '@/lib/authSession';
 import { getToken, removeToken, setToken } from '@/utils/auth';
-
-/**
- * 認証セッションの本人情報。
- * ヘッダー等の「ログイン中は誰か」の表示に使う最小限の項目のみを持つ。
- * bio や投稿数まで含むプロフィール全体が必要な画面は useUser() を使うこと
- * (プロフィール情報の正は API = useUser 側であり、ここはその部分集合)。
- */
-type AuthUser = {
-  id: number;
-  name: string;
-  email: string;
-  avatar?: string;
-};
 
 type AuthContextType = {
   isAuthenticated: boolean;
@@ -41,50 +29,6 @@ type AuthContextType = {
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
-/**
- * API レスポンスから認証ユーザーを組み立てる。
- * 必須項目が欠けている場合は undefined を返し、偽のユーザーを作らない。
- */
-const toAuthUser = (raw: unknown): AuthUser | undefined => {
-  if (!raw || typeof raw !== 'object') {
-    return undefined;
-  }
-  const { id, name, email, avatar } = raw as Record<string, unknown>;
-  if (typeof id !== 'number' || typeof name !== 'string' || !name) {
-    return undefined;
-  }
-  if (typeof email !== 'string' || !email) {
-    return undefined;
-  }
-  return {
-    id,
-    name,
-    email,
-    avatar: typeof avatar === 'string' ? avatar : undefined,
-  };
-};
-
-type FetchAuthUserResult =
-  | { status: 'ok'; user: AuthUser | undefined }
-  | { status: 'invalid' };
-
-/**
- * プロフィール API からユーザー情報を取得する。
- * 「認証が無効(非 2xx / 通信失敗)」と「200 だが形が想定外」を区別して返す。
- * 後者でトークンを消すと、API 側の一時的な応答形不良だけで強制ログアウトになるため。
- */
-const fetchAuthUser = async (): Promise<FetchAuthUserResult> => {
-  try {
-    const response = await createApiRequest(API_CONFIG.endpoints.userProfile);
-    if (!response.ok) {
-      return { status: 'invalid' };
-    }
-    return { status: 'ok', user: toAuthUser(await response.json()) };
-  } catch {
-    return { status: 'invalid' };
-  }
-};
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -113,15 +57,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       // トークンの有効性を確認するため、プロフィールAPIを呼び出し
-      const result = await fetchAuthUser();
+      const result = await fetchAuthSession();
 
       if (result.status === 'ok') {
         // 200 なら認証は有効。形が想定外で user が取れなくても認証状態は維持する
         setIsAuthenticated(true);
         setUser(result.user);
-      } else {
-        // トークンが無効な場合は削除
+      } else if (result.status === 'unauthenticated') {
+        // 401 / 403 = トークンが無効。保持しても無意味なので消す
         removeToken();
+        setIsAuthenticated(false);
+        setUser(undefined);
+      } else {
+        // 5xx / 通信失敗。トークンはまだ有効かもしれないので消さない
+        // (消すとサーバの一時障害だけで強制ログアウトになり、しかも
+        //  ユーザーには理由が分からない)。アクセス制御は fail-closed のまま。
         setIsAuthenticated(false);
         setUser(undefined);
       }
@@ -164,7 +114,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // ログイン後、プロフィールAPIを呼び出してユーザー情報を取得。
         // 取得できなければログインレスポンスの user を使い、それも無ければ undefined のままにする。
         // (取得失敗時に偽のユーザーを置くと、他人の名前でログインしたように見えてしまう)
-        const fetched = await fetchAuthUser();
+        const fetched = await fetchAuthSession();
         setUser(
           (fetched.status === 'ok' ? fetched.user : undefined) ??
             toAuthUser(result.user),
