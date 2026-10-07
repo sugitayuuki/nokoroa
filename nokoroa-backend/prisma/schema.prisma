@@ -56,6 +56,10 @@ model Post {
   // プロフィールとマイ投稿は author 単位 + createdAt 降順 (users.service.ts)。
   // PostgreSQL は外部キーに自動でインデックスを張らないため明示する。
   @@index([authorId, createdAt])
+  // locationId も外部キーかつ絞り込み・集計キー。これが無いと
+  // getLocations() の _count.posts と search({ location }) が post の
+  // Seq Scan になり、location 削除時の ON DELETE SET NULL も全件走査になる。
+  @@index([locationId])
   @@map("post")
 }
 
@@ -71,6 +75,15 @@ model Post {
 /// そのため `prisma migrate dev` / `migrate diff` は必ずこの索引の DROP INDEX を
 /// 生成する。生成されたマイグレーションからその行を削除すること。
 /// 消すとベクトル類似検索が全件走査になり、無言で劣化する。
+///
+/// 同じ理由で保護が必要な索引がもう 4 つある。20261007000000 で追加した
+/// pg_trgm の GIN 索引 (post_title_trgm_idx / post_content_trgm_idx /
+/// user_name_trgm_idx / location_name_trgm_idx) は、キーワード検索の
+/// ILIKE '%q%' を索引で賄うためのもの。Prisma の @@index は gin_trgm_ops を
+/// 既定で表現できないため同じ drift になる。これらの DROP INDEX も
+/// 生成されたマイグレーションから削除すること。
+/// 消すと検索が post の全表走査に戻る (chat のフォールバックは 1 リクエストで
+/// 最大 12 回走査するため、劣化が一気に効く)。
 model PostEmbedding {
   id          Int                        @id @default(autoincrement())
   postId      Int                        @unique
