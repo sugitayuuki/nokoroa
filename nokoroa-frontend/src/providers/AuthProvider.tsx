@@ -31,6 +31,11 @@ type AuthContextType = {
   login: (email: string, password: string) => Promise<boolean>;
   logout: () => void;
   register: (name: string, email: string, password: string) => Promise<boolean>;
+  /**
+   * 認証状態を未ログインに戻す。logout と違い遷移も通知も行わない。
+   * 検証前にトークンを差し替える画面が、失敗時に state を揃えるために使う
+   */
+  clearSession: () => void;
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -106,8 +111,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .finally(() => setIsLoading(false));
   }, []);
 
+  const clearSession = useCallback(() => {
+    setIsAuthenticated(false);
+    setUser(undefined);
+  }, []);
+
   const login = useCallback(
-    async (email: string, password: string): Promise<boolean> => {
+    async (
+      email: string,
+      password: string,
+      // register から呼ぶときは、登録が済んでいる事実を含めて
+      // 呼び出し側が通知するため、ここでは出さない
+      { notifyFailure = true }: { notifyFailure?: boolean } = {},
+    ): Promise<boolean> => {
+      const notify = (message: string) => {
+        if (notifyFailure) toast.error(message);
+      };
+
       try {
         const response = await createApiRequest(API_CONFIG.endpoints.login, {
           method: 'POST',
@@ -115,7 +135,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         });
 
         if (!response.ok) {
-          toast.error(
+          notify(
             'ログインに失敗しました。メールアドレスとパスワードを確認してください。',
           );
           return false;
@@ -126,7 +146,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // access_token または token のいずれかを使用
         const token = result.access_token || result.token;
         if (!token) {
-          toast.error('認証トークンが取得できませんでした。');
+          notify('認証トークンが取得できませんでした。');
           return false;
         }
 
@@ -149,7 +169,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           // 表示のまま別のトークンで API を叩く」状態が残る
           setIsAuthenticated(false);
           setUser(undefined);
-          toast.error(
+          notify(
             decision.action === 'discard'
               ? 'ログインできませんでした。お手数ですがもう一度お試しください。'
               : 'サーバーの状態を確認できないため、ログインを完了できませんでした。時間をおいてお試しください。',
@@ -167,9 +187,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return true;
       } catch {
         // ログインでエラーが発生した場合の処理
-        toast.error(
-          'ログインに失敗しました。ネットワーク接続を確認してください。',
-        );
+        notify('ログインに失敗しました。ネットワーク接続を確認してください。');
         return false;
       }
     },
@@ -213,18 +231,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         if (!response.ok) {
           toast.error(
-            'アカウント作成に失敗しました。入力内容を確認してください。',
+            // 重複を「入力内容の誤り」と案内すると、別アドレスでの
+            // 二重登録に誘導してしまう
+            response.status === 409
+              ? 'このメールアドレスは既に登録されています。ログイン画面からお試しください。'
+              : 'アカウント作成に失敗しました。入力内容を確認してください。',
           );
           return false;
         }
 
-        // 新規登録成功後、自動的にログイン
-        const loginSuccess = await login(email, password);
+        // 登録成功後に自動ログイン。失敗通知は出させず、登録が済んでいる
+        // 事実と併せてここで伝える
+        const loginSuccess = await login(email, password, {
+          notifyFailure: false,
+        });
         if (loginSuccess) {
           toast.success('アカウントを作成しました！');
           return true;
         }
-        return false;
+
+        // アカウントは作成済み。ここで失敗を返すと登録失敗と受け取られ、
+        // 再登録でメール重複になって「既に登録されています」に行き着く。
+        // 登録は成功しているので true を返してダイアログを閉じる
+        toast.info(
+          'アカウントを作成しました。自動ログインだけ完了できなかったため、ログイン画面からお試しください。',
+        );
+        return true;
       } catch {
         toast.error(
           'アカウント作成に失敗しました。ネットワーク接続を確認してください。',
@@ -247,8 +279,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       login,
       logout,
       register,
+      clearSession,
     }),
-    [isAuthenticated, isLoading, isLoggingOut, user, login, logout, register],
+    [
+      isAuthenticated,
+      isLoading,
+      isLoggingOut,
+      user,
+      login,
+      logout,
+      register,
+      clearSession,
+    ],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -14,6 +14,7 @@ import { toast } from 'react-toastify';
 
 import { fetchAuthSession } from '@/lib/authSession';
 import { CallbackOutcome, decideCallbackOutcome } from '@/lib/callbackOutcome';
+import { useAuth } from '@/providers/AuthProvider';
 import { getToken, removeToken, setToken } from '@/utils/auth';
 
 /** 成功トーストを読める時間だけ見せてから遷移する */
@@ -36,11 +37,21 @@ function AuthCallbackContent() {
   // 入口は常にフルページ遷移なので、再実行が必要になることはない
   const hasRunRef = useRef(false);
   const redirectTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const leftRef = useRef(false);
+  const { clearSession } = useAuth();
 
   // 待機中のリダイレクトはアンマウント時だけ取り消す。検証 effect の cleanup に
   // 置くと、下で呼ぶ replaceState が searchParams を差し替えて cleanup を走らせ、
   // 成功後の遷移そのものを消してしまう
-  useEffect(() => () => clearTimeout(redirectTimerRef.current), []);
+  useEffect(
+    () => () => {
+      // 検証は最大 10 秒かかる。その間にユーザーがヘッダー等から離脱したら、
+      // 後から解決した検証結果で勝手にトップへ引き戻さない
+      leftRef.current = true;
+      clearTimeout(redirectTimerRef.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     const completeLogin = async () => {
@@ -71,8 +82,8 @@ function AuthCallbackContent() {
     };
 
     const apply = (next: CallbackOutcome | undefined) => {
-      // undefined は遷移中。この画面では何もしない
-      if (!next) return;
+      // undefined は遷移中。離脱後も同様に、この画面では何もしない
+      if (!next || leftRef.current) return;
 
       if (next.kind === 'success') {
         toast.success(next.toast);
@@ -87,6 +98,9 @@ function AuthCallbackContent() {
       if (next.discardToken) {
         removeToken();
       }
+      // 検証前にトークンを差し替えているため、認証状態も揃えないと
+      // 「前のユーザーの表示のまま別のトークンで API を叩く」状態が残る
+      clearSession();
       setOutcome(next);
     };
 
@@ -99,7 +113,7 @@ function AuthCallbackContent() {
     completeLogin()
       .then(apply)
       .catch(() => apply(FAILED_UNEXPECTEDLY));
-  }, [searchParams]);
+  }, [searchParams, clearSession]);
 
   if (outcome?.kind === 'failure') {
     return (
