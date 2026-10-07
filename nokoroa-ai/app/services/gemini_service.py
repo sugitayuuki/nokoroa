@@ -76,25 +76,16 @@ CONTEXT_CONTENT_PREVIEW = 600
 EMBEDDING_MODEL = settings.embedding_model
 EMBEDDING_DIM = settings.embedding_dim
 
-# Gemini への HTTP タイムアウト(ミリ秒)。google-genai の HttpOptions.timeout は
-# ミリ秒指定で、未指定だと無限待ちになる(SDK の _api_client が
-# timeout が falsy なら None を HTTP 層へ渡す)。
-#
-# backend 側の自衛と経路ごとに対応させる。ここを一律で長く取ると
-# 「backend は 10 秒で諦めたのに Python のスレッドは 60 秒占有され続ける」
-# 状態になり、ブロック中のスレッドはクライアント切断でもキャンセルできないため
-# スレッド枯渇を防ぐ効果が薄れる。
-#
-#   非ストリーム (chat / suggestions / related-keywords):
-#     backend は AI_REQUEST_TIMEOUT_MS = 10s で abort
-#   埋め込み:
-#     backend は EMBED_TIMEOUT_MS = 10s で abort
-#   → どちらも backend が諦めた直後にスレッドを返せるよう少しだけ上に置く
+# Gemini への HTTP タイムアウト(ミリ秒)。未指定だと SDK は無限待ちになり、
+# ブロック中のスレッドは切断でもキャンセルできないため枯渇する。
+# backend 側の上限に合わせて経路ごとに分ける(一律で長いと、backend が
+# 諦めた後もスレッドだけが占有され続ける)。
+
+# backend の AI_REQUEST_TIMEOUT_MS / EMBED_TIMEOUT_MS = 10s に対応
 GEMINI_REQUEST_TIMEOUT_MS = 15_000
-#   ストリーム: backend は AI_STREAM_TIMEOUT_MS = 60s。ここも同じ 60s を上限にする。
-#   注意: requests の timeout はストリームでは「1 read あたり」なので、
-#   チャンクが細く流れ続ける限りこの値では打ち切られない。全体の打ち切りは
-#   backend 側の AbortSignal が担う。
+# backend の AI_STREAM_TIMEOUT_MS = 60s に対応。
+# なお requests の timeout はストリームでは 1 read あたりなので、チャンクが
+# 流れ続ける限りここでは打ち切られない(全体の打ち切りは backend 側が担う)。
 GEMINI_STREAM_TIMEOUT_MS = 60_000
 
 
@@ -120,13 +111,8 @@ def _sanitize_context(text: str) -> str:
 
 class GeminiService:
     def __init__(self, api_key: str) -> None:
-        # クライアント既定も必ず埋める。新しい呼び出し箇所が
-        # リクエスト単位の指定を忘れても無限待ちにならないようにするため。
-        # 無限待ちだと Gemini がハングした際に、/stream は anyio の
-        # スレッドリミッタ(既定 40)を、他の経路は asyncio.to_thread の
-        # 既定 executor を解放できず、枯渇した時点で /health も含めて
-        # 応答不能になる(ECS がタスクを落とす)。クライアント切断でも
-        # ブロック中のスレッドはキャンセルできないため、上限は必須。
+        # クライアント既定も埋めておく。新しい呼び出し箇所がリクエスト単位の
+        # 指定を忘れても無限待ちにならないようにするため。
         self.client = genai.Client(
             api_key=api_key,
             http_options=types.HttpOptions(timeout=GEMINI_STREAM_TIMEOUT_MS),

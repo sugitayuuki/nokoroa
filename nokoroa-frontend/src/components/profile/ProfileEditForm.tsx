@@ -53,14 +53,10 @@ export default function ProfileEditForm() {
     resolver: zodResolver(schema),
   });
 
-  // 名前と自己紹介をサーバ値で埋めるのは「最初に user が届いたとき」だけ。
-  //
-  // user を依存にして毎回 setValue すると、未保存の入力がサーバ値で上書きされる。
-  // 通常は SWR の既定 compare (深い等価) で参照が変わらないため発火しないが、
-  // アバター URL は保存するたびに必ず変わる (s3.service が
-  // `${Date.now()}-${randomBytes(8)}` でファイル名を作る) ので、
-  // 名前を書きかけてアバターを変えると refetch 後に確実に巻き戻っていた。
-  // アバターのプレビューはサーバ値に追従させたいので、こちらは別 effect にする。
+  // 名前と自己紹介を埋めるのは最初に user が届いたときだけ。毎回 setValue すると、
+  // アバター保存のたびに変わる avatar URL が user の参照を更新し、
+  // 未保存の入力をサーバ値で巻き戻してしまう。
+  // プレビューはサーバ値に追従させたいので別 effect にする。
   const hasInitializedFields = useRef(false);
   useEffect(() => {
     if (user && !hasInitializedFields.current) {

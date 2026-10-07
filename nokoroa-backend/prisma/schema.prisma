@@ -76,25 +76,14 @@ model Post {
 /// 生成する。生成されたマイグレーションからその行を削除すること。
 /// 消すとベクトル類似検索が全件走査になり、無言で劣化する。
 ///
-/// 同じ理由で保護が必要な索引がもう 4 つある。20261007000000 で追加した
-/// pg_trgm の GIN 索引 (post_title_trgm_idx / post_content_trgm_idx /
-/// user_name_trgm_idx / location_name_trgm_idx) は、キーワード検索の
-/// ILIKE '%q%' を索引で賄うためのもの。Prisma の @@index は gin_trgm_ops を
-/// 既定で表現できないため同じ drift になる。これらの DROP INDEX も
-/// 生成されたマイグレーションから削除すること。
-/// 消すと検索が post の全表走査に戻る (chat のフォールバックは 1 リクエストで
-/// 最大 12 回走査するため、劣化が一気に効く)。
+/// pg_trgm の GIN 索引 4 本 (post_title_trgm_idx / post_content_trgm_idx /
+/// user_name_trgm_idx / location_name_trgm_idx) も gin_trgm_ops を @@index で
+/// 表現できないため同じ drift になる。消すとキーワード検索が全表走査に戻る。
+/// 効くのは posts.service.search() と chat のフォールバックのみで、
+/// /map の searchByLocation は条件が `$n IS NULL OR ...` の形のため効かない。
 ///
-/// trgm 索引が効くのは posts.service.search() と chat のフォールバック経路。
-/// /map の searchByLocation (生 SQL) には効かない: 検索条件が
-///   AND ($n::text IS NULL OR (p.title ILIKE $n OR ...))
-/// という形で、トップレベルの `$n IS NULL OR ...` が索引非対応のため
-/// Postgres は post を Seq Scan する。あちらを索引で引かせるには条件の
-/// 組み立て自体を変える必要がある (未対応)。
-///
-/// 注意: 適用済みマイグレーションの SQL は _prisma_migrations の
-/// チェックサム検証対象なので、コメントだけでも編集してはいけない
-/// (適用済み環境の migrate deploy が失敗する)。補足はこちらへ書く。
+/// 適用済みマイグレーションの SQL は _prisma_migrations のチェックサム検証対象。
+/// コメントだけでも編集すると migrate deploy が失敗するので、補足はこちらへ書く。
 model PostEmbedding {
   id          Int                        @id @default(autoincrement())
   postId      Int                        @unique

@@ -54,11 +54,9 @@ export const SearchResults = ({
     isLoading: isLoadingMore,
     onLoadMore,
   });
-  // 全面スピナー / エラー / 空表示は「まだ 1 件も表示できていない」ときだけ。
-  // isLoading と error は SWR のキー単位なので、2 ページ目の取得中や失敗で
-  // これらを出すと累積済みの結果まで画面から消え、ページ送りごとに
-  // 一覧が点滅してスクロール位置が飛ぶ。
-  // 2 ページ目以降の進捗と失敗は末尾の isLoadingMore / error が担当する。
+  // isLoading / error は SWR のキー単位なので、全面表示に使うのは
+  // 「まだ 1 件も無い」ときだけ。2 ページ目以降の進捗と失敗は
+  // 末尾の isLoadingMore / error が担当する。
   const hasResults = posts.length > 0;
 
   if (isLoading && !hasResults) {
@@ -107,16 +105,10 @@ export const SearchResults = ({
   }
 
   if (!hasResults) {
-    // `total === undefined` でスピナーに逃がしてはいけない。
-    // useSearchPosts は「semantic モードかつクエリ空」のとき url を null にして
-    // 一切フェッチしない (useSearchPosts.ts:61-64)。SearchForm はその状態でも
-    // 送信できる (handleSubmit に空クエリのガードが無い) ため、
-    // hasSearched = true / data = undefined / isLoading = false が永続しうる。
-    // ここで total 未確定をスピナー扱いにすると永久に回り続ける。
-    //
-    // キャッシュヒットした同条件の再検索では取り込み effect がペイント後に
-    // 走るため「該当なし」が 1 フレームだけ見えるが、これは旧実装と同じで
-    // 見た目だけの問題。永久固着よりはこちらを選ぶ。
+    // `total === undefined` をスピナー扱いにしてはいけない。
+    // useSearchPosts は semantic でクエリが空のとき url を null にしてフェッチせず、
+    // SearchForm はその状態でも送信できるため、未確定が永続してスピナーが
+    // 止まらなくなる。
     return (
       <Box sx={{ p: 4, textAlign: 'center' }}>
         <Typography variant="h6" color="text.secondary">

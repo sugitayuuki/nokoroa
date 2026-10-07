@@ -43,6 +43,15 @@ interface SearchFormProps {
   initialFilters?: SearchFilters;
 }
 
+/**
+ * 詳細検索条件(タグ・場所)を比較用の文字列にする。
+ * tags は配列なので参照比較では「中身は同じだが別インスタンス」を区別できない。
+ */
+const advancedFilterKey = (
+  tags: string[] | undefined,
+  location: string | undefined,
+): string => JSON.stringify({ tags: tags ?? [], location: location ?? '' });
+
 export const SearchForm = ({ onSearch, initialFilters }: SearchFormProps) => {
   const [query, setQuery] = useState(initialFilters?.q || '');
   const [tags, setTags] = useState<string[]>(initialFilters?.tags || []);
@@ -59,30 +68,26 @@ export const SearchForm = ({ onSearch, initialFilters }: SearchFormProps) => {
   // initialFilters は useState の初期値にしかならないので、マウント後に
   // 外から条件が差し替わっても(?tags= の変更など)フォームが追従しない。
   // 入力中の値を踏まないよう「タグ・場所が実際に変わったとき」だけ同期する。
-  const appliedInitialRef = useRef(
-    JSON.stringify({
-      tags: initialFilters?.tags ?? [],
-      location: initialFilters?.location ?? '',
-    }),
+  const appliedFilterKey = useRef(
+    advancedFilterKey(initialFilters?.tags, initialFilters?.location),
   );
   useEffect(() => {
-    const incoming = {
-      tags: initialFilters?.tags ?? [],
-      location: initialFilters?.location ?? '',
-    };
-    const next = JSON.stringify(incoming);
-    // 入力中の値は踏まない。initialFilters が変わっていなければ何もしない
-    // (tags / location を依存に入れているので打鍵ごとにここへ来る)。
-    if (next === appliedInitialRef.current) return;
-    appliedInitialRef.current = next;
+    const incomingKey = advancedFilterKey(
+      initialFilters?.tags,
+      initialFilters?.location,
+    );
+    // tags / location を依存に入れているので打鍵ごとにここへ来る。
+    // 外から渡る条件が変わっていなければ入力中の値に触らない。
+    if (incomingKey === appliedFilterKey.current) return;
+    appliedFilterKey.current = incomingKey;
 
-    // 自分が送信した値がそのまま親から返ってきただけなら触らない。
+    // 自分が送信した値が親から返ってきただけなら触らない。
     // 触ると、手で閉じた詳細パネルをタグ付き検索のたびに開き直してしまう。
-    if (next === JSON.stringify({ tags, location })) return;
+    if (incomingKey === advancedFilterKey(tags, location)) return;
 
-    setTags(incoming.tags);
-    setLocation(incoming.location);
-    if (incoming.tags.length || incoming.location) {
+    setTags(initialFilters?.tags ?? []);
+    setLocation(initialFilters?.location ?? '');
+    if (initialFilters?.tags?.length || initialFilters?.location) {
       setIsAdvancedOpen(true);
     }
   }, [initialFilters?.tags, initialFilters?.location, tags, location]);

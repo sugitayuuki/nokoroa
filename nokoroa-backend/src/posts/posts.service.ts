@@ -126,16 +126,11 @@ export class PostsService {
   private async getOrCreateTags(tagNames: string[]) {
     const tags = await Promise.all(
       tagNames.map(async (name) => {
-        // slugify は記号を落とし区切りを正規化するため、異なる name が
-        // 同じ slug に落ちる（"Kyoto" と "# Kyoto" はどちらも "kyoto"、
-        // "Kyoto Trip" / "Kyoto-Trip" / "kyoto_trip" はどちらも "kyoto-trip"）。
-        // name だけで引くと slug 衝突を検出できず tag_slug_key の P2002 が
-        // そのまま上がり、PrismaExceptionFilter が 409 に写像して
-        // 「投稿の作成自体が失敗する」。slug は正規化後の同一性なので、
-        // name か slug のどちらかが一致する既存タグを再利用する。
+        // slugify は記号と区切りを正規化するため異なる name が同じ slug に落ちる
+        // ("Kyoto" と "# Kyoto" はどちらも "kyoto")。name だけで引くと衝突を
+        // 検出できず tag_slug_key の P2002 で投稿作成ごと 409 になるので、
+        // slug 一致でも既存タグを再利用する。orderBy は結果を決定的にするため。
         const slug = slugify(name) || name.toLowerCase();
-        // name 一致行と slug 一致行が別行になり得る(slugify の仕様を変える前の
-        // 旧データ等)ため、どちらが返るかを id 昇順で決定的にする。
         const findExisting = () =>
           this.prisma.tag.findFirst({
             where: { OR: [{ name }, { slug }] },
@@ -163,12 +158,9 @@ export class PostsService {
         }
       }),
     );
-    // slug 一致で既存タグを再利用する結果、1 リクエスト内の複数の name が
-    // 同一 Tag 行に解決されうる (例: tags: ['Kyoto', '# Kyoto'] はどちらも
-    // slug 'kyoto')。重複を残すと postTag.createMany の data に
-    // 同じ (postId, tagId) が 2 件入り、@@unique([postId, tagId]) の P2002 で
-    // 409 になる (= slug 衝突の 409 が tag から post_tag へ移るだけ)。
-    // id で一意化してから返す。
+    // slug 一致で再利用する結果、1 リクエスト内の複数の name が同一 Tag 行に
+    // 解決されうる。重複を残すと postTag.createMany が同じ (postId, tagId) を
+    // 2 件作って @@unique の P2002 で 409 になる。
     const uniqueById = new Map(tags.map((tag) => [tag.id, tag]));
     return [...uniqueById.values()];
   }

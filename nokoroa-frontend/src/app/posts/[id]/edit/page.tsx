@@ -234,18 +234,11 @@ export default function EditPostPage() {
     );
   }
 
-  // 所有者チェック。PostDetail (isOwner で編集メニューを出し分け) と
-  // MyPostCard (isOwner で actions を出し分け) は持っているのに、
-  // 直接 URL で開けるこのページだけ判定が無く、他人の公開投稿が
-  // 編集可能な状態で開けていた。送信して初めて backend が 403 を返すため、
-  // 入力内容が丸ごと捨てられる。描画前に弾く。
-  // 認可の正はあくまで backend 側 (posts.service の ForbiddenException)。
+  // 所有者以外にフォームを見せない。認可の正は backend 側
+  // (posts.service の ForbiddenException) で、これは入力が無駄になるのを防ぐ UI ガード。
   //
-  // `user` が無いときも弾く(fail-closed)。AuthProvider は
-  // 「200 なら認証は有効。形が想定外で user が取れなくても認証状態は維持する」
-  // 方針なので isAuthenticated === true かつ user === undefined が起こりうる。
-  // `user &&` で条件を組むとその場合にガードを素通りし、直そうとした
-  // 「他人の投稿のフォームが開けて送信時に 403」がそのまま再現する。
+  // `user` が無い場合も弾く(fail-closed)。AuthProvider は user が取れなくても
+  // 認証状態を維持するため、isAuthenticated かつ user === undefined が起こりうる。
   if (!user || user.id !== post.author.id) {
     return (
       <Container maxWidth="md" sx={{ py: 4 }}>

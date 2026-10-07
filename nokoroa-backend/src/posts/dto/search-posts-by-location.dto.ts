@@ -16,13 +16,9 @@ import {
 import { MAX_PAGE_OFFSET } from '../../common/pagination.dto';
 
 /**
- * 「未指定」と「指定されたが数値として不正」を区別する。
- *
- * 不正値も undefined に潰すと、?centerLat=abc&centerLng=def が
- * 「座標の指定なし」と解釈されて距離条件なしで 200 が返り、
- * 呼び出し側が誤りに気付けない。NaN を返せば @IsNumber が弾いて 400 になる
- * (class-validator の isNumber は既定で NaN を許可しない)。
- * 欠落・空文字だけを undefined にする。
+ * 「未指定」(undefined) と「指定されたが不正」(NaN) を区別する。
+ * 不正値も undefined に潰すと「座標の指定なし」と解釈されて 200 が返り、
+ * 呼び出し側が誤りに気付けない。NaN なら @IsNumber が 400 にする。
  */
 const toFiniteNumber = (value: unknown): number | undefined => {
   if (value === undefined || value === null || value === '') return undefined;
@@ -41,13 +37,8 @@ const toFiniteInt = (value: unknown): number | undefined => {
 
 /**
  * 緯度・経度は「両方指定」か「両方省略」のみ許す。
- *
- * posts.service.ts の searchByLocation は
- * `centerLat !== undefined && centerLng !== undefined` のときだけ距離式を組む。
- * 片方だけ渡すと距離計算・radius での絞り込み・距離順ソートがすべて落ち、
- * 「半径 1km」の意図に対して座標を持つ全公開投稿が新着順で 200 で返る
- * (400 でも空結果でもないので呼び出し側が誤りに気付けない)。
- * 片方だけ来た場合に欠けている側を検証対象に含めて 400 にする。
+ * searchByLocation は両方揃ったときだけ距離式を組むため、片方だけだと
+ * radius も距離順ソートも黙って無効化され、全公開投稿が 200 で返ってしまう。
  */
 const geoPairGiven = (o: SearchPostsByLocationDto): boolean =>
   o.centerLat !== undefined || o.centerLng !== undefined;

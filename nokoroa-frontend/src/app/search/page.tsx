@@ -18,11 +18,9 @@ const PAGE_SIZE = 10;
 
 /**
  * URL のクエリから初期検索条件を組む。
- *
- * マウント後の useEffect で入れると、SearchForm が初回 render の空 filters を
- * useState の初期値として確定させてしまい、フォームにタグが表示されない
- * (結果一覧だけ絞られる)。そのままキーワードを足して再検索すると
- * tags が送られず URL のタグ条件が黙って消えるため、初期化時点で決める。
+ * マウント後の useEffect で入れると SearchForm が空 filters を初期値として
+ * 確定させてしまい、結果だけ絞られてフォームにタグが出ない状態になるため、
+ * 初期化時点で決める。
  */
 function initialFiltersFromParams(
   params: URLSearchParams | ReadonlyURLSearchParams,
@@ -70,12 +68,9 @@ function SearchPageContent() {
     total: number;
     aiAvailable?: boolean;
   }>();
-  // 新しい検索を始めるたびに増やす。これを依存に含めないと、同じ条件で
-  // 再検索したとき URL(= SWR キー)が変わらず data の参照も変わらないため、
-  // 直前の setResultMeta(undefined) を取り消せない。結果:
-  //   - 件数が total ?? posts.length に落ちて「10件」などと誤表示
-  //   - 意味検索の aiAvailable=false が失われ、AI 障害が「該当なし」に化ける
-  // usePaginatedPosts が同じ罠を generation カウンタで潰しているのと同じ対策。
+  // 同条件の再検索では SWR キーが変わらず data の参照も変わらないため、
+  // [data] だけを依存にすると setResultMeta(undefined) を取り消せない。
+  // usePaginatedPosts の generation と同じ役割。
   const [metaGeneration, setMetaGeneration] = useState(0);
 
   useEffect(() => {
@@ -97,12 +92,9 @@ function SearchPageContent() {
   );
 
   // 同じページに留まったまま ?tags= が変わる経路(タグチップの連続クリック等)に追従する。
-  // 初期値は useState 側で入れているので、ここは「変化したとき」だけを担う。
-  //
-  // ref に「適用済みのタグ」を永久保持してはいけない。?tags=A → フォームから
-  // キーワード検索 → 再び ?tags=A と戻ったときに tagParam === ref で何もせず、
-  // URL は tags=A なのに結果はキーワード検索のまま残る。
-  // フォーム検索を挟んだ時点で null に戻し、次に同じ URL へ来たら再適用する。
+  // 初期値は useState 側で入れているので、ここは変化したときだけを担う。
+  // 適用済みタグを永久保持すると「?tags=A → フォーム検索 → 再び ?tags=A」で
+  // 再適用されなくなるため、handleSearch 側で null に戻している。
   const appliedTagParamRef = useRef(searchParams.get('tags'));
   useEffect(() => {
     const tagParam = searchParams.get('tags');
