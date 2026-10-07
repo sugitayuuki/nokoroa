@@ -16,7 +16,7 @@ $ terraform plan -var runtime_enabled=true -var db_start_from_empty=true \
 Plan: 79 to add, 0 to change, 0 to destroy.
 ```
 
-`-var` が 3 つ必要なのは、`modules/rds` の `precondition` 2 本が「最終スナップショット名」と「復元元の指定 または 空から始める明示」を要求するためです。素の `-var runtime_enabled=true` だけでは plan がエラーで止まります。あわせて `terraform.tfvars` に 3 つのイメージ URL が入っている必要があります（`modules/ecs` の `precondition` が空を弾くため）。
+`-var` が 3 つ必要なのは、`modules/rds` の `precondition` 2 本が「最終スナップショット名」と「復元元の指定 または 空から始める明示」を要求するためです。素の `-var runtime_enabled=true` だけでは plan がエラーで止まります。あわせて `terraform.tfvars` が必要です。イメージ URL 3 つ（`modules/ecs` の `precondition` が空を弾く）と、既定値を持たない `google_client_id` / `google_client_secret` / `gemini_api_key` が無いと対話入力を求められます。
 
 この 79 件は「停止によって削除された分」ではなく「`runtime_enabled = true` で定義されている全量」です。AWS 上に実在するのに state に載っていないリソース（下記）があるため、現状の `plan` はそれらも新規作成として数えます。実際に再構築で作られるのは、それらを `import` で取り込んだあとの差分になります。
 
@@ -168,7 +168,7 @@ DB パスワード・JWT シークレット・OAuth クライアントシーク�
 | `module.s3.aws_s3_bucket.uploads` | `nokoroa-prod-uploads` |
 | `module.s3.aws_s3_bucket.terraform_state[0]` | `nokoroa-terraform-state` |
 | `module.s3.aws_dynamodb_table.terraform_state_lock[0]` | `terraform-state-lock` |
-| `module.secrets.aws_secretsmanager_secret.<7 件>` | **シークレット ARN**（末尾 6 文字のランダムサフィックス込み） |
+| `module.secrets.aws_secretsmanager_secret.{db_password,jwt_secret,database_url,google_client_id,google_client_secret,gemini_api_key,internal_api_key}` | **シークレット ARN**（末尾 6 文字のランダムサフィックス込み）。アドレスのリソース名は**アンダースコア**で、AWS 側の名前（`nokoroa-prod-db-password` 等）とは区切り文字が違う |
 | `module.secrets.aws_iam_policy.secrets_read` | `arn:aws:iam::<acct>:policy/nokoroa-prod-secrets-read` |
 
 シークレットの ARN は名前からは組み立てられません。上の一覧コマンドに `ARN` を足して取得してください。
@@ -222,7 +222,22 @@ terraform apply -var runtime_enabled=true -var db_start_from_empty=true
 
 **手順 4 が重要です。** 稼働中に `db_snapshot_identifier` を書き戻すと、state 側が空のままなので次の apply が `null → "snap-..."` を ForceNew と判定し、**稼働中の本番 DB を作り直します**（「[サイクル変数を固定する](#サイクル変数を固定する)」が禁じている操作そのものです）。戻すのは停止したあと、次の再開の直前です。
 
-手順 3 を飛ばすと、次の停止で最終スナップショットも自動バックアップも取られずに削除されます。現在は RDS インスタンスが存在しないため import 対象に入りませんが、稼働中に state を失った場合はこの経路を踏みます。
+手順 3 を飛ばすと、次の停止で最終スナップショットも自動バックアップも取られずに削除されます。現在は RDS インスタンスが存在しないため import 対象に入りません。
+
+**この手順の射程は「停止状態からの再構築」だけです。** 稼働中に state を失った場合は、RDS だけでなく VPC（14 件）・ALB（8 件）・ECS（13 件）・A レコード・ACM もすべて孤児になります。その状態で起動 apply を打つと Terraform は**新しい VPC を作り**、import 済みの RDS を別 VPC のサブネットへ付け替えようとして失敗します（ALB は名前重複、A レコードは `allow_overwrite` が無いため「already exists」）。
+
+全量の import 一覧は用意していないので、稼働中に state を失った場合は import で復旧しようとせず、次の順で作り直す方が確実です。
+
+```bash
+# 1. まず手で DB のスナップショットを取る（Terraform を介さない）
+aws rds create-db-snapshot \
+  --db-instance-identifier nokoroa-prod-postgres \
+  --db-snapshot-identifier nokoroa-prod-rescue-$(date +%Y%m%d-%H%M)
+
+# 2. 時間課金リソース（ALB / ECS / RDS / A レコード）をコンソールか CLI で削除する
+# 3. 常時保持分（ECR・S3・Secrets・IAM ポリシー）を import する（上の表）
+# 4. 1 で取ったスナップショットを復元元にして通常の再開手順を実行する
+```
 
 ### 1. 変数ファイルを用意する
 
@@ -470,7 +485,9 @@ aws ecs run-task --cluster nokoroa-prod-cluster --task-definition nokoroa-prod-b
 
 **アプリのコードは「最後に deploy.yml を手動実行した時点のイメージ」です。** deploy.yml は `workflow_dispatch` のみなので、main にマージされたコミットは誰かが実行するまで ECR に載りません。最新の main を見せたい場合は、再開 apply のあとに deploy.yml を流してください。
 
-あわせて、**再開では Terraform がタスク定義を revision 1 から作り直します。** 停止でサービスとタスク定義が state ごと消えるため、`modules/ecs` の `ignore_changes = [task_definition]`（稼働中の apply でイメージが巻き戻るのを防ぐ設定）はサイクルを跨いでは効きません。いま巻き戻らないのは `terraform.tfvars` の `*_image` と deploy.yml が両方 `:latest` を使っているからで、**どちらかを `:sha` に変えると再開のたびにその時点までロールバックします。** `:latest` 固定はこの設計の前提です。
+あわせて、**再開では Terraform がタスク定義を作り直します**（ファミリのリビジョン番号は deregister 後も継続するので 1 には戻りませんが、中身は `terraform.tfvars` の `*_image` から再生成されます）。停止でサービスとタスク定義が state ごと消えるため、`modules/ecs` の `ignore_changes = [task_definition]`（稼働中の apply でイメージが巻き戻るのを防ぐ設定）はサイクルを跨いでは効きません。
+
+いま巻き戻らないのは、deploy.yml が `:sha` と `:latest` の**両方を push** していて、`terraform.tfvars` が `:latest` を指しているからです（タスク定義に入るのは deploy.yml 側が `:sha`、Terraform 側が `:latest`）。**`terraform.tfvars` を `:sha` 固定に変えると、再開のたびにその commit までロールバックします。** `:latest` 固定はこの設計の前提です。
 
 `vector` 拡張について 1 点。パラメータグループは毎サイクル作り直され、`shared_preload_libraries` は `apply_method = "pending-reboot"` です。復元直後のインスタンスでベクトル検索が失敗する場合は再起動してください。
 
@@ -506,10 +523,14 @@ plan に `must be replaced` が出て確認を求められます。この replac
 
 この precondition は**稼働中**なら no-op の plan でも評価されるため、起動中のどの `plan` / `apply` でも 2 つのスナップショット変数が必要です。だから `cycle.auto.tfvars` に固定します（停止中は `count = 0` でリソースが無いため評価されません）。
 
+**ただし 1 周目（復元元がまだ無い期間）は、ファイルに置けるのが `db_final_snapshot_identifier` だけです。** `db_start_from_empty` は永続ファイルに置けないので、1 周目の稼働中は**すべての `plan` / `apply` に `-var db_start_from_empty=true` を付ける必要があります**。2 周目以降は復元元がファイルに入るため、`-var runtime_enabled` だけで済みます。
+
 **スナップショット名はサイクルごとに一意にし、復元元と別名にする。** `precondition` が弾くのは次の 2 つだけです。
 
 - 復元元と同名（`db_snapshot_identifier` と同じ値）
 - AWS の識別子規則違反（英字始まり / 連続ハイフン不可 / ハイフン終わり不可 / 255 字以内）
+
+名前の形式は変数の `validation` が弾きます。**小文字英字始まり・小文字英数字とハイフンのみ**で、大文字は使えません（AWS が識別子を小文字化して保存するため、許すと state の値と実名が食い違い `precondition` の `!=` が同名衝突を見逃します）。
 
 **過去のスナップショットとの衝突は検知できません**（AWS に問い合わせないため）。これが残っている唯一の未対処リスクで、踏むと次のようになります。
 
