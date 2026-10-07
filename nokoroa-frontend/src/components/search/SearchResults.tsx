@@ -49,7 +49,13 @@ export const SearchResults = ({
     );
   }
 
-  if (error) {
+  // エラーで全面置き換えするのは「まだ 1 件も表示できていない」ときだけ。
+  // 3 ページ分スクロールした状態で 4 ページ目が失敗したときに累積を捨てると、
+  // 「エラー中は loadMore を止めて SWR のリトライに委ねる」という
+  // usePaginatedPosts 側の設計が成立しない。
+  const hasResults = !!data && data.posts.length > 0;
+
+  if (error && !hasResults) {
     if (
       mode === 'semantic' &&
       error instanceof SearchFetchError &&
@@ -137,6 +143,17 @@ export const SearchResults = ({
         <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4, py: 4 }}>
           <CircularProgress />
         </Box>
+      )}
+
+      {/*
+        累積がある状態での失敗は結果を残したまま末尾で知らせる。
+        ここで伝えないと、追加ページが取れていないのに
+        「最後まで見た」のと区別がつかない。
+      */}
+      {error && (
+        <Alert severity="error" sx={{ mt: 4 }}>
+          続きの読み込みに失敗しました。もう一度お試しください。
+        </Alert>
       )}
     </Box>
   );

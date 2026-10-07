@@ -60,7 +60,14 @@ export default function TopPage() {
           mx: 'auto',
         }}
       >
-        {postsLoading && (
+        {/*
+          全面スピナー・エラー・空表示は「まだ 1 件も積めていない初回」に限る。
+          SWR の isLoading / error はキー単位なので、2 ページ目の取得中や失敗で
+          これらを出すと usePaginatedPosts が保持している累積まで画面から消え、
+          ページ送りごとに一覧が点滅してスクロール位置が飛ぶ。
+          2 ページ目以降の進捗は末尾の isLoadingMore スピナーが担当する。
+        */}
+        {postsLoading && allPosts.length === 0 && (
           <Box
             sx={{
               display: 'flex',
@@ -72,7 +79,7 @@ export default function TopPage() {
             <CircularProgress />
           </Box>
         )}
-        {!postsLoading && error && (
+        {!postsLoading && error && allPosts.length === 0 && (
           <Box sx={{ p: 4, textAlign: 'center', gridColumn: '1 / -1' }}>
             <Typography variant="h6" color="error">
               投稿の読み込みに失敗しました
@@ -89,15 +96,14 @@ export default function TopPage() {
             </Typography>
           </Box>
         )}
-        {!postsLoading &&
-          allPosts.map((post, index) => (
-            <Box
-              key={post.id}
-              ref={index === allPosts.length - 1 ? lastElementRef : null}
-            >
-              <PostCard post={post} />
-            </Box>
-          ))}
+        {allPosts.map((post, index) => (
+          <Box
+            key={post.id}
+            ref={index === allPosts.length - 1 ? lastElementRef : null}
+          >
+            <PostCard post={post} />
+          </Box>
+        ))}
 
         {isLoadingMore && (
           <Box
