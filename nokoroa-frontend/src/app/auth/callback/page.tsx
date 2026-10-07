@@ -19,11 +19,12 @@ import { removeToken, setToken } from '@/utils/auth';
 /** 成功トーストを読める時間だけ見せてから遷移する */
 const REDIRECT_DELAY_MS = 1500;
 
+/** 原因を特定できない失敗。決め打ちで説明するとユーザーを無関係な対処に誘導する */
 const FAILED_UNEXPECTEDLY: CallbackOutcome = {
   kind: 'failure',
   message: 'ログインを完了できませんでした',
   detail:
-    'この端末ではログイン情報を保存できませんでした。プライベートブラウズや Cookie のブロックを解除してお試しください。',
+    'ログイン処理中に問題が発生しました。この端末で Cookie やストレージがブロックされていないか確認のうえ、もう一度お試しください。',
   discardToken: false,
 };
 
@@ -72,8 +73,11 @@ function AuthCallbackContent() {
     };
 
     // localStorage が使えない端末では setToken が throw する。投げ捨てると
-    // 失敗 UI に到達できず「認証処理中...」のまま固着する
-    completeLogin().then(apply, () => apply(FAILED_UNEXPECTEDLY));
+    // 失敗 UI に到達できず「認証処理中...」のまま固着する。
+    // apply 自身の throw も拾えるよう then の第 2 引数ではなく catch を使う
+    completeLogin()
+      .then(apply)
+      .catch(() => apply(FAILED_UNEXPECTEDLY));
   }, [searchParams]);
 
   if (outcome?.kind === 'failure') {

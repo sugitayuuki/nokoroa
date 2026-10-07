@@ -130,6 +130,35 @@ describe('fetchAuthSession', () => {
     expect(await pending).toEqual({ status: 'unavailable', reason: 'timeout' });
   });
 
+  // ヘッダを返して本文を送り終えないサーバでは fetch が resolve した後の
+  // json() が永久に pending になる。本文読み出しまでタイマーを生かしていないと
+  // ここで画面が固着する
+  it('本文が終わらない応答でも上限で打ち切る', async () => {
+    vi.useFakeTimers();
+    // 本物の Response では abort と本文ストリームの連動を再現できないため、
+    // signal に反応する最小のスタブを使う
+    createApiRequest.mockImplementation(
+      (_endpoint: string, options: { signal: AbortSignal }) =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          redirected: false,
+          json: () =>
+            new Promise((_resolve, reject) => {
+              options.signal.addEventListener('abort', () =>
+                reject(new DOMException('aborted', 'AbortError')),
+              );
+            }),
+        }),
+    );
+
+    const pending = fetchAuthSession();
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    // 200 を受け取った時点でガードは通っているので認証自体は有効
+    expect(await pending).toEqual({ status: 'ok', user: undefined });
+  });
+
   it('リダイレクトされた 200 は認証済みとみなさない', async () => {
     const hijacked = respond(200, validProfile);
     Object.defineProperty(hijacked, 'redirected', { value: true });

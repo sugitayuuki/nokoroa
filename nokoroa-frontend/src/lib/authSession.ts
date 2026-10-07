@@ -54,39 +54,47 @@ export const fetchAuthSession = async (): Promise<AuthSessionResult> => {
     controller.abort();
   }, VERIFY_TIMEOUT_MS);
 
-  let response: Response;
+  // ボディ読み出しまでタイマーを生かす。ヘッダだけ返して本文を送り終えない
+  // サーバでは fetch が resolve した後の json() が永久に pending になる
   try {
-    response = await createApiRequest(API_CONFIG.endpoints.userProfile, {
-      signal: controller.signal,
-    });
-  } catch {
-    return {
-      status: 'unavailable',
-      ...(timedOut
-        ? { reason: 'timeout' as const }
-        : { reason: 'network' as const }),
-    };
+    let response: Response;
+    try {
+      response = await createApiRequest(API_CONFIG.endpoints.userProfile, {
+        signal: controller.signal,
+      });
+    } catch {
+      return {
+        status: 'unavailable',
+        ...(timedOut
+          ? { reason: 'timeout' as const }
+          : { reason: 'network' as const }),
+      };
+    }
+
+    // 攫われた応答は 200 でも API の答えではない。通すと無効なトークンで認証済みになる
+    if (response.redirected) {
+      return { status: 'unavailable', reason: 'intercepted' };
+    }
+
+    if (!response.ok) {
+      return response.status >= 500 ||
+        RETRIABLE_CLIENT_STATUSES.has(response.status)
+        ? {
+            status: 'unavailable',
+            reason: 'server',
+            statusCode: response.status,
+          }
+        : { status: 'unauthenticated' };
+    }
+
+    try {
+      return { status: 'ok', user: toAuthUser(await response.json()) };
+    } catch {
+      // 本文が読めなくても 200 を受け取った時点でガードは通っている
+      return { status: 'ok', user: undefined };
+    }
   } finally {
     clearTimeout(timer);
-  }
-
-  // 攫われた応答は 200 でも API の答えではない。通すと無効なトークンで認証済みになる
-  if (response.redirected) {
-    return { status: 'unavailable', reason: 'intercepted' };
-  }
-
-  if (!response.ok) {
-    return response.status >= 500 ||
-      RETRIABLE_CLIENT_STATUSES.has(response.status)
-      ? { status: 'unavailable', reason: 'server', statusCode: response.status }
-      : { status: 'unauthenticated' };
-  }
-
-  try {
-    return { status: 'ok', user: toAuthUser(await response.json()) };
-  } catch {
-    // 本文が壊れていてもガードは通っている。認証自体は有効
-    return { status: 'ok', user: undefined };
   }
 };
 
