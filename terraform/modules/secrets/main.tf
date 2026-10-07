@@ -38,16 +38,13 @@ resource "aws_secretsmanager_secret" "jwt_secret" {
   }
 
   # このモジュールで prevent_destroy を付けるのはこの 1 件だけ。destroy の plan は
-  # 1 件でも prevent_destroy に当たれば全体が reject されるため、モジュールあたり 1 件で
-  # 「素の terraform destroy」と「-target=module.rds」（過去の事故経路。module "secrets" が
-  # depends_on = [module.rds] を持つので 7 件すべてが destroy 集合に入る）は止まる。
-  # 7 件全部に付けると、lifecycle は literal しか取れず変数で解除できないため、
-  # この共有モジュールを使う使い捨て環境（envs/stg）が作り直せなくなる。
-  # この 1 件を選んだのは、random_password 由来で state にしか値が無く、
-  # 失うと既存セッションが全無効になる = 最も復旧できないため。
+  # 1 件でも prevent_destroy に当たれば全体が reject されるため、モジュール内に 1 件あれば
+  # モジュールごと／環境ごとの destroy は止まる。この 1 件を選んだのは、値が
+  # random_password 由来で state にしか存在せず、失うと既存セッションが全無効になるため。
   #
-  # 止まらないのは「保護対象を含まない -target」。Terraform のエラー文自体が
-  # -target を回避手段として案内するので、これは防げない前提で扱う。
+  # 7 件すべてに付けてはいけない。lifecycle は literal しか取れず変数で解除できないので、
+  # 作り直しを前提とする環境がこのモジュールを使えなくなる（外すには本文を編集するしかなく、
+  # その間は他の環境のガードも同時に外れる）。そういう環境ではこのブロックを外して使う。
   #
   # recovery_window_in_days = 0 にはしない。即時完全削除になり誤 destroy からの復旧が
   # できなくなる。30 日待ちは事故時の保険で、困るのは「同名で作り直せない」ことだけなので

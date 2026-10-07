@@ -98,16 +98,21 @@ variable "final_snapshot_identifier" {
   default     = null
 
   # AWS の識別子規則「英字始まり / 英数字とハイフンのみ / 連続ハイフン不可 /
-  # ハイフン終わり不可 / 255 字以内」を 1 本の正規表現で表す（(-?[a-zA-Z0-9])* の形なので
+  # ハイフン終わり不可 / 255 字以内」を 1 本の正規表現で表す（(-?[a-z0-9])* の形なので
   # ハイフンは連続せず末尾にも来ない）。違反は destroy の瞬間に InvalidParameterValue で
   # 失敗するが、その時点では -var で直せない（上記の落とし穴）ので apply 前に弾く。
+  #
+  # 大文字を許さないのは、AWS が識別子を小文字化して保存するため。許すと
+  # (1) state の値と AWS 上の実名が食い違い、(2) 下の precondition の != が大小を区別するので
+  # 同一スナップショットを別名と誤認して同名衝突の検知をすり抜ける。
+  #
   # || ではなく三項を使うのは、|| が短絡せず length(null) で落ちるため。
   validation {
     condition = var.final_snapshot_identifier == null ? true : (
-      can(regex("^[a-zA-Z](-?[a-zA-Z0-9])*$", var.final_snapshot_identifier)) &&
+      can(regex("^[a-z](-?[a-z0-9])*$", var.final_snapshot_identifier)) &&
       length(var.final_snapshot_identifier) <= 255
     )
-    error_message = "final_snapshot_identifier は英字で始まり、英数字とハイフンのみ、連続ハイフンとハイフン終わりは不可、255 文字以内にしてください。"
+    error_message = "final_snapshot_identifier は小文字英字で始まり、小文字英数字とハイフンのみ、連続ハイフンとハイフン終わりは不可、255 文字以内にしてください（AWS が識別子を小文字化するため大文字は許可しません）。"
   }
 }
 

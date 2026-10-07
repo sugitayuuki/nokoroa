@@ -77,24 +77,20 @@ resource "aws_db_instance" "main" {
   backup_window           = "03:00-04:00"
   maintenance_window      = "sun:04:00-sun:05:00"
 
-  # 削除保護とスナップショットの有無を切り離している。以前は
-  # skip_final_snapshot = !deletion_protection と連動させていたため、保護を有効にすると
-  # スナップショット名が必須になるのに変数が無く、destroy が常に失敗していた。
+  # 削除保護とスナップショットの有無は連動させない（連動させると保護を有効にした時点で
+  # スナップショット名が必須になり、名前を渡す手段が無いと destroy が常に失敗する）。
   deletion_protection       = var.deletion_protection
   skip_final_snapshot       = var.skip_final_snapshot
   final_snapshot_identifier = var.final_snapshot_identifier
 
   snapshot_identifier = var.snapshot_identifier
 
-  # 既定の true だと、destroy のたびに backup_retention_period 日分の自動バックアップと
-  # PITR 履歴が最終スナップショットの作成と同時に全削除される。停止・再開を繰り返す構成では
-  # 「停止後に残るデータの複製が常に 1 本だけ」になり、その 1 本を取り違えて消したら終わる。
-  # deletion_protection をやめた分、ここは保持側に倒す。
+  # 既定の true だと、destroy のたびに自動バックアップと PITR 履歴が最終スナップショットの
+  # 作成と同時に全削除され、残るデータの複製が常に 1 本だけになる。
   delete_automated_backups = false
 
-  # 既定の true だと AWS がメンテナンス窓でマイナー版を上げうる。復元が正常系になった以上、
-  # 上がった後のスナップショットから戻すと provider が restore 後の ModifyDBInstance へ
-  # 古い engine_version を渡し、ダウングレード不可で失敗する。
+  # 既定の true だと AWS がメンテナンス窓でマイナー版を上げうる。上がった後のスナップショットを
+  # 復元すると、provider が restore 後に古い engine_version で ModifyDBInstance を投げて失敗する。
   auto_minor_version_upgrade = false
 
   enabled_cloudwatch_logs_exports = ["postgresql"]
@@ -107,10 +103,15 @@ resource "aws_db_instance" "main" {
     # ignore_changes = [snapshot_identifier] は入れない。replace の暴発は防げるが、
     # 「復元指定を忘れた再開」の是正まで黙って殺す（README「再開する」参照）。
 
-    # 停止時の失敗を apply 時点へ前倒しする。destroy の瞬間には -var で直せない
-    # (variables.tf の final_snapshot_identifier のコメント参照) ため、ここで弾く。
-    # 復元元と同名を渡すと、ALB・ECS・A レコードが消えた後で DeleteDBInstance だけが
-    # DBSnapshotAlreadyExists で落ち、RDS だけ課金が残る。
+    # 停止時の失敗を apply 時点へ前倒しする（destroy の瞬間には直せない。
+    # variables.tf の final_snapshot_identifier のコメント参照）。復元元と同名を渡すと、
+    # ALB・ECS・A レコードが消えた後で DeleteDBInstance だけが DBSnapshotAlreadyExists で
+    # 落ち、RDS だけ課金が残る。
+    #
+    # 限界: 比較しているのは config 同士なので、snapshot_identifier を渡さない呼び出しでは
+    # 第 2 条件が「!= null」に退化する。下の start_from_empty 側の precondition が
+    # snapshot_identifier の省略を弾くことで、この退化が起きない形にしている。
+    # 過去のスナップショットとの衝突は AWS に問い合わせないため検知できない。
     precondition {
       condition = var.skip_final_snapshot || (
         var.final_snapshot_identifier != null &&
@@ -119,11 +120,9 @@ resource "aws_db_instance" "main" {
       error_message = "final_snapshot_identifier には snapshot_identifier と異なる一意な名前を指定してください（データを捨てて良い場合に限り skip_final_snapshot = true）。"
     }
 
-    # 復元元の指定忘れを弾く。渡し忘れると RestoreDBInstanceFromDBSnapshot ではなく
-    # CreateDBInstance が走り、空の DB が本番として立つ。その後の書き込みは空 DB 側に入り、
-    # 次の停止が「空 DB の中身」を新しいスナップショットとして保存するため、
-    # 以降「旧スナップショットに戻すと新規分が消える / 新しい方を使うと旧データが消える」
-    # の二択になる。空から始めるのは start_from_empty の明示オプトインに限る。
+    # 復元元の指定忘れを弾く。渡し忘れると CreateDBInstance が走って空の DB が本番として
+    # 立ち、以降「旧スナップショットに戻すと新規分が消える / 新しい方を使うと旧データが
+    # 消える」の二択になる。空から始めるのは明示オプトインに限る。
     precondition {
       condition     = var.start_from_empty || var.snapshot_identifier != null
       error_message = "snapshot_identifier を指定するか、空の DB から始める場合に限り start_from_empty = true を指定してください。"

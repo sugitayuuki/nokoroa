@@ -52,7 +52,7 @@ CI が毎コミットで `terraform fmt -check` / `init` / `validate` を実行�
 
 `module "secrets"` と `module "s3"` に `count` を付けていないのは意図的です。シークレットを destroy すると `recovery_window_in_days` 既定の 30 日間削除待ちに入り、**同名のシークレットを 30 日間作り直せない = 次の再開ができなくなる**ためです。月 $2.80 を払って残す方が安く済みます。
 
-素の `terraform destroy` を止めるための `prevent_destroy` を 2 箇所だけ置いています（`modules/secrets` の `jwt_secret` と uploads バケット）。効く範囲と効かない範囲、2 箇所に絞った理由は「[設計上の注意点](#設計上の注意点)」にまとめています。ECR・ACM 証明書・DynamoDB ロックテーブルは保持対象ですがガードを付けていません（いずれも再作成できます。ACM は再発行に DNS 検証の待ち時間、ECR は 3 イメージの再ビルドが必要）。
+素の `terraform destroy` を止めるための `prevent_destroy` を 2 箇所だけ置いています（`modules/secrets` の `jwt_secret` と uploads バケット）。効く範囲と効かない範囲、2 箇所に絞った理由は「[運用上の落とし穴](#運用上の落とし穴)」にまとめています。ECR・ACM 証明書・DynamoDB ロックテーブルは保持対象ですがガードを付けていません（いずれも再作成できます。ACM は再発行に DNS 検証の待ち時間、ECR は 3 イメージの再ビルドが必要）。
 
 この表に載っていない課金もあります。`enabled_cloudwatch_logs_exports` によって AWS が作る `/aws/rds/instance/nokoroa-prod-postgres/postgresql` は Terraform の管理外・保持期間無期限で、停止しても残り続けます。
 
@@ -345,7 +345,7 @@ db_final_snapshot_identifier = "nokoroa-prod-20261008-0900"
 
 ACM 証明書と DNS 検証レコードは停止しても残しているため、**証明書の再発行と DNS 検証の待ち時間は発生しません**。
 
-ただし **A レコードそのものは停止中に消えている**（ALB と生死を共にするため）ので、停止中にドメインを引いたリゾルバは NXDOMAIN をホストゾーンの SOA minimum TTL ぶんキャッシュします（Route 53 の既定は 900 秒）。再開直後に同じリゾルバ経由でアクセスすると最大 15 分引けません。**面談の 30 分前ではなく前日に立てることを強く勧めます。**
+ただし **A レコードそのものは停止中に消えている**（ALB と生死を共にするため）ので、停止中にドメインを引いたリゾルバは NXDOMAIN をキャッシュします。Route 53 のホストゾーン既定 SOA は `1 7200 900 1209600 86400` で、リゾルバは RFC 2308 / RFC 9077 に従って `min(SOA レコードの TTL, minimum フィールド)` を採るため、効くのは SOA レコード自身の TTL である **900 秒**です（`minimum` フィールドは 86400 ですが、こちらは上限として働きません）。再開直後に同じリゾルバ経由でアクセスすると最大 15 分引けません。**面談の 30 分前ではなく前日に立てることを強く勧めます。**
 
 ### 再開後にマイグレーションを当てる
 
@@ -391,9 +391,13 @@ db_final_snapshot_identifier = "nokoroa-prod-20261008-1200"  # ★ 前の値か�
 terraform apply -var runtime_enabled=true
 ```
 
-plan に `must be replaced` が出て確認を求められます。この replace の destroy 側も最終スナップショットを取るため、空 DB に書き込んでしまった分も失われません。**ただしその時点で古い名前のスナップショットが 1 つ消費されます。** 名前を変えずに是正すると、次の停止が同名衝突（`DBSnapshotAlreadyExists`）で失敗します。ここだけは「サイクル中は同じ値を使い回す」より優先してください。
+plan に `must be replaced` が出て確認を求められます。この replace の destroy 側も最終スナップショットを取るため、空 DB に書き込んでしまった分も失われません。
 
-### 設計上の注意点
+**ただしその時点で `db_final_snapshot_identifier` の名前が 1 つ消費されます。** 名前を変えずに是正すると、次の停止が同名衝突（`DBSnapshotAlreadyExists`）で失敗し、アプリだけ消えて RDS に課金が残ります。ここだけは「サイクル中は同じ値を使い回す」より優先してください。`precondition` は復元元との同名しか見ないので、この衝突は弾けません。
+
+もう 1 つ注意点があります。この是正で作られるスナップショットは**空 DB の中身**です。つまり是正直後は「最新の手動スナップショット = 空」という状態になるので、次の再開で `describe-db-snapshots` の先頭を鵜呑みにすると空の DB を復元します。**作成時刻ではなく名前で選んでください。**
+
+### 運用上の落とし穴
 
 **`db_final_snapshot_identifier` は停止時ではなく起動時に渡す。** Terraform は破棄するリソースの属性を **state から** 読むため、`terraform apply -var runtime_enabled=false -var db_final_snapshot_identifier=...` のように停止と同時に渡しても無視されます。インスタンスが存在するうちの apply で state に入れておく必要があります。
 
@@ -436,6 +440,20 @@ terraform apply -var runtime_enabled=false
 RDS インスタンス自体には付けられません（`runtime_enabled = false` が destroy なので、付けると停止そのものができなくなる）。RDS は最終スナップショットで守る形です。
 
 **`prevent_destroy` は state に載っているリソースにしか効きません。** 現在 AWS 上に実在する ECR・S3・Secrets Manager は state に未登録なので、`terraform import` を済ませるまでこのガードは無力です。
+
+> ### ⚠️ RDS を `import` したら、停止する前に必ず 1 回起動 apply を通すこと
+>
+> AWS プロバイダの `import` は **`skip_final_snapshot = true` を state に書き込みます**。destroy は config ではなく state を読むため、RDS インスタンスを `import` した直後に `terraform apply -var runtime_enabled=false` を実行すると、**最終スナップショットを取らずに削除されてデータが無言で全損します**。
+>
+> `runtime_enabled = false` ではモジュールが `count = 0` になり destroy だけが計画されるので、`skip_final_snapshot: true -> false` の是正 update は走りません。`precondition` も config の値（`false`）を見ているだけで state の `true` を検知できません。
+>
+> ```bash
+> terraform import 'module.rds[0].aws_db_instance.main' nokoroa-prod-postgres
+> terraform apply -var runtime_enabled=true   # ★ ここで state の skip_final_snapshot が false に直る
+> terraform apply -var runtime_enabled=false  # 停止はこの後
+> ```
+>
+> 現在は RDS インスタンスが存在しないため `import` 対象に入りませんが、稼働中に state を失った場合はこの経路を踏みます。`delete_automated_backups` も同様に `import` で `true` に固定されるため、起動 apply を飛ばすと自動バックアップごと消えます。
 
 **`count` の導入で state 上のアドレスが変わりました。** `module.alb` / `module.ecs` / `module.rds` 配下の全リソースと `aws_route53_record.alb` / `.www` に `[0]` が付きます。index 無しの古い state を持っている場合は、apply する前に `terraform state mv` でアドレスを移してください（移さないと全部が destroy + create として計画されます）。本番 state は現在空なのでこのケースには該当しません。
 

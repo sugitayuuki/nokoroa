@@ -49,9 +49,8 @@ variable "db_name" {
   default     = "nokoroa_db"
 }
 
-# 停止時に作る最終スナップショットの名前。サイクルごとに一意な値を **起動時の apply で**
-# 渡す（destroy 時に渡しても state から読まれるため効かない。
-# modules/rds/variables.tf の落とし穴を参照）。
+# 停止時に作る最終スナップショットの名前。サイクルごとに一意な値を起動時の apply で渡す
+# （落とし穴の詳細は modules/rds/variables.tf の同名変数のコメント）。
 variable "db_final_snapshot_identifier" {
   description = "Name of the final RDS snapshot taken when runtime_enabled flips to false. Pass a value unique per cycle at start-up time"
   type        = string
