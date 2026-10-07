@@ -30,7 +30,15 @@ def verify_internal_token(
             status_code=503,
             detail="INTERNAL_AI_TOKEN is not configured",
         )
-    if not hmac.compare_digest(expected, x_internal_token or ""):
+    # str 同士の compare_digest は両方が ASCII のみであることを要求する。
+    # Starlette はヘッダを latin-1 でデコードするため 0x80-0xFF のバイトは
+    # 非 ASCII 文字になり、そのまま渡すと TypeError が送出される。認証前の
+    # 段階なので誰でも到達でき、401 ではなく未捕捉例外の 500 を量産できる。
+    # bytes に正規化してから比較する(bytes 同士なら ASCII 制約は無い)。
+    if not hmac.compare_digest(
+        expected.encode("utf-8"),
+        (x_internal_token or "").encode("utf-8"),
+    ):
         raise HTTPException(status_code=401, detail="invalid internal token")
 
 
