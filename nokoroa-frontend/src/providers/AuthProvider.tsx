@@ -35,6 +35,9 @@ type AuthContextType = {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+/** 検証失敗を自前で表示する画面。ここでは起動時検証の通知を出さない */
+const AUTH_CALLBACK_PATH = '/auth/callback';
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -63,9 +66,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       const result = await fetchAuthSession();
 
-      // 検証中に別のトークンへ差し替わっていたら、この結果は古いトークンに対する
-      // 判定なので適用しない。OAuth コールバックと同時に走ると、古いトークンの
-      // 401 が保存直後の新しいトークンを消してしまう
+      // 現状ここは成立しない。Layout が isLoading 中は children を描画しないため、
+      // トークンを差し替える画面 (OAuth コールバック) はこの検証の完了後にしか
+      // マウントされない。その順序に依存せず、古いトークンに対する 401 で
+      // 保存直後の新しいトークンを消さないための保険として残す
       if (getToken() !== tokenAtStart) {
         return;
       }
@@ -76,8 +80,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       setIsAuthenticated(decision.action === 'accept');
       setUser(decision.action === 'accept' ? decision.user : undefined);
-      if (decision.action === 'retain') {
-        // 黙って未ログインにすると、ユーザーには理由のない強制ログアウトに見える
+      // 黙って未ログインにすると、ユーザーには理由のない強制ログアウトに見える。
+      // ただしコールバック画面は自前の失敗表示を持つので、1 つの事象に対して
+      // 文面の違う通知を 2 つ出さないよう譲る
+      // pathname はこの effect を再実行させたくないので location から読む
+      if (
+        decision.action === 'retain' &&
+        window.location.pathname !== AUTH_CALLBACK_PATH
+      ) {
         toast.error(
           'ログイン状態を確認できませんでした。時間をおいて再読み込みしてください。',
         );

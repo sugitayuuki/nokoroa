@@ -65,7 +65,7 @@ describe('decideCallbackOutcome', () => {
     [
       'server',
       { status: 'unavailable', reason: 'server', statusCode: 500 } as const,
-      'サーバーが一時的にエラーを返しました。時間をおいてもう一度お試しください。',
+      'サーバーでエラーが発生しました。時間をおいてお試しいただき、解消しない場合は管理者にお問い合わせください。',
     ],
     [
       'timeout',
