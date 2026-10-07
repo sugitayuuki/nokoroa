@@ -11,8 +11,7 @@ const { createApiRequest } = vi.hoisted(() => ({
   createApiRequest: vi.fn(),
 }));
 
-// createApiRequest だけ差し替える。API_CONFIG は実物を使い、
-// エンドポイントの改名がテストをすり抜けないようにする
+// createApiRequest だけ差し替え、API_CONFIG は実物を残す
 vi.mock('@/lib/apiConfig', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/apiConfig')>()),
   createApiRequest: (...args: unknown[]) => createApiRequest(...args),
@@ -45,17 +44,20 @@ describe('fetchAuthSession', () => {
 
     await fetchAuthSession();
 
-    // 応答しないサーバで画面が固着しないよう signal が必須
+    // パスはリテラルで固定する。API_CONFIG の値と比べても実装と同じ定数を
+    // 読むだけなので、パスが書き換わってもすり抜けてしまう
     expect(createApiRequest).toHaveBeenCalledWith(
-      API_CONFIG.endpoints.userProfile,
+      '/users/profile',
+      // 応答しないサーバで画面が固着しないよう signal が必須
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
+    expect(API_CONFIG.endpoints.userProfile).toBe('/users/profile');
   });
 
   // AbortSignal.timeout は Safari 16+ が必要で、Next の既定ターゲット
   // (safari 12) を外れる。使うと未対応環境で検証が常に失敗する
   it('AbortSignal.timeout が無い環境でも検証できる', async () => {
-    const original = AbortSignal.timeout;
+    const original = Object.getOwnPropertyDescriptor(AbortSignal, 'timeout');
     // @ts-expect-error 互換性の退行を検知するため意図的に欠落させる
     delete AbortSignal.timeout;
     createApiRequest.mockResolvedValue(respond(200, validProfile));
@@ -63,7 +65,10 @@ describe('fetchAuthSession', () => {
     try {
       expect((await fetchAuthSession()).status).toBe('ok');
     } finally {
-      AbortSignal.timeout = original;
+      // 代入で戻すと non-enumerable だった記述子が変わり後続に残る
+      if (original) {
+        Object.defineProperty(AbortSignal, 'timeout', original);
+      }
     }
   });
 

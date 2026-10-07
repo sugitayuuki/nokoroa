@@ -14,7 +14,7 @@ import { toast } from 'react-toastify';
 
 import { fetchAuthSession } from '@/lib/authSession';
 import { CallbackOutcome, decideCallbackOutcome } from '@/lib/callbackOutcome';
-import { removeToken, setToken } from '@/utils/auth';
+import { getToken, removeToken, setToken } from '@/utils/auth';
 
 /** 成功トーストを読める時間だけ見せてから遷移する */
 const REDIRECT_DELAY_MS = 1500;
@@ -35,11 +35,9 @@ function AuthCallbackContent() {
   // プロフィール API も二重に叩かれる。
   // 入口は常にフルページ遷移なので、再実行が必要になることはない
   const hasRunRef = useRef(false);
+  const redirectTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   useEffect(() => {
-    if (hasRunRef.current) return;
-    hasRunRef.current = true;
-
     const completeLogin = async () => {
       // 空文字も「受け取れなかった」として扱う。保存と判定で述語が分かれると、
       // URL のトークンではなく既存トークンの検証結果で成否が決まってしまう
@@ -49,21 +47,36 @@ function AuthCallbackContent() {
       // 履歴・Referer に残さない。失敗時はこの画面に留まるため特に必要
       window.history.replaceState({}, '', window.location.pathname);
 
-      if (token) {
-        setToken(token);
+      // 受け取るトークンが無いのに既にセッションがあるなら、この画面に用は無い。
+      // 失敗画面を再読み込みした場合やブックマークからの再訪問で、
+      // ログイン中のユーザーに「ログインに失敗しました」を見せないようにする
+      if (!token) {
+        if (getToken()) {
+          window.location.replace('/');
+          return undefined;
+        }
+        return decideCallbackOutcome(null);
       }
+
+      setToken(token);
 
       // トークンを保存しただけでは「ログインできた」とは言えない。
       // 実際にセッションが使えることを確かめてから成功を名乗る
-      return decideCallbackOutcome(token ? await fetchAuthSession() : null);
+      return decideCallbackOutcome(await fetchAuthSession());
     };
 
-    const apply = (next: CallbackOutcome) => {
+    const apply = (next: CallbackOutcome | undefined) => {
+      // undefined は遷移中。この画面では何もしない
+      if (!next) return;
+
       if (next.kind === 'success') {
         toast.success(next.toast);
         // フルロードで遷移する。AuthProvider の検証 effect は deps が空で
         // 再実行されないため、SPA 遷移では認証状態が反映されない
-        setTimeout(() => window.location.replace('/'), REDIRECT_DELAY_MS);
+        redirectTimerRef.current = setTimeout(
+          () => window.location.replace('/'),
+          REDIRECT_DELAY_MS,
+        );
         return;
       }
       if (next.discardToken) {
@@ -72,12 +85,20 @@ function AuthCallbackContent() {
       setOutcome(next);
     };
 
-    // localStorage が使えない端末では setToken が throw する。投げ捨てると
-    // 失敗 UI に到達できず「認証処理中...」のまま固着する。
-    // apply 自身の throw も拾えるよう then の第 2 引数ではなく catch を使う
-    completeLogin()
-      .then(apply)
-      .catch(() => apply(FAILED_UNEXPECTEDLY));
+    if (!hasRunRef.current) {
+      hasRunRef.current = true;
+      // localStorage が使えない端末では setToken が throw する。投げ捨てると
+      // 失敗 UI に到達できず「認証処理中...」のまま固着する。
+      // apply 自身の throw も拾えるよう then の第 2 引数ではなく catch を使う
+      completeLogin()
+        .then(apply)
+        .catch(() => apply(FAILED_UNEXPECTEDLY));
+    }
+
+    // トースト表示中にユーザーが自分で遷移したら待機中の遷移を取り消す。
+    // hasRunRef で早期 return するとここが登録されず機能しないため、
+    // 実行の有無にかかわらず返す
+    return () => clearTimeout(redirectTimerRef.current);
   }, [searchParams]);
 
   if (outcome?.kind === 'failure') {
