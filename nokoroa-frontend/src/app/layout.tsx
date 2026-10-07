@@ -31,7 +31,9 @@ export default function RootLayout({
   dialog,
 }: Readonly<{
   children: React.ReactNode;
-  dialog?: React.ReactNode;
+  // 並行ルート @dialog は default.tsx があるため常に渡る。optional にすると
+  // Next が生成する LayoutProps と食い違い、dev 実行後の typecheck が落ちる
+  dialog: React.ReactNode;
 }>) {
   return (
     <html lang="ja">
