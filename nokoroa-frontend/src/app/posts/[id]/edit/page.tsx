@@ -240,7 +240,13 @@ export default function EditPostPage() {
   // 編集可能な状態で開けていた。送信して初めて backend が 403 を返すため、
   // 入力内容が丸ごと捨てられる。描画前に弾く。
   // 認可の正はあくまで backend 側 (posts.service の ForbiddenException)。
-  if (user && user.id !== post.author.id) {
+  //
+  // `user` が無いときも弾く(fail-closed)。AuthProvider は
+  // 「200 なら認証は有効。形が想定外で user が取れなくても認証状態は維持する」
+  // 方針なので isAuthenticated === true かつ user === undefined が起こりうる。
+  // `user &&` で条件を組むとその場合にガードを素通りし、直そうとした
+  // 「他人の投稿のフォームが開けて送信時に 403」がそのまま再現する。
+  if (!user || user.id !== post.author.id) {
     return (
       <Container maxWidth="md" sx={{ py: 4 }}>
         <Alert severity="error">自分の投稿のみ編集できます</Alert>

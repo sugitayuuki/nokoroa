@@ -320,8 +320,11 @@ export const GoogleMap: React.FC<GoogleMapProps> = ({
   useEffect(
     () => () => {
       markersRef.current.forEach((marker) => {
-        window.google?.maps?.event?.clearInstanceListeners(marker);
+        // 先に地図から外す。clearInstanceListeners は Maps API 内部の
+        // リスナー(map_changed 等)まで消すので、先に呼ぶと setMap(null) の
+        // 反映が保証されない。
         marker.setMap(null);
+        window.google?.maps?.event?.clearInstanceListeners(marker);
       });
     },
     [],

@@ -4,7 +4,7 @@ import SearchIcon from '@mui/icons-material/Search';
 import { Box, CircularProgress, Container, Typography } from '@mui/material';
 import type { ReadonlyURLSearchParams } from 'next/navigation';
 import { useSearchParams } from 'next/navigation';
-import { Suspense, useEffect, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 
 import { usePaginatedPosts } from '@/hooks/usePaginatedPosts';
 
@@ -70,37 +70,52 @@ function SearchPageContent() {
     total: number;
     aiAvailable?: boolean;
   }>();
+  // 新しい検索を始めるたびに増やす。これを依存に含めないと、同じ条件で
+  // 再検索したとき URL(= SWR キー)が変わらず data の参照も変わらないため、
+  // 直前の setResultMeta(undefined) を取り消せない。結果:
+  //   - 件数が total ?? posts.length に落ちて「10件」などと誤表示
+  //   - 意味検索の aiAvailable=false が失われ、AI 障害が「該当なし」に化ける
+  // usePaginatedPosts が同じ罠を generation カウンタで潰しているのと同じ対策。
+  const [metaGeneration, setMetaGeneration] = useState(0);
 
   useEffect(() => {
     if (data) {
       setResultMeta({ total: data.total, aiAvailable: data.aiAvailable });
     }
-  }, [data]);
+  }, [data, metaGeneration]);
+
+  /** 新しい検索条件を適用する。累積とメタ情報を両方捨てて組み直す。 */
+  const startNewSearch = useCallback(
+    (next: SearchFilters) => {
+      setFilters(next);
+      setHasSearched(true);
+      setResultMeta(undefined);
+      setMetaGeneration((prev) => prev + 1);
+      reset();
+    },
+    [reset],
+  );
 
   // 同じページに留まったまま ?tags= が変わる経路(タグチップの連続クリック等)に追従する。
   // 初期値は useState 側で入れているので、ここは「変化したとき」だけを担う。
+  //
+  // ref に「適用済みのタグ」を永久保持してはいけない。?tags=A → フォームから
+  // キーワード検索 → 再び ?tags=A と戻ったときに tagParam === ref で何もせず、
+  // URL は tags=A なのに結果はキーワード検索のまま残る。
+  // フォーム検索を挟んだ時点で null に戻し、次に同じ URL へ来たら再適用する。
   const appliedTagParamRef = useRef(searchParams.get('tags'));
   useEffect(() => {
     const tagParam = searchParams.get('tags');
     if (tagParam && tagParam !== appliedTagParamRef.current) {
       appliedTagParamRef.current = tagParam;
-      setFilters(initialFiltersFromParams(searchParams));
-      setHasSearched(true);
-      setResultMeta(undefined);
-      reset();
+      startNewSearch(initialFiltersFromParams(searchParams));
     }
-  }, [searchParams, reset]);
+  }, [searchParams, startNewSearch]);
 
   const handleSearch = (newFilters: SearchFilters) => {
-    const searchFilters = {
-      ...newFilters,
-      limit: PAGE_SIZE,
-      offset: 0,
-    };
-    setFilters(searchFilters);
-    setHasSearched(true);
-    setResultMeta(undefined);
-    reset();
+    // URL のタグ条件から離れるので、適用済みマークを捨てる
+    appliedTagParamRef.current = null;
+    startNewSearch({ ...newFilters, limit: PAGE_SIZE, offset: 0 });
   };
 
   return (

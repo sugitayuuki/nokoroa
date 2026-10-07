@@ -1,5 +1,6 @@
 'use client';
 
+import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
@@ -117,6 +118,18 @@ export default function TopPage() {
           >
             <CircularProgress />
           </Box>
+        )}
+
+        {/*
+          累積がある状態での失敗は一覧を残したまま末尾で知らせる。
+          usePaginatedPosts は error 中に isLoadingMore を解除し observer も
+          止めるため、ここで伝えないと「最後まで見た」のと区別がつかない。
+          (SearchResults と同じ扱いに揃える)
+        */}
+        {error && allPosts.length > 0 && (
+          <Alert severity="error" sx={{ mt: 4, gridColumn: '1 / -1' }}>
+            続きの読み込みに失敗しました。もう一度お試しください。
+          </Alert>
         )}
       </Box>
     );
