@@ -14,6 +14,7 @@ import { toast } from 'react-toastify';
 
 import { fetchAuthSession } from '@/lib/authSession';
 import { CallbackOutcome, decideCallbackOutcome } from '@/lib/callbackOutcome';
+import { replaceLocation } from '@/lib/navigate';
 import { useAuth } from '@/providers/AuthProvider';
 import { getToken, removeToken, setToken } from '@/utils/auth';
 
@@ -75,7 +76,7 @@ function AuthCallbackContent() {
       // ログイン中のユーザーに「ログインに失敗しました」を見せないようにする
       if (!token) {
         if (getToken()) {
-          window.location.replace('/');
+          replaceLocation('/');
           return undefined;
         }
         return decideCallbackOutcome(null);
@@ -94,10 +95,8 @@ function AuthCallbackContent() {
 
       if (next.kind === 'success') {
         toast.success(next.toast);
-        // フルロードで遷移する。AuthProvider の検証 effect は deps が空で
-        // 再実行されないため、SPA 遷移では認証状態が反映されない
         redirectTimerRef.current = setTimeout(
-          () => window.location.replace('/'),
+          () => replaceLocation('/'),
           REDIRECT_DELAY_MS,
         );
         return;
