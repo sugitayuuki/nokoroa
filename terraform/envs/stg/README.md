@@ -11,16 +11,7 @@
 | ログ保持 | 30 日 | 7 日 |
 | 稼働の切り替え | `runtime_enabled` 変数 | 同じ仕組みを流用できる |
 
-## 実装前に解消が必要な前提
+`prod/` との差分が上記に収まるよう、環境固有の値は `variables.tf` 経由にしてあります。**ただし次の 2 点はモジュール側の変更が必要**で、`variables.tf` では吸収できません。
 
-**`modules/secrets` と `modules/s3` には `prevent_destroy` が入っており、そのままでは stg を `terraform destroy` できません。** `lifecycle` はリテラルしか取れず変数で解除できないため、「壊して作り直す」方針と直接衝突します。該当は 2 箇所です。
-
-- `modules/secrets/main.tf` の `aws_secretsmanager_secret.jwt_secret`
-- `modules/s3/main.tf` の `aws_s3_bucket.uploads`
-
-モジュール本文をその場でコメントアウトするのは**避けてください**。共有モジュールなので、作業中は prod のガードも同時に外れます。実装時に選ぶべきは次のどちらかです。
-
-1. 保護対象を prod の `envs/prod/main.tf` 側へ出し、共有モジュールからはガードを外す
-2. stg 用に `modules/` をフォークする（重複が増えるので 1 を推奨）
-
-`prod/` との差分が上記に収まるよう、環境固有の値は `variables.tf` 経由にしてあります。ただし上記の `prevent_destroy` と `recovery_window_in_days` の 2 点については**モジュール側の変更が必要**です。
+- **`prevent_destroy`**: `modules/secrets` の `jwt_secret` と `modules/s3` の `uploads` に入っており、そのままでは `terraform destroy` が plan 段階で止まります（`lifecycle` は変数で解除できない）。共有モジュールなので、本文をその場で編集すると prod のガードも同時に外れます。扱いは `terraform/README.md`「運用上の落とし穴」を参照
+- **`recovery_window_in_days`**: この変数が `modules/secrets` に未実装です

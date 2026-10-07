@@ -152,6 +152,16 @@ DB パスワード・JWT シークレット・OAuth クライアントシーク�
 > **先に「既知の課題」を確認してください。** 停止中も AWS 上に残しているリソース（ECR・S3・Secrets Manager）は現在 state に載っておらず、この手順をそのまま実行すると名前の衝突で失敗します。先に `terraform import` での取り込みが必要です。
 >
 > `import` は下の手順 1〜2（変数ファイルの用意と `terraform init`）を済ませたあとに実行してください。`init` 前では `Could not load plugin` で、`runtime_enabled` を渡さないと `Error: No value for required variable` で止まります。`import` にも `-var runtime_enabled=false` が必要です（`import` 自体は `prevent_destroy` には阻害されません）。
+>
+> **⚠️ RDS インスタンスを `import` する場合は、停止する前に必ず 1 回「作る側」の apply を通してください。** プロバイダの `import` は `skip_final_snapshot = true` と `delete_automated_backups = true` を state に書き込み、`destroy` は config ではなく state を読みます。そのため `import` 直後に停止すると**最終スナップショットも自動バックアップも取らずに削除され、データが無言で全損します**。`runtime_enabled = false` ではモジュールが `count = 0` になるため属性を是正する update は走らず、`precondition` も config しか見ないので検知できません。
+>
+> ```bash
+> terraform import 'module.rds[0].aws_db_instance.main' nokoroa-prod-postgres
+> terraform apply -var runtime_enabled=true   # ★ ここで state が是正される
+> terraform apply -var runtime_enabled=false  # 停止はこの後
+> ```
+>
+> 現在は RDS インスタンスが存在しないため `import` 対象に入りませんが、稼働中に state を失った場合はこの経路を踏みます。
 
 ### 1. 変数ファイルを用意する
 
@@ -253,6 +263,22 @@ aws logs tail /ecs/nokoroa-prod/backend --follow
 ## 停止と再開
 
 面談やデモの前に立ち上げ、終わったら落とす運用を想定しています。切り替えは `runtime_enabled` ひとつで、`-target` も手でのコード書き換えも不要です。
+
+```bash
+cd terraform/envs/prod
+
+# 停止
+terraform apply -var runtime_enabled=false
+
+# 再開（cycle.auto.tfvars に復元元を書いてから）
+terraform apply -var runtime_enabled=true
+```
+
+再開は **apply 完了まで 12〜23 分 + DNS のネガティブキャッシュ最大 15 分**。前日に立てること。
+停止中は月 $5〜6、稼働は 1 日あたり $2.70。
+
+初めて読む場合、または 2 周目以降で詰まった場合は以下を順に読んでください。
+初回の再構築は state への `import` が先に必要です（「[再構築の手順](#再構築の手順)」）。
 
 ### 月額とサイクル単価
 
@@ -412,7 +438,7 @@ plan に `must be replaced` が出て確認を求められます。この replac
 
 `modules/rds` の `lifecycle.precondition` は、名前を渡さないままの起動を apply の時点で弾きます。**この場合の実際の挙動はデータ損失ではなく「停止 apply が『名前が必須』で失敗して止まる」こと**です（prod は `skip_final_snapshot` を渡しておらず常に `false`）。データが失われるのは `skip_final_snapshot = true` を明示したときだけです。それでも事前に弾くのは、失敗する時点では `-var` で直せず、起動し直してからやり直すしかないためです。
 
-この precondition は no-op の plan でも評価されるため、サイクル中のあらゆる `plan` / `apply` で 2 つのスナップショット変数が必要です。だから `cycle.auto.tfvars` に固定します。
+この precondition は**稼働中**なら no-op の plan でも評価されるため、起動中のどの `plan` / `apply` でも 2 つのスナップショット変数が必要です。だから `cycle.auto.tfvars` に固定します（停止中は `count = 0` でリソースが無いため評価されません）。
 
 **スナップショット名はサイクルごとに一意にし、復元元と別名にする。** `precondition` が弾くのは次の 2 つだけです。
 
@@ -449,22 +475,6 @@ terraform apply -var runtime_enabled=false
 RDS インスタンス自体には付けられません（`runtime_enabled = false` が destroy なので、付けると停止そのものができなくなる）。RDS は最終スナップショットで守る形です。
 
 **`prevent_destroy` は state に載っているリソースにしか効きません。** 現在 AWS 上に実在する ECR・S3・Secrets Manager は state に未登録なので、`terraform import` を済ませるまでこのガードは無力です。
-
-> ### ⚠️ RDS を `import` したら、停止する前に必ず 1 回起動 apply を通すこと
->
-> AWS プロバイダの `import` は **`skip_final_snapshot = true` を state に書き込みます**。destroy は config ではなく state を読むため、RDS インスタンスを `import` した直後に `terraform apply -var runtime_enabled=false` を実行すると、**最終スナップショットを取らずに削除されてデータが無言で全損します**。
->
-> `runtime_enabled = false` ではモジュールが `count = 0` になり destroy だけが計画されるので、`skip_final_snapshot: true -> false` の是正 update は走りません。`precondition` も config の値（`false`）を見ているだけで state の `true` を検知できません。
->
-> ```bash
-> terraform import 'module.rds[0].aws_db_instance.main' nokoroa-prod-postgres
-> terraform apply -var runtime_enabled=true   # ★ ここで state の skip_final_snapshot が false に直る
-> terraform apply -var runtime_enabled=false  # 停止はこの後
-> ```
->
-> 現在は RDS インスタンスが存在しないため `import` 対象に入りませんが、稼働中に state を失った場合はこの経路を踏みます。`delete_automated_backups` も同様に `import` で `true` に固定されるため、起動 apply を飛ばすと自動バックアップごと消えます。
-
-**`count` の導入で state 上のアドレスが変わりました。** `module.alb` / `module.ecs` / `module.rds` 配下の全リソースと `aws_route53_record.alb` / `.www` に `[0]` が付きます。index 無しの古い state を持っている場合は、apply する前に `terraform state mv` でアドレスを移してください（移さないと全部が destroy + create として計画されます）。本番 state は現在空なのでこのケースには該当しません。
 
 ### 古いスナップショットを掃除する
 

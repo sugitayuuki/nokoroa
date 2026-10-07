@@ -101,16 +101,12 @@ resource "aws_db_instance" "main" {
 
   lifecycle {
     # ignore_changes = [snapshot_identifier] は入れない。replace の暴発は防げるが、
-    # 「復元指定を忘れた再開」の是正まで黙って殺す（README「再開する」参照）。
+    # 「復元指定を忘れた再開」の是正まで黙って殺す。
 
     # 停止時の失敗を apply 時点へ前倒しする（destroy の瞬間には直せない。
     # variables.tf の final_snapshot_identifier のコメント参照）。復元元と同名を渡すと、
     # ALB・ECS・A レコードが消えた後で DeleteDBInstance だけが DBSnapshotAlreadyExists で
     # 落ち、RDS だけ課金が残る。
-    #
-    # 限界: 比較しているのは config 同士なので、snapshot_identifier を渡さない呼び出しでは
-    # 第 2 条件が「!= null」に退化する。下の start_from_empty 側の precondition が
-    # snapshot_identifier の省略を弾くことで、この退化が起きない形にしている。
     # 過去のスナップショットとの衝突は AWS に問い合わせないため検知できない。
     precondition {
       condition = var.skip_final_snapshot || (
@@ -120,14 +116,10 @@ resource "aws_db_instance" "main" {
       error_message = "final_snapshot_identifier には snapshot_identifier と異なる一意な名前を指定してください（データを捨てて良い場合に限り skip_final_snapshot = true）。"
     }
 
-    # 復元元の指定忘れを弾く。渡し忘れると CreateDBInstance が走って空の DB が本番として
-    # 立ち、以降「旧スナップショットに戻すと新規分が消える / 新しい方を使うと旧データが
-    # 消える」の二択になる。空から始めるのは明示オプトインに限る。
-    #
-    # || ではなく排他（XOR）にしているのが要点。start_from_empty は永続ファイルに書く値なので、
-    # || だと「初回構築で true にして以降消し忘れた」状態でこの precondition が無条件に通り、
-    # 存在しないのと同じになる。排他なら両方指定も両方未指定も弾けるので、
-    # 「復元するなら start_from_empty を消す」が構成側で強制される。
+    # 復元元の指定忘れで空の DB が本番として立つのを防ぐ。排他（XOR）なので、
+    # 「初回構築で start_from_empty = true にしたまま消し忘れた」状態も弾ける
+    # （|| だとそのとき無条件に通り、このチェックが存在しないのと同じになる）。
+    # 上の precondition の第 2 条件が「!= null」に退化するのも、これが防いでいる。
     precondition {
       condition     = var.start_from_empty != (var.snapshot_identifier != null)
       error_message = "snapshot_identifier と start_from_empty はどちらか一方だけを指定してください（復元するなら start_from_empty を外す / 空から始めるなら snapshot_identifier を外す）。"

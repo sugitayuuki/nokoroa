@@ -37,18 +37,14 @@ resource "aws_secretsmanager_secret" "jwt_secret" {
     Name = "${var.project_name}-${var.environment}-jwt-secret"
   }
 
-  # このモジュールで prevent_destroy を付けるのはこの 1 件だけ。destroy の plan は
-  # 1 件でも prevent_destroy に当たれば全体が reject されるため、モジュール内に 1 件あれば
-  # モジュールごと／環境ごとの destroy は止まる。この 1 件を選んだのは、値が
-  # random_password 由来で state にしか存在せず、失うと既存セッションが全無効になるため。
+  # このモジュールで prevent_destroy を付けるのはこの 1 件だけ。plan は 1 件でも当たれば
+  # 全体が reject されるので、モジュール内に 1 件あれば destroy は止まる。この 1 件を
+  # 選んだのは、値が random_password 由来で state にしか存在しないため。
+  # 7 件すべてに付けない理由と、作り直しを前提とする環境での扱いは
+  # terraform/README.md「運用上の落とし穴」を参照（lifecycle は変数で解除できないため、
+  # ここを編集すると他の環境のガードも同時に外れる）。
   #
-  # 7 件すべてに付けてはいけない。lifecycle は literal しか取れず変数で解除できないので、
-  # 作り直しを前提とする環境がこのモジュールを使えなくなる（外すには本文を編集するしかなく、
-  # その間は他の環境のガードも同時に外れる）。そういう環境ではこのブロックを外して使う。
-  #
-  # recovery_window_in_days = 0 にはしない。即時完全削除になり誤 destroy からの復旧が
-  # できなくなる。30 日待ちは事故時の保険で、困るのは「同名で作り直せない」ことだけなので
-  # destroy させない方で解く。
+  # recovery_window_in_days = 0 は採らない（即時完全削除になり誤 destroy から復旧できない）。
   lifecycle {
     prevent_destroy = true
   }
