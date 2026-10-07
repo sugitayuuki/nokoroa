@@ -12,11 +12,14 @@ Nokoroa の AWS インフラを Terraform で管理しています。
 
 ```
 $ terraform plan -var runtime_enabled=true -var db_start_from_empty=true \
-    -var db_final_snapshot_identifier=nokoroa-prod-plan-dryrun
+    -var db_final_snapshot_identifier=nokoroa-prod-plan-dryrun \
+    -var backend_image=dryrun -var frontend_image=dryrun -var ai_image=dryrun
 Plan: 79 to add, 0 to change, 0 to destroy.
 ```
 
-`-var` が 3 つ必要なのは、`modules/rds` の `precondition` 2 本が「最終スナップショット名」と「復元元の指定 または 空から始める明示」を要求するためです。素の `-var runtime_enabled=true` だけでは plan がエラーで止まります。あわせて `terraform.tfvars` が必要です。イメージ URL 3 つ（`modules/ecs` の `precondition` が空を弾く）と、既定値を持たない `google_client_id` / `google_client_secret` / `gemini_api_key` が無いと対話入力を求められます。
+`-var` が多いのは、`runtime_enabled = true` にすると各モジュールの `precondition` が揃って評価されるためです。`modules/rds` が「最終スナップショット名」と「復元元の指定 または 空から始める明示」を、`modules/ecs` が「イメージ 3 つが非空」を要求します。イメージは件数を数えるだけのダミーで構いません（空文字のままだと precondition で止まります。対話入力は求められません — 既定値が `""` なので）。
+
+これとは別に、既定値を持たない `google_client_id` / `google_client_secret` / `gemini_api_key` は `terraform.tfvars` が無いと対話入力を求められます。
 
 この 79 件は「停止によって削除された分」ではなく「`runtime_enabled = true` で定義されている全量」です。AWS 上に実在するのに state に載っていないリソース（下記）があるため、現状の `plan` はそれらも新規作成として数えます。実際に再構築で作られるのは、それらを `import` で取り込んだあとの差分になります。
 
@@ -180,7 +183,7 @@ aws secretsmanager list-secrets --include-planned-deletion \
 
 注意点がいくつかあります。
 
-- **`modules/s3` の state バケット系 4 件と DynamoDB は `[0]` が必要**（リソース側に `count` があるため）。一方 `module.s3` / `module.secrets` 自体には `count` が無いので `module.s3[0]` と書くのは誤りです（`[0]` が付くのは上の表のアドレスだけ）
+- **`modules/s3` の state バケット系と DynamoDB は `[0]` が必要**（これら 5 件はリソース側に `count` を持つため。表に載せた必須 2 件のほか、下の「任意」に回したバージョニング・暗号化・パブリックアクセスブロックも同様）。一方 `module.s3` / `module.secrets` 自体には `count` が無いので `module.s3[0]` と書くのは誤りです
 - **`aws_acm_certificate.main` も実在するなら import してください。** 過去の停止は `-target=module.rds` / `-target=module.vpc` だったのでルートモジュールの証明書には届いておらず、残っている可能性が高いです。未 import だと ACM は名前が一意でないため**衝突せず新しい証明書が発行され**、`aws_acm_certificate_validation` が DNS 検証の完了を待ちます（= 「再開時に検証待ちは発生しない」が初回だけ崩れ、旧証明書が孤児として残る）
 - **`aws_acm_certificate_validation` と `data` ソース 3 件は import できません**（前者はプロバイダが Import 非対応の論理リソース）。証明書が ISSUED なら create は即完了するので問題ありません
 - バケットのバージョニング・暗号化・CORS・ポリシー・パブリックアクセスブロック、ECR のライフサイクルポリシー、`aws_secretsmanager_secret_version` は**未 import でも apply が上書きして収束する**ので任意です
@@ -248,7 +251,9 @@ cp terraform.tfvars.example terraform.tfvars
 
 `google_client_id` / `google_client_secret` / `gemini_api_key` の 3 つは既定値がなく、必須です。
 
-`*_image` の 3 行は、`terraform.tfvars.example` にプレースホルダの文字列が入っています。イメージを push する前は**空文字にするかコメントアウトしてください**。プレースホルダのまま apply すると、存在しないレジストリを指すタスク定義が作られます。
+`*_image` の 3 行は `terraform.tfvars.example` で**既定でコメントアウトしてあります**。この時点では触らず、イメージを push したあと（手順 4）に実際の URL を入れて有効化してください。
+
+コメントアウトを外してプレースホルダのまま apply しないこと。`modules/ecs` の `precondition` は空文字しか弾けないため、`<account-id>` のままだと plan を通過し、存在しないレジストリを指すタスク定義が作られて `CannotPullContainerError` を繰り返します。
 
 ### 2. インフラを作成する
 
@@ -259,7 +264,9 @@ terraform apply -var runtime_enabled=false
 
 **1 回目は `false` で打ちます。** ECR・VPC・S3・Secrets Manager・ACM はいずれも `runtime_enabled` の `count` を持たないので `false` でも作られ、これでイメージの push 先が揃います。ALB・ECS・RDS はまだ作りません。
 
-この順序にしているのは、**イメージが無い状態で ECS を作らせないため**です。`modules/ecs` はイメージ変数が空のときパブリックのプレースホルダへフォールバックするので、`true` で打つと「apply は成功して ALB の DNS も返るのに backend が永久に起動しない」本番が立ちます。`false` ならその経路自体が存在しません（`modules/ecs` の `precondition` も、イメージ未指定を無条件で弾きます）。
+この順序にしているのは、**イメージが無い状態で ECS を作らせないため**です。`modules/ecs` はイメージ変数が空のときパブリックのプレースホルダへフォールバックする実装なので、素のままなら「apply は成功して ALB の DNS も返るのに backend が永久に起動しない」本番が立ちえます（ai が `python:3.12-slim` になり HTTP を喋らず `dependsOn: HEALTHY` を満たせない）。
+
+いまはこれを 2 重に塞いでいます。`modules/ecs` の `precondition` がイメージ未指定を無条件で弾き、さらに 1 回目を `false` にすることで ECS 自体が作られないため判定にも到達しません。
 
 ### 3. イメージをビルドして push する
 
@@ -299,13 +306,13 @@ EOF
 terraform apply -var runtime_enabled=true -var db_start_from_empty=true
 ```
 
-> `db_final_snapshot_identifier` は**停止時に作るスナップショットの名前**で、起動時に state へ入れておく必要があります（理由は「[運用上の落とし穴](#運用上の落とし穴)」）。`db_start_from_empty` は初回だけ必要です（復元元がまだ無いため）。
+> `db_final_snapshot_identifier` は**停止時に作るスナップショットの名前**で、起動時に state へ入れておく必要があります（理由は「[運用上の落とし穴](#運用上の落とし穴)」）。`db_start_from_empty` は**復元元が存在しない 1 周目のあいだ、稼働中のすべての `plan` / `apply` に必要**です（1 回だけではありません。理由は「[運用上の落とし穴](#運用上の落とし穴)」）。
 >
 > `runtime_enabled` には既定値がありません。付け忘れると Terraform が入力を促して止まります（黙って何かを壊すより良い、という設計です）。
 
 以降のデプロイは GitHub Actions（`.github/workflows/deploy.yml`）が担います。backend・ai・frontend の 3 イメージを ARM64 でビルドして push し、ECS のサービスを更新します。
 
-**現在は手動実行（`workflow_dispatch`）のみに設定しています。停止・再開サイクルで運用する限り、`push` トリガーは戻せません。** 停止中は `module.ecs` ごと消えてクラスタもサービスも存在しないため、main への push で毎回 `ClusterNotFound` / `ServiceNotFound` で失敗します。しかも ECR は常時保持なのでイメージの push だけは成功し、サービスへ適用されないタスク定義リビジョンが積み上がります。
+**現在は手動実行（`workflow_dispatch`）のみに設定しています。停止・再開サイクルで運用する限り、`push` トリガーは戻せません。** 停止中は `module.ecs` ごと消えてクラスタもサービスも存在しないため、main への push で毎回失敗します（最初に落ちるのはタスク定義の取得ステップで、その後のサービス更新も到達しません）。しかも ECR は常時保持なのでイメージの push だけは成功し、サービスへ適用されないタスク定義リビジョンが積み上がります。
 
 戻したい場合は deploy.yml 側に「サービスが存在しなければ skip」のガードを入れてください。
 
@@ -386,7 +393,7 @@ EOF
 
 `*.tfvars` は `.gitignore` 済みなのでコミットされません。
 
-> **このファイルは停止中にだけ書き換えてください。** `db_snapshot_identifier` は ForceNew なので、**稼働中に値を変えると本番の DB が作り直されます**（それまでの書き込みが失われ、さらに `db_final_snapshot_identifier` の名前も 1 つ消費されるため、次の停止が同名衝突で失敗します）。plan に `must be replaced` が出たら中断して値を戻してください。次サイクルの値は停止してから書き換えます。
+> **このファイルは停止中にだけ書き換えてください。** `db_snapshot_identifier` は ForceNew なので、**稼働中に値を変えると本番の DB が作り直されます。** 作り直し後のライブ DB は復元元の時点に戻り、それまでの書き込みはライブから消えます（replace の destroy 側も最終スナップショットを取るので、消えた分はそのスナップショットから復旧できます）。さらに `db_final_snapshot_identifier` の名前が 1 つ消費されるため、次の停止が同名衝突で失敗します。plan に `must be replaced` が出たら中断して値を戻してください。次サイクルの値は停止してから書き換えます。
 
 これを使う理由は 2 つあります。まず **`-var` の落とし忘れを構造的に無くせる**こと。この 2 変数は `modules/rds` の `precondition` が要求するため、サイクル中のどの `plan` / `apply` でも必要で、毎回 3 つのフラグを正しく並べるのは落としやすい形でした。もうひとつは **値が勝手に変わらない**こと。`$(date)` をコマンドに直接書くと実行ごとに別の名前が state へ入り、停止時に作られるスナップショット名が実行者の記憶と合わなくなります。
 
@@ -530,9 +537,18 @@ plan に `must be replaced` が出て確認を求められます。この replac
 - 復元元と同名（`db_snapshot_identifier` と同じ値）
 - AWS の識別子規則違反（英字始まり / 連続ハイフン不可 / ハイフン終わり不可 / 255 字以内）
 
-名前の形式は変数の `validation` が弾きます。**小文字英字始まり・小文字英数字とハイフンのみ**で、大文字は使えません（AWS が識別子を小文字化して保存するため、許すと state の値と実名が食い違い `precondition` の `!=` が同名衝突を見逃します）。
+何がどこで弾かれるかは次のとおりです。
 
-**過去のスナップショットとの衝突は検知できません**（AWS に問い合わせないため）。これが残っている唯一の未対処リスクで、踏むと次のようになります。
+| チェック | 置き場所 | 弾く条件 |
+|---|---|---|
+| 最終スナップショット名が未設定 | `modules/rds` の `precondition` | `db_final_snapshot_identifier` が null |
+| 復元元と同名 | `modules/rds` の `precondition` | 2 つの名前が一致 |
+| 復元元の指定忘れ / 空から始める明示の消し忘れ | `modules/rds` の `precondition` | 排他条件を満たさない |
+| 名前の形式違反 | `db_final_snapshot_identifier` の `validation` | **小文字**英字始まり・小文字英数字とハイフン・連続ハイフン不可・ハイフン終わり不可・255 字以内 |
+
+大文字を許していないのは、AWS が識別子を小文字化して保存するためです。許すと state の値と実名が食い違い、`precondition` の `!=` が同名衝突を見逃します。
+
+**過去のスナップショットとの衝突だけは検知できません**（AWS に問い合わせないため）。これが残っている唯一の未対処リスクで、踏むと次のようになります。
 
 同名のスナップショットは 2 つ作れないので、停止 apply で ALB・ECS・A レコードが先に消えた後、RDS の削除だけが `DBSnapshotAlreadyExists` で失敗します。**アプリは消えたのに RDS だけ課金が続く**状態です。しかも destroy 時には `-var` で直せないので、次の順で復旧します。
 
