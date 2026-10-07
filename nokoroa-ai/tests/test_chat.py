@@ -127,6 +127,35 @@ def test_gemini_client_is_created_with_a_request_timeout(client, auth, models):
     assert http_options.timeout > 0
 
 
+def test_non_stream_timeout_is_shorter_than_stream_timeout(client, auth, models):
+    """経路ごとに上限を分けていること。
+
+    一律で長く取ると「backend は 10 秒で諦めたのに Python のスレッドは
+    60 秒占有され続ける」状態になり、ブロック中のスレッドは
+    クライアント切断でもキャンセルできないため枯渇を防ぐ効果が薄れる。
+    """
+    from app.deps import get_gemini_service
+    from app.services.gemini_service import (
+        GEMINI_REQUEST_TIMEOUT_MS,
+        GEMINI_STREAM_TIMEOUT_MS,
+    )
+
+    service = get_gemini_service()
+    assert service.config.http_options.timeout == GEMINI_REQUEST_TIMEOUT_MS
+    assert service.stream_config.http_options.timeout == GEMINI_STREAM_TIMEOUT_MS
+    # backend の AI_REQUEST_TIMEOUT_MS / EMBED_TIMEOUT_MS = 10s を少しだけ超える
+    assert 10_000 < GEMINI_REQUEST_TIMEOUT_MS < GEMINI_STREAM_TIMEOUT_MS
+
+
+def test_embed_passes_the_request_timeout(client, auth, models):
+    """埋め込みも経路単位の上限を渡していること(クライアント既定に頼らない)。"""
+    from app.services.gemini_service import GEMINI_REQUEST_TIMEOUT_MS
+
+    response = client.post("/api/embeddings/", json={"text": "京都"}, headers=auth)
+    assert response.status_code == 200
+    assert models.embed_config.http_options.timeout == GEMINI_REQUEST_TIMEOUT_MS
+
+
 def test_suggestions_parses_pipe_separated_output(client, auth, models):
     models.generate_content_result = FakeResponse(text="費用は?|ベストシーズンは?|何泊?")
     response = client.post(

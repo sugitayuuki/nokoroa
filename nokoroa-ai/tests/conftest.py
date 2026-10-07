@@ -43,6 +43,8 @@ class FakeModels:
         self.embed_error: Exception | None = None
         self.prompts: list[str] = []
         self.threads: set[str] = set()
+        # 経路ごとのタイムアウト指定を検証できるよう、渡された config を残す
+        self.embed_config: Any = None
 
     def _record(self, contents: Any) -> None:
         self.threads.add(threading.current_thread().name)
@@ -65,6 +67,7 @@ class FakeModels:
 
     def embed_content(self, *, model: str, contents: Any, config: Any) -> FakeEmbedResponse:
         self.threads.add(threading.current_thread().name)
+        self.embed_config = config
         if self.embed_error:
             raise self.embed_error
         return FakeEmbedResponse(self.embed_values)

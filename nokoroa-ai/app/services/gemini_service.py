@@ -77,10 +77,25 @@ EMBEDDING_MODEL = settings.embedding_model
 EMBEDDING_DIM = settings.embedding_dim
 
 # Gemini への HTTP タイムアウト(ミリ秒)。google-genai の HttpOptions.timeout は
-# ミリ秒指定。backend 側の自衛(embeddings.service.ts の EMBED_TIMEOUT_MS = 10s /
-# chat.service.ts の AI_STREAM_TIMEOUT_MS)より少し長く取り、
-# 「backend が先に諦めても、こちら側のスレッドは必ず解放される」状態にする。
-GEMINI_TIMEOUT_MS = 60_000
+# ミリ秒指定で、未指定だと無限待ちになる(SDK の _api_client が
+# timeout が falsy なら None を HTTP 層へ渡す)。
+#
+# backend 側の自衛と経路ごとに対応させる。ここを一律で長く取ると
+# 「backend は 10 秒で諦めたのに Python のスレッドは 60 秒占有され続ける」
+# 状態になり、ブロック中のスレッドはクライアント切断でもキャンセルできないため
+# スレッド枯渇を防ぐ効果が薄れる。
+#
+#   非ストリーム (chat / suggestions / related-keywords):
+#     backend は AI_REQUEST_TIMEOUT_MS = 10s で abort
+#   埋め込み:
+#     backend は EMBED_TIMEOUT_MS = 10s で abort
+#   → どちらも backend が諦めた直後にスレッドを返せるよう少しだけ上に置く
+GEMINI_REQUEST_TIMEOUT_MS = 15_000
+#   ストリーム: backend は AI_STREAM_TIMEOUT_MS = 60s。ここも同じ 60s を上限にする。
+#   注意: requests の timeout はストリームでは「1 read あたり」なので、
+#   チャンクが細く流れ続ける限りこの値では打ち切られない。全体の打ち切りは
+#   backend 側の AbortSignal が担う。
+GEMINI_STREAM_TIMEOUT_MS = 60_000
 
 
 def _sanitize_context(text: str) -> str:
@@ -105,8 +120,8 @@ def _sanitize_context(text: str) -> str:
 
 class GeminiService:
     def __init__(self, api_key: str) -> None:
-        # http_options を渡さないと SDK は timeout=None (無限待ち) になり、
-        # retry_options も None = 「一切リトライしない」になる。
+        # クライアント既定も必ず埋める。新しい呼び出し箇所が
+        # リクエスト単位の指定を忘れても無限待ちにならないようにするため。
         # 無限待ちだと Gemini がハングした際に、/stream は anyio の
         # スレッドリミッタ(既定 40)を、他の経路は asyncio.to_thread の
         # 既定 executor を解放できず、枯渇した時点で /health も含めて
@@ -114,14 +129,27 @@ class GeminiService:
         # ブロック中のスレッドはキャンセルできないため、上限は必須。
         self.client = genai.Client(
             api_key=api_key,
-            http_options=types.HttpOptions(timeout=GEMINI_TIMEOUT_MS),
+            http_options=types.HttpOptions(timeout=GEMINI_STREAM_TIMEOUT_MS),
         )
         self.model = settings.chat_model
-        self.config = types.GenerateContentConfig(
+        self.config = self._generation_config(GEMINI_REQUEST_TIMEOUT_MS)
+        # ストリームは生成が終わるまで接続を保つため、非ストリームと同じ
+        # 15 秒では足りない。timeout 以外は同一。
+        self.stream_config = self._generation_config(GEMINI_STREAM_TIMEOUT_MS)
+
+    @staticmethod
+    def _generation_config(timeout_ms: int) -> types.GenerateContentConfig:
+        """chat / chat_stream 共通の生成設定。timeout だけを差し替える。
+
+        設定を 2 か所に書くと片方だけ直したときに静かに食い違うため、
+        ここを唯一の定義にする。
+        """
+        return types.GenerateContentConfig(
             system_instruction=SYSTEM_PROMPT,
             temperature=0.7,
             top_p=0.95,
             max_output_tokens=2048,
+            http_options=types.HttpOptions(timeout=timeout_ms),
             tools=[GOOGLE_SEARCH_TOOL],
         )
 
@@ -134,6 +162,10 @@ class GeminiService:
             config=types.EmbedContentConfig(
                 task_type=task_type,
                 output_dimensionality=EMBEDDING_DIM,
+                # backend は 10 秒で abort する。ここで上限を置かないと
+                # クライアント既定(ストリーム用の 60 秒)まで
+                # スレッドを占有し続ける。
+                http_options=types.HttpOptions(timeout=GEMINI_REQUEST_TIMEOUT_MS),
             ),
         )
         return list(result.embeddings[0].values)
@@ -176,7 +208,8 @@ class GeminiService:
         response = self.client.models.generate_content_stream(
             model=self.model,
             contents=contents,
-            config=self.config,
+            # ストリームだけ長めの上限を使う(非ストリームの 15 秒では足りない)
+            config=self.stream_config,
         )
 
         for chunk in response:
@@ -232,6 +265,8 @@ class GeminiService:
                 config=types.GenerateContentConfig(
                     temperature=temperature,
                     max_output_tokens=max_output_tokens,
+                    # backend は AI_REQUEST_TIMEOUT_MS = 10 秒で abort する
+                    http_options=types.HttpOptions(timeout=GEMINI_REQUEST_TIMEOUT_MS),
                 ),
             )
         except Exception:
