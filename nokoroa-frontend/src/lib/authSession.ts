@@ -17,19 +17,26 @@ export type AuthUser = {
  * セッション検証の結果。
  *
  * `unauthenticated` と `unavailable` を必ず分けること。
- * 以前は非 2xx を一括で「無効」とみなしてトークンを削除していたため、
- * バックエンドが 500 を返しただけでログイン直後に強制ログアウトされ、
- * しかも画面には何も出ないという挙動になっていた。
- * 「トークンが悪い」のは 401 / 403 だけで、5xx や通信失敗は
- * サーバ側の一時障害なのでトークンを捨ててはいけない。
+ * 「トークンが悪い」(保持しても無意味) のと「サーバ側が一時的に答えられない」
+ * (トークンは有効かもしれない) を混ぜると、サーバの一時障害だけで
+ * 強制ログアウトになる。
  */
 export type AuthSessionResult =
   /** 認証は有効。user は 200 でも本文が想定外なら undefined になりうる */
   | { status: 'ok'; user: AuthUser | undefined }
-  /** トークンが無効 (401 / 403)。保持していても無意味なので破棄してよい */
+  /** トークンが恒久的に無効。破棄してよい */
   | { status: 'unauthenticated' }
-  /** サーバ側の一時障害 (5xx / 通信失敗)。トークンは有効かもしれないので残す */
+  /** 検証できなかった。トークンは有効かもしれないので残す。statusCode 無しは通信失敗 */
   | { status: 'unavailable'; statusCode?: number };
+
+/** 検証が応答しないまま画面が固着するのを防ぐ上限 */
+const SESSION_TIMEOUT_MS = 10_000;
+
+/** 時間をおけば直りうるステータス。これ以外の 4xx はトークン側の問題として扱う */
+const TRANSIENT_STATUSES = new Set([408, 429]);
+
+const isTransient = (status: number) =>
+  status >= 500 || TRANSIENT_STATUSES.has(status);
 
 /**
  * API レスポンスから認証ユーザーを組み立てる。
@@ -57,30 +64,65 @@ export const toAuthUser = (raw: unknown): AuthUser | undefined => {
 /**
  * 保存済みトークンで実際にセッションが使えるかをプロフィール API で確かめる。
  *
- * AuthProvider の起動時検証と、OAuth コールバックの成功判定の両方がこれを使う。
+ * AuthProvider の起動時検証と OAuth コールバックの成功判定の両方がこれを使う。
  * コールバック側が独自に「保存できたら成功」と判断すると、セッションが
  * 使えなくても成功トーストが出てしまう。
+ *
+ * 「認証が通ったか」を /users/profile のガードから推定している点に注意。
+ * このエンドポイントが JwtAuthGuard で保護されている限りにおいて成立する。
  */
 export const fetchAuthSession = async (): Promise<AuthSessionResult> => {
   let response: Response;
   try {
-    response = await createApiRequest(API_CONFIG.endpoints.userProfile);
+    response = await createApiRequest(API_CONFIG.endpoints.userProfile, {
+      signal: AbortSignal.timeout(SESSION_TIMEOUT_MS),
+    });
   } catch {
-    // ネットワーク到達不可。トークンの有効性については何も分からない
+    // 到達不能・タイムアウト。トークンの有効性については何も分からない
     return { status: 'unavailable' };
   }
 
-  if (response.status === 401 || response.status === 403) {
-    return { status: 'unauthenticated' };
-  }
-  if (!response.ok) {
+  // 前段のプロキシやキャプティブポータルに攫われた応答は 200 でも API の答えではない。
+  // これを通すと無効なトークンで認証済みになる
+  if (response.redirected) {
     return { status: 'unavailable', statusCode: response.status };
+  }
+
+  if (!response.ok) {
+    return isTransient(response.status)
+      ? { status: 'unavailable', statusCode: response.status }
+      : { status: 'unauthenticated' };
   }
 
   try {
     return { status: 'ok', user: toAuthUser(await response.json()) };
   } catch {
-    // 200 なのに本文が壊れている。認証自体は通っているのでトークンは消さない
+    // 本文が壊れていてもガードは通っている。認証自体は有効
     return { status: 'ok', user: undefined };
   }
+};
+
+/** 検証結果から決まる認証状態。React に依存しないのでそのまま検証できる */
+export type AuthState = {
+  isAuthenticated: boolean;
+  /** トークンを破棄すべきか。恒久的に無効なときだけ true */
+  discardToken: boolean;
+  user?: AuthUser;
+  /** 検証できなかった。黙って未ログインにするとユーザーに理由が分からない */
+  unverified: boolean;
+};
+
+export const resolveAuthState = (result: AuthSessionResult): AuthState => {
+  if (result.status === 'ok') {
+    return {
+      isAuthenticated: true,
+      discardToken: false,
+      user: result.user,
+      unverified: false,
+    };
+  }
+  if (result.status === 'unauthenticated') {
+    return { isAuthenticated: false, discardToken: true, unverified: false };
+  }
+  return { isAuthenticated: false, discardToken: false, unverified: true };
 };

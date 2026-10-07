@@ -14,7 +14,12 @@ import { mutate } from 'swr';
 
 import { useSmoothNavigation } from '@/hooks/useSmoothNavigation';
 import { API_CONFIG, createApiRequest } from '@/lib/apiConfig';
-import { AuthUser, fetchAuthSession, toAuthUser } from '@/lib/authSession';
+import {
+  AuthUser,
+  fetchAuthSession,
+  resolveAuthState,
+  toAuthUser,
+} from '@/lib/authSession';
 import { getToken, removeToken, setToken } from '@/utils/auth';
 
 type AuthContextType = {
@@ -49,7 +54,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const validateToken = async () => {
-      if (!getToken()) {
+      const validated = getToken();
+      if (!validated) {
         setIsAuthenticated(false);
         setUser(undefined);
         setIsLoading(false);
@@ -59,21 +65,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // トークンの有効性を確認するため、プロフィールAPIを呼び出し
       const result = await fetchAuthSession();
 
-      if (result.status === 'ok') {
-        // 200 なら認証は有効。形が想定外で user が取れなくても認証状態は維持する
-        setIsAuthenticated(true);
-        setUser(result.user);
-      } else if (result.status === 'unauthenticated') {
-        // 401 / 403 = トークンが無効。保持しても無意味なので消す
+      // 検証中に別のトークンへ差し替わっていたら、この結果は古いトークンに対する
+      // 判定なので適用しない。OAuth コールバックと同時に走ると、古いトークンの
+      // 401 が保存直後の新しいトークンを消してしまう
+      if (getToken() !== validated) {
+        setIsLoading(false);
+        return;
+      }
+
+      const state = resolveAuthState(result);
+      if (state.discardToken) {
         removeToken();
-        setIsAuthenticated(false);
-        setUser(undefined);
-      } else {
-        // 5xx / 通信失敗。トークンはまだ有効かもしれないので消さない
-        // (消すとサーバの一時障害だけで強制ログアウトになり、しかも
-        //  ユーザーには理由が分からない)。アクセス制御は fail-closed のまま。
-        setIsAuthenticated(false);
-        setUser(undefined);
+      }
+      setIsAuthenticated(state.isAuthenticated);
+      setUser(state.user);
+      if (state.unverified) {
+        // 黙って未ログインにすると、ユーザーには理由のない強制ログアウトに見える
+        toast.error(
+          'サーバーに接続できないため、ログイン状態を確認できませんでした。時間をおいて再読み込みしてください。',
+        );
       }
       setIsLoading(false);
     };

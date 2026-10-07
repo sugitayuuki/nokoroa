@@ -14,15 +14,21 @@ import { toast } from 'react-toastify';
 import { fetchAuthSession } from '@/lib/authSession';
 import { removeToken, setToken } from '@/utils/auth';
 
+import { decideCallbackOutcome } from './callbackOutcome';
+
+/** 成功トーストを読める時間だけ見せてから遷移する */
+const SUCCESS_TOAST_MS = 1000;
+
 type CallbackState =
   | { phase: 'verifying' }
-  | { phase: 'failed'; message: string; detail?: string };
+  | { phase: 'failed'; message: string; detail: string };
 
 function AuthCallbackContent() {
   const searchParams = useSearchParams();
   const [state, setState] = useState<CallbackState>({ phase: 'verifying' });
   // StrictMode は effect を 2 回実行する。素通しすると成功トーストが 2 回出て、
   // プロフィール API も二重に叩かれる。
+  // 入口は常にフルページ遷移なので、再実行が必要になることはない
   const hasRunRef = useRef(false);
 
   useEffect(() => {
@@ -31,53 +37,38 @@ function AuthCallbackContent() {
 
     const completeLogin = async () => {
       const token = searchParams.get('token');
-      if (!token) {
-        setState({
-          phase: 'failed',
-          message: 'ログインに失敗しました',
-          detail: '認証情報が受け取れませんでした。もう一度お試しください。',
-        });
-        return;
-      }
 
-      setToken(token);
+      // トークンと(バックエンドが付与する)メールアドレス入り user をアドレスバー・
+      // 履歴・Referer に残さない。失敗時はこの画面に留まるため特に必要
+      window.history.replaceState({}, '', window.location.pathname);
+
+      if (token) {
+        setToken(token);
+      }
 
       // トークンを保存しただけでは「ログインできた」とは言えない。
-      // 実際にセッションが使えることを確かめてから成功を名乗る。
-      // ここを省くと、サーバ側が落ちていても成功トーストが出たうえで
-      // 直後に AuthProvider がログアウト扱いにする、という嘘の成功になる。
-      const session = await fetchAuthSession();
+      // 実際にセッションが使えることを確かめてから成功を名乗る
+      const outcome = decideCallbackOutcome(
+        token === null
+          ? { token: null }
+          : { token, session: await fetchAuthSession() },
+      );
 
-      if (session.status === 'ok') {
-        toast.success(
-          session.user
-            ? `ようこそ、${session.user.name}さん！`
-            : 'ログインしました',
-        );
-        // 保存したトークンを URL に残したまま履歴へ積まないよう置換で遷移する
-        window.location.replace('/');
+      if (outcome.kind === 'success') {
+        toast.success(outcome.toast);
+        // フルロードで遷移する。AuthProvider の検証 effect は deps が空で
+        // 再実行されないため、SPA 遷移では認証状態が反映されない
+        setTimeout(() => window.location.replace('/'), SUCCESS_TOAST_MS);
         return;
       }
 
-      // 失敗したらトークンは残さない。残すと他の画面で中途半端に
-      // 「ログイン済みのように見えて全部 401」という状態になる。
-      removeToken();
-
-      if (session.status === 'unauthenticated') {
-        setState({
-          phase: 'failed',
-          message: 'ログインに失敗しました',
-          detail:
-            '認証情報が受け付けられませんでした。お手数ですがもう一度ログインしてください。',
-        });
-        return;
+      if (outcome.discardToken) {
+        removeToken();
       }
-
       setState({
         phase: 'failed',
-        message: 'ログインを完了できませんでした',
-        detail:
-          'サーバーに接続できませんでした。時間をおいてもう一度お試しください。',
+        message: outcome.message,
+        detail: outcome.detail,
       });
     };
 
@@ -91,11 +82,9 @@ function AuthCallbackContent() {
           <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
             {state.message}
           </Typography>
-          {state.detail && (
-            <Typography variant="body2" sx={{ mt: 0.5 }}>
-              {state.detail}
-            </Typography>
-          )}
+          <Typography variant="body2" sx={{ mt: 0.5 }}>
+            {state.detail}
+          </Typography>
         </Alert>
         <Button variant="contained" href="/login">
           ログイン画面へ
