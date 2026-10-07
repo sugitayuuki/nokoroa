@@ -15,3 +15,4 @@
 
 - **`prevent_destroy`**: `modules/secrets` の `jwt_secret` と `modules/s3` の `uploads` に入っており、そのままでは `terraform destroy` が plan 段階で止まります（`lifecycle` は変数で解除できない）。共有モジュールなので、本文をその場で編集すると prod のガードも同時に外れます。扱いは `terraform/README.md`「運用上の落とし穴」を参照
 - **`recovery_window_in_days`**: この変数が `modules/secrets` に未実装です
+- **`start_from_empty`**: `modules/rds` の `precondition` が「復元元の指定」か「空から始める明示」のどちらかを要求します。`skip_final_snapshot = true` では回避できないため、使い捨て環境でも `start_from_empty = true` を渡す必要があります

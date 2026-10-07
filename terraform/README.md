@@ -11,9 +11,11 @@ Nokoroa の AWS インフラを Terraform で管理しています。
 ただし**インフラの定義はすべてこのディレクトリに残っています。** 空の state から `plan` を実行すると、この構成が定義しているリソースの全量が出ます。
 
 ```
-$ terraform plan -var runtime_enabled=true
+$ terraform plan -var runtime_enabled=true -var db_start_from_empty=true
 Plan: 79 to add, 0 to change, 0 to destroy.
 ```
+
+`db_start_from_empty` が必要なのは、`modules/rds` の `precondition` が「復元元の指定」か「空から始める明示」のどちらかを要求するためです（素の `-var runtime_enabled=true` だけでは plan がエラーで止まります）。
 
 この 79 件は「停止によって削除された分」ではなく「`runtime_enabled = true` で定義されている全量」です。AWS 上に実在するのに state に載っていないリソース（下記）があるため、現状の `plan` はそれらも新規作成として数えます。実際に再構築で作られるのは、それらを `import` で取り込んだあとの差分になります。
 
@@ -55,7 +57,7 @@ CI が毎コミットで `terraform fmt -check` / `init` / `validate` を実行�
 
 素の `terraform destroy` を止めるための `prevent_destroy` を 2 箇所だけ置いています（`modules/secrets` の `jwt_secret` と uploads バケット）。効く範囲と効かない範囲、2 箇所に絞った理由は「[運用上の落とし穴](#運用上の落とし穴)」にまとめています。ECR・ACM 証明書・DynamoDB ロックテーブルは保持対象ですがガードを付けていません（いずれも再作成できます。ACM は再発行に DNS 検証の待ち時間、ECR は 3 イメージの再ビルドが必要）。
 
-**保持バックアップは停止のたびに積み上がります。** `delete_automated_backups = false` にしているため、インスタンス削除後も自動バックアップが「retained automated backup」として `backup_retention_period`（現在 **14 日**）ぶん残ります。無料枠は割当ストレージ相当（20GB）までで、超えた分は $0.095/GB 月です。頻繁に停止・再開するとサイクルごとの保持分が重なるため、**サイクルを回す運用では `backup_retention_period` を 1〜7 に落とす方が合理的です**（1 日稼働では 14 日分の保持がそもそも成立しません）。リージョンあたりの保持バックアップ数にも上限があります。
+**保持バックアップは停止のたびに積み上がります。** `delete_automated_backups = false` にしているため、インスタンス削除後も自動バックアップが「retained automated backup」として `backup_retention_period`（現在 **14 日**）ぶん残ります。バックアップストレージの無料枠は**稼働中のインスタンスのプロビジョンドストレージ**に基づくため、インスタンスを削除した停止中は無料枠が効かず、保持バックアップも最終スナップショットも 1GB 目から $0.095/GB 月で課金されます。頻繁に停止・再開するとサイクルごとの保持分が重なるため、**サイクルを回す運用では `backup_retention_period` を 1〜7 に落とす方が合理的です**（1 日稼働では 14 日分の保持がそもそも成立しません）。リージョンあたりの保持バックアップ数にも上限があります。
 
 この表に載っていない課金もあります。`enabled_cloudwatch_logs_exports` によって AWS が作る `/aws/rds/instance/nokoroa-prod-postgres/postgresql` は Terraform の管理外・保持期間無期限で、停止しても残り続けます。
 
@@ -151,17 +153,69 @@ DB パスワード・JWT シークレット・OAuth クライアントシーク�
 
 > **先に「既知の課題」を確認してください。** 停止中も AWS 上に残しているリソース（ECR・S3・Secrets Manager）は現在 state に載っておらず、この手順をそのまま実行すると名前の衝突で失敗します。先に `terraform import` での取り込みが必要です。
 >
-> `import` は下の手順 1〜2（変数ファイルの用意と `terraform init`）を済ませたあとに実行してください。`init` 前では `Could not load plugin` で、`runtime_enabled` を渡さないと `Error: No value for required variable` で止まります。`import` にも `-var runtime_enabled=false` が必要です（`import` 自体は `prevent_destroy` には阻害されません）。
+> `import` は「[1. 変数ファイルを用意する](#1-変数ファイルを用意する)」と `terraform init` を済ませたあとに実行してください（手順 2 の `apply` より**前**です。`init` 前は `Could not load plugin` になります）。`import` 自体は `prevent_destroy` には阻害されません。
 >
-> **⚠️ RDS インスタンスを `import` する場合は、停止する前に必ず 1 回「作る側」の apply を通してください。** プロバイダの `import` は `skip_final_snapshot = true` と `delete_automated_backups = true` を state に書き込み、`destroy` は config ではなく state を読みます。そのため `import` 直後に停止すると**最終スナップショットも自動バックアップも取らずに削除され、データが無言で全損します**。`runtime_enabled = false` ではモジュールが `count = 0` になるため属性を是正する update は走らず、`precondition` も config しか見ないので検知できません。
->
-> ```bash
-> terraform import 'module.rds[0].aws_db_instance.main' nokoroa-prod-postgres
-> terraform apply -var runtime_enabled=true   # ★ ここで state が是正される
-> terraform apply -var runtime_enabled=false  # 停止はこの後
-> ```
->
-> 現在は RDS インスタンスが存在しないため `import` 対象に入りませんが、稼働中に state を失った場合はこの経路を踏みます。
+> **`-var runtime_enabled` の値はアドレスによって変わります。** 常時保持分（ECR・S3・Secrets Manager・IAM ポリシー）は `count` を持たないので `false` で取り込めますが、`module.rds[0]` / `module.alb[0]` / `module.ecs[0]` / `aws_route53_record.alb[0]` のような `[0]` 付きアドレスは `false` ではインスタンスが存在せず、`Configuration for import target does not exist` で拒否されます。これらは `true` が必要です。
+
+詳しい対象一覧は「[import する](#import-する)」にまとめています。
+
+### import する
+
+未 import のまま `apply` すると**確実に名前衝突で落ちるのは 14 件**です。これだけは先に取り込んでください。
+
+| state アドレス | 物理 ID |
+|---|---|
+| `aws_ecr_repository.backend` / `.frontend` / `.ai` | リポジトリ名（`nokoroa-backend` 等） |
+| `module.s3.aws_s3_bucket.uploads` | `nokoroa-prod-uploads` |
+| `module.s3.aws_s3_bucket.terraform_state[0]` | `nokoroa-terraform-state` |
+| `module.s3.aws_dynamodb_table.terraform_state_lock[0]` | `terraform-state-lock` |
+| `module.secrets.aws_secretsmanager_secret.<7 件>` | **シークレット ARN**（末尾 6 文字のランダムサフィックス込み） |
+| `module.secrets.aws_iam_policy.secrets_read` | `arn:aws:iam::<acct>:policy/nokoroa-prod-secrets-read` |
+
+シークレットの ARN は名前からは組み立てられません。上の一覧コマンドに `ARN` を足して取得してください。
+
+```bash
+aws secretsmanager list-secrets --include-planned-deletion \
+  --query 'SecretList[?starts_with(Name, `nokoroa-prod-`)].[Name,ARN,DeletedDate]' --output table
+```
+
+注意点がいくつかあります。
+
+- **`modules/s3` の state バケット系 4 件と DynamoDB は `[0]` が必要**（リソース側に `count` があるため）。一方 `module.s3` / `module.secrets` 自体には `count` が無いので `module.s3[0]` と書くのは誤りです。`[0]` が付くのは `module.rds[0]` のようなモジュール単位の `count` と、リソース単位の `count` の 2 種類で、形が違います
+- **`aws_acm_certificate.main` も実在するなら import してください。** 過去の停止は `-target=module.rds` / `-target=module.vpc` だったのでルートモジュールの証明書には届いておらず、残っている可能性が高いです。未 import だと ACM は名前が一意でないため**衝突せず新しい証明書が発行され**、`aws_acm_certificate_validation` が DNS 検証の完了を待ちます（= 「再開時に検証待ちは発生しない」が初回だけ崩れ、旧証明書が孤児として残る）
+- **`aws_acm_certificate_validation` と `data` ソース 3 件は import できません**（前者はプロバイダが Import 非対応の論理リソース）。証明書が ISSUED なら create は即完了するので問題ありません
+- バケットのバージョニング・暗号化・CORS・ポリシー・パブリックアクセスブロック、ECR のライフサイクルポリシー、`aws_secretsmanager_secret_version` は**未 import でも apply が上書きして収束する**ので任意です
+- **削除待ち中のシークレットは import できません**（プロバイダが NotFound として扱う）。`restore-secret` か待機満了が先です
+
+#### `random_password` は import しても値が保てない
+
+`random_password` 3 件（`db_password` / `jwt_secret` / `internal_api_key`）は、**import しても次の `apply` で作り直されます。** random プロバイダの import は config の属性を無視して schema の既定値を state に入れる仕様で、既定と違う属性があると replacement になります。この構成は 3 件すべて既定と異なります（`special = false` / `override_special` 指定）。
+
+結果、`jwt_secret` が再生成されて**ログイン中の全ユーザーのセッションが無効化**されます。値を保つ必要がある場合は、import 後に一時的な `ignore_changes` を入れるか、`aws secretsmanager put-secret-value` で元の値を書き戻してください。
+
+#### ⚠️ RDS インスタンスを import する場合
+
+**`cycle.auto.tfvars` に `db_snapshot_identifier` が入っている状態で起動 apply を打ってはいけません。** `import` 直後の state は `snapshot_identifier` が空なので、復元元が設定されていると `空 → "snap-..."` の差分が **ForceNew の replace** として計画されます。その replace の destroy 側は `import` が state に書いた `skip_final_snapshot = true` / `delete_automated_backups = true` で実行されるため、**最終スナップショットも自動バックアップも取らずに削除されます**（plan には `must be replaced` が出ます。出たら中断してください）。
+
+安全な経路は次のとおりです。`snapshot_identifier` は Optional+Computed なので、config を空にしておけば state の値が維持されて差分が出ません。
+
+```bash
+# 1. RDS の 3 リソースをまとめて import する（instance だけだと次の apply が
+#    DBSubnetGroupAlreadyExists / DBParameterGroupAlreadyExists で落ち、
+#    skip_final_snapshot の是正が実行されないまま残る）
+terraform import -var runtime_enabled=true 'module.rds[0].aws_db_instance.main'        nokoroa-prod-postgres
+terraform import -var runtime_enabled=true 'module.rds[0].aws_db_subnet_group.main'    nokoroa-prod-db-subnet-group
+terraform import -var runtime_enabled=true 'module.rds[0].aws_db_parameter_group.main' nokoroa-prod-pg15-params
+
+# 2. cycle.auto.tfvars の db_snapshot_identifier をコメントアウトする
+
+# 3. 復元を伴わない起動 apply で state を是正する（差分は in-place のみ）
+terraform apply -var runtime_enabled=true -var db_start_from_empty=true
+
+# 4. cycle.auto.tfvars を元に戻す。以降は通常のサイクル運用
+```
+
+手順 3 を飛ばすと、次の停止で最終スナップショットも自動バックアップも取られずに削除されます。現在は RDS インスタンスが存在しないため import 対象に入りませんが、稼働中に state を失った場合はこの経路を踏みます。
 
 ### 1. 変数ファイルを用意する
 
@@ -182,14 +236,18 @@ terraform init
 # サイクル変数を置く（詳細は「サイクル変数を固定する」）。
 # 初回は復元元が無いため空の DB から始める。
 cat > cycle.auto.tfvars <<'EOF'
-db_start_from_empty          = true
 db_final_snapshot_identifier = "nokoroa-prod-initial"
 EOF
 
-terraform apply -var runtime_enabled=true
+terraform apply \
+  -var runtime_enabled=true \
+  -var db_start_from_empty=true \
+  -var allow_placeholder_images=true
 ```
 
-`db_final_snapshot_identifier` は**停止時に作るスナップショットの名前**で、起動時に渡しておく必要があります（理由は「[停止と再開](#停止と再開)」）。`db_start_from_empty` を明示しないと `modules/rds` の `precondition` が止めます。
+`db_final_snapshot_identifier` は**停止時に作るスナップショットの名前**で、起動時に渡しておく必要があります（理由は「[停止と再開](#停止と再開)」）。
+
+`-var` が 3 つ必要な理由はそれぞれ別です。`db_start_from_empty` は復元元が無いこと、`allow_placeholder_images` は ECR にまだイメージが無いこと（指定しないと `modules/ecs` の `precondition` が止めます）を明示しています。どちらも**危険な側を明示オプトインにする**ための変数で、`cycle.auto.tfvars` のような永続ファイルには置きません。
 
 ### 3. イメージをビルドして push する
 
@@ -220,16 +278,18 @@ ai_image       = "<account-id>.dkr.ecr.ap-northeast-1.amazonaws.com/nokoroa-ai:l
 ```
 
 ```bash
-terraform apply -var runtime_enabled=true
+terraform apply -var runtime_enabled=true -var db_start_from_empty=true
 ```
 
-> 手順 2 で作った `cycle.auto.tfvars` は自動で読まれるので、スナップショット関連の `-var` を付け直す必要はありません。
+> 手順 2 で作った `cycle.auto.tfvars` は自動で読まれるので、`db_final_snapshot_identifier` を付け直す必要はありません。`db_start_from_empty` は毎回コマンドラインで渡します（復元元がまだ無いため）。
 >
 > `runtime_enabled` には既定値がありません。付け忘れると Terraform が入力を促して止まります（黙って何かを壊すより良い、という設計です）。
 
 以降のデプロイは GitHub Actions（`.github/workflows/deploy.yml`）が担います。backend・ai・frontend の 3 イメージを ARM64 でビルドして push し、ECS のサービスを更新します。
 
-**現在は手動実行（`workflow_dispatch`）のみに設定しています。** 本番が停止していて ECS サービスが存在しないため、main への push で自動実行すると必ず失敗するからです。本番を再構築したら `push` トリガーを戻してください。
+**現在は手動実行（`workflow_dispatch`）のみに設定しています。停止・再開サイクルで運用する限り、`push` トリガーは戻せません。** 停止中は `module.ecs` ごと消えてクラスタもサービスも存在しないため、main への push で毎回 `ClusterNotFound` / `ServiceNotFound` で失敗します。しかも ECR は常時保持なのでイメージの push だけは成功し、サービスへ適用されないタスク定義リビジョンが積み上がります。
+
+戻したい場合は deploy.yml 側に「サービスが存在しなければ skip」のガードを入れてください。
 
 backend タスクは 1 つのタスク定義に `backend` と `ai` の 2 コンテナを持つため、**タスク定義のレンダリングを 2 段に連鎖させています**。1 回で済ませると、更新しなかった側のコンテナのイメージが古いまま残ります。
 
@@ -358,10 +418,12 @@ terraform apply -var runtime_enabled=true
 **一覧が 0 件だった場合**は復元元が存在しません（現状がこれに該当します。前回の停止はこの設計より前で、最終スナップショットが作られていません）。その場合は空の DB から始めることを明示します。
 
 ```hcl
-# cycle.auto.tfvars
-db_start_from_empty          = true
+# cycle.auto.tfvars — db_snapshot_identifier は書かない
 db_final_snapshot_identifier = "nokoroa-prod-20261008-0900"
-# db_snapshot_identifier は書かない（両方書くと precondition が弾く）
+```
+
+```bash
+terraform apply -var runtime_enabled=true -var db_start_from_empty=true
 ```
 
 `db_start_from_empty` を明示させているのは、`db_snapshot_identifier` の渡し忘れで**空の DB が本番として立つ**のを防ぐためです。黙って通すと、その後の書き込みは空 DB 側に入り、次の停止が「空 DB の中身」を新しいスナップショットとして保存するため、以降「旧スナップショットに戻すと新規分が消える / 新しい方を使うと旧データが消える」の二択になります。
@@ -404,6 +466,10 @@ aws ecs run-task --cluster nokoroa-prod-cluster --task-definition nokoroa-prod-b
   --launch-type FARGATE --network-configuration "$NET" \
   --overrides '{"containerOverrides":[{"name":"backend","command":["npm","run","seed"]}]}'
 ```
+
+**アプリのコードは「最後に deploy.yml を手動実行した時点のイメージ」です。** deploy.yml は `workflow_dispatch` のみなので、main にマージされたコミットは誰かが実行するまで ECR に載りません。最新の main を見せたい場合は、再開 apply のあとに deploy.yml を流してください。
+
+あわせて、**再開では Terraform がタスク定義を revision 1 から作り直します。** 停止でサービスとタスク定義が state ごと消えるため、`modules/ecs` の `ignore_changes = [task_definition]`（稼働中の apply でイメージが巻き戻るのを防ぐ設定）はサイクルを跨いでは効きません。いま巻き戻らないのは `terraform.tfvars` の `*_image` と deploy.yml が両方 `:latest` を使っているからで、**どちらかを `:sha` に変えると再開のたびにその時点までロールバックします。** `:latest` 固定はこの設計の前提です。
 
 `vector` 拡張について 1 点。パラメータグループは毎サイクル作り直され、`shared_preload_libraries` は `apply_method = "pending-reboot"` です。復元直後のインスタンスでベクトル検索が失敗する場合は再起動してください。
 

@@ -118,6 +118,17 @@ resource "aws_ecs_task_definition" "backend" {
   execution_role_arn       = aws_iam_role.ecs_task_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
 
+  lifecycle {
+    # イメージ未指定のまま本番が立つのを弾く。下の image 行はパブリックの
+    # プレースホルダへフォールバックするため、黙って通すと apply は成功して
+    # ALB の DNS も返るのに backend は永久に起動しない（ai が python:3.12-slim で
+    # HTTP を喋らず dependsOn: HEALTHY を満たせない）。
+    precondition {
+      condition     = var.allow_placeholder_images || (var.backend_image != "" && var.ai_image != "")
+      error_message = "backend_image と ai_image を指定してください（イメージを push する前の初回構築に限り allow_placeholder_images = true）。"
+    }
+  }
+
   runtime_platform {
     operating_system_family = "LINUX"
     cpu_architecture        = "ARM64"
@@ -274,6 +285,14 @@ resource "aws_ecs_task_definition" "frontend" {
   cpu                      = var.frontend_cpu
   memory                   = var.frontend_memory
   execution_role_arn       = aws_iam_role.ecs_task_execution.arn
+
+  lifecycle {
+    # 理由は backend タスク定義の precondition と同じ。
+    precondition {
+      condition     = var.allow_placeholder_images || var.frontend_image != ""
+      error_message = "frontend_image を指定してください（イメージを push する前の初回構築に限り allow_placeholder_images = true）。"
+    }
+  }
 
   runtime_platform {
     operating_system_family = "LINUX"

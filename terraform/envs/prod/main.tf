@@ -283,12 +283,13 @@ module "ecs" {
   ecs_security_group_id = module.vpc.ecs_security_group_id
 
   # Application
-  backend_image  = var.backend_image
-  frontend_image = var.frontend_image
-  ai_image       = var.ai_image
-  backend_port   = var.backend_port
-  frontend_port  = var.frontend_port
-  app_domain     = var.app_domain
+  backend_image            = var.backend_image
+  frontend_image           = var.frontend_image
+  ai_image                 = var.ai_image
+  allow_placeholder_images = var.allow_placeholder_images
+  backend_port             = var.backend_port
+  frontend_port            = var.frontend_port
+  app_domain               = var.app_domain
 
   # S3（バケット名は modules/s3 が決めるので output を渡す）
   uploads_bucket_name = module.s3.uploads_bucket_name
@@ -318,6 +319,14 @@ module "ecs" {
   backend_memory         = 512
   frontend_cpu           = 256
   frontend_memory        = 512
+
+  # database_url_secret_arn は secret_version 経由の ARN なので値の書き込みを待つが、
+  # 他 5 件（jwt / google×2 / gemini / internal_api_key）の valueFrom はシークレット
+  # 本体の ARN を参照しており順序エッジが無い。それだけだとタスク起動が値の書き込みより
+  # 先に走り、GetSecretValue が ResourceNotFoundException でタスク起動に失敗する
+  # （ECS が再試行するので自己回復はするが、初回起動が遅れ失敗タスクが残る）。
+  # モジュール単位で待たせて 7 件すべてを閉じる。
+  depends_on = [module.secrets]
 }
 
 # Route 53 A Record for ALB
