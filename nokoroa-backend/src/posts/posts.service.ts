@@ -134,8 +134,13 @@ export class PostsService {
         // 「投稿の作成自体が失敗する」。slug は正規化後の同一性なので、
         // name か slug のどちらかが一致する既存タグを再利用する。
         const slug = slugify(name) || name.toLowerCase();
+        // name 一致行と slug 一致行が別行になり得る(slugify の仕様を変える前の
+        // 旧データ等)ため、どちらが返るかを id 昇順で決定的にする。
         const findExisting = () =>
-          this.prisma.tag.findFirst({ where: { OR: [{ name }, { slug }] } });
+          this.prisma.tag.findFirst({
+            where: { OR: [{ name }, { slug }] },
+            orderBy: { id: 'asc' },
+          });
 
         const existing = await findExisting();
         if (existing) return existing;
@@ -158,7 +163,14 @@ export class PostsService {
         }
       }),
     );
-    return tags;
+    // slug 一致で既存タグを再利用する結果、1 リクエスト内の複数の name が
+    // 同一 Tag 行に解決されうる (例: tags: ['Kyoto', '# Kyoto'] はどちらも
+    // slug 'kyoto')。重複を残すと postTag.createMany の data に
+    // 同じ (postId, tagId) が 2 件入り、@@unique([postId, tagId]) の P2002 で
+    // 409 になる (= slug 衝突の 409 が tag から post_tag へ移るだけ)。
+    // id で一意化してから返す。
+    const uniqueById = new Map(tags.map((tag) => [tag.id, tag]));
+    return [...uniqueById.values()];
   }
 
   async create(createPostDto: CreatePostDto & { authorId: number }) {
@@ -293,9 +305,12 @@ export class PostsService {
     if (ids.length === 0) return [];
     const posts = await this.prisma.post.findMany({
       where: { id: { in: ids }, isPublic: true },
-      include: postInclude,
+      // 意味検索 (searchSemantic) がここから結果を引く。findAll / search と
+      // 同じく favoritesCount を含めないと、同じ /search 画面で
+      // キーワード検索は正しい件数・意味検索は 0 固定という食い違いになる。
+      include: postWithFavoritesCountInclude,
     });
-    return posts.map(formatPost);
+    return posts.map(formatPostWithFavoritesCount);
   }
 
   async searchSemantic(dto: SearchPostsSemanticDto) {
@@ -493,6 +508,7 @@ export class PostsService {
       distance: number | null;
       tags: string[] | null;
       total_count: bigint;
+      favorites_count: bigint;
     }
 
     // 距離式は SELECT と WHERE の両方に現れる。クエリを丸ごと二重に持つと
@@ -534,7 +550,11 @@ export class PostsService {
            JOIN tag t ON pt."tagId" = t.id
            WHERE pt."postId" = p.id),
           ARRAY[]::text[]
-        ) as tags
+        ) as tags,
+        -- 一覧系と同じく favoritesCount を返す。含めないと /map のカードだけ
+        -- 件数が 0 固定になり、詳細画面と食い違う。
+        -- 集計は bookmark(postId) の索引で引ける。
+        (SELECT COUNT(*) FROM bookmark b WHERE b."postId" = p.id) AS favorites_count
       FROM post p
       JOIN "user" u ON p."authorId" = u.id
       LEFT JOIN location l ON p."locationId" = l.id
@@ -570,6 +590,8 @@ export class PostsService {
       latitude: row.latitude,
       longitude: row.longitude,
       tags: row.tags ?? [],
+      // bigint で返るため Number へ寄せる (total_count と同じ扱い)
+      favoritesCount: Number(row.favorites_count),
       author: {
         id: row.author_id,
         name: row.author_name,

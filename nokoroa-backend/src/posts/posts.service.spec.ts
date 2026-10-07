@@ -614,9 +614,33 @@ describe('PostsService', () => {
 
         expect(mockPrismaService.tag.findFirst).toHaveBeenCalledWith({
           where: { OR: [{ name: '# Kyoto' }, { slug: 'kyoto' }] },
+          // name 一致行と slug 一致行が別行になり得るため順序を固定する
+          orderBy: { id: 'asc' },
         });
         // slug 一致で既存タグを再利用し、重複 create を発行しない
         expect(mockPrismaService.tag.create).not.toHaveBeenCalled();
+        expect(mockPrismaService.postTag.createMany).toHaveBeenCalledWith({
+          data: [{ postId: 1, tagId: 5 }],
+        });
+      });
+
+      it('同一リクエスト内で slug が衝突する2つのタグ名を重複させない', async () => {
+        // slug 一致で既存タグを再利用する結果、別の name が同じ Tag 行に
+        // 解決されうる。重複を残すと postTag.createMany の data に同じ
+        // (postId, tagId) が 2 件入り、@@unique([postId, tagId]) の P2002 で
+        // 409 になる (slug 衝突の 409 が tag から post_tag へ移るだけ)。
+        setupOwner();
+        mockPrismaService.tag.findFirst.mockResolvedValue({
+          id: 5,
+          name: 'Kyoto',
+          slug: 'kyoto',
+        });
+        mockPrismaService.postTag.deleteMany.mockResolvedValue({ count: 0 });
+        mockPrismaService.postTag.createMany.mockResolvedValue({ count: 1 });
+        mockPrismaService.post.update.mockResolvedValue(mockPost);
+
+        await service.update(1, { tags: ['Kyoto', '# Kyoto'] }, 1);
+
         expect(mockPrismaService.postTag.createMany).toHaveBeenCalledWith({
           data: [{ postId: 1, tagId: 5 }],
         });

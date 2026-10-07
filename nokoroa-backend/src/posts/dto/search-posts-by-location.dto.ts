@@ -15,22 +15,28 @@ import {
 
 import { MAX_PAGE_OFFSET } from '../../common/pagination.dto';
 
+/**
+ * 「未指定」と「指定されたが数値として不正」を区別する。
+ *
+ * 不正値も undefined に潰すと、?centerLat=abc&centerLng=def が
+ * 「座標の指定なし」と解釈されて距離条件なしで 200 が返り、
+ * 呼び出し側が誤りに気付けない。NaN を返せば @IsNumber が弾いて 400 になる
+ * (class-validator の isNumber は既定で NaN を許可しない)。
+ * 欠落・空文字だけを undefined にする。
+ */
 const toFiniteNumber = (value: unknown): number | undefined => {
   if (value === undefined || value === null || value === '') return undefined;
-  if (typeof value === 'number')
-    return Number.isFinite(value) ? value : undefined;
-  if (typeof value !== 'string') return undefined;
-  const n = parseFloat(value);
-  return Number.isFinite(n) ? n : undefined;
+  if (typeof value === 'number') return value;
+  if (typeof value !== 'string') return Number.NaN;
+  return parseFloat(value);
 };
 
+/** toFiniteNumber と同じ方針。不正値は NaN にして @IsInt に弾かせる。 */
 const toFiniteInt = (value: unknown): number | undefined => {
   if (value === undefined || value === null || value === '') return undefined;
-  if (typeof value === 'number')
-    return Number.isFinite(value) ? value : undefined;
-  if (typeof value !== 'string') return undefined;
-  const n = parseInt(value, 10);
-  return Number.isFinite(n) ? n : undefined;
+  if (typeof value === 'number') return value;
+  if (typeof value !== 'string') return Number.NaN;
+  return parseInt(value, 10);
 };
 
 /**
