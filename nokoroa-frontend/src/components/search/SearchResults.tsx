@@ -107,17 +107,16 @@ export const SearchResults = ({
   }
 
   if (!hasResults) {
-    // total が未確定 = 現在の検索のレスポンスをまだ観測していない。
-    // 同じ条件を再検索して SWR がキャッシュを即返す場合、isLoading は false
-    // なのに累積は reset 済みで空なので、ここで「該当なし」と言うと
-    // 取り込み effect が走る前の 1 フレームだけ誤表示が出る。
-    if (total === undefined) {
-      return (
-        <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
-          <CircularProgress />
-        </Box>
-      );
-    }
+    // `total === undefined` でスピナーに逃がしてはいけない。
+    // useSearchPosts は「semantic モードかつクエリ空」のとき url を null にして
+    // 一切フェッチしない (useSearchPosts.ts:61-64)。SearchForm はその状態でも
+    // 送信できる (handleSubmit に空クエリのガードが無い) ため、
+    // hasSearched = true / data = undefined / isLoading = false が永続しうる。
+    // ここで total 未確定をスピナー扱いにすると永久に回り続ける。
+    //
+    // キャッシュヒットした同条件の再検索では取り込み effect がペイント後に
+    // 走るため「該当なし」が 1 フレームだけ見えるが、これは旧実装と同じで
+    // 見た目だけの問題。永久固着よりはこちらを選ぶ。
     return (
       <Box sx={{ p: 4, textAlign: 'center' }}>
         <Typography variant="h6" color="text.secondary">

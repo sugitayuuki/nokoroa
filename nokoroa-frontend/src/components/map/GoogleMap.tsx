@@ -301,21 +301,26 @@ export const GoogleMap: React.FC<GoogleMapProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map, posts, onPostClick, userLocation, ipLocation]);
 
-  // unmount 時の後始末。
+  // unmount 時にマーカーを後始末する。
   // 上の effect は「再実行時に前回マーカーを setMap(null) する」形なので
   // posts 更新での累積は起きないが、unmount 時は誰も掃除しない。
-  // /map を出入りするたびに Marker・InfoWindow・click リスナと
-  // google.maps.Map インスタンスが積み上がる。
-  // markers / map を依存に入れると「生成 → 破棄」を繰り返してしまうため、
-  // ref 経由で最新値を読んで unmount 時だけ破棄する。
-  // map インスタンスには clearInstanceListeners を呼ばない。あれは
-  // Maps API 内部のリスナー(パン/ズーム等)まで消すため地図が操作不能になる。
-  // StrictMode の effect 二重実行では state(map) が保持され initializeMap も
-  // `!map` ガードで再生成しないので、一度壊すと開発環境では復帰しない。
-  // マーカーは下の生成 effect が作り直すので破棄して問題ない。
+  // /map を出入りするたびに Marker・InfoWindow・click リスナが積み上がる。
+  //
+  // map インスタンスには触らない。clearInstanceListeners は Maps API 内部の
+  // リスナー(パン/ズーム等)まで消すため地図が操作不能になり、StrictMode の
+  // effect 二重実行では state(map) が保持され initializeMap も `!map` ガードで
+  // 再生成しないので、一度壊すと開発環境では復帰しない。
   // map 自体に addListener は付けていない (リスナーは全てマーカー側)。
+  // なお Maps JS に destroy API は無いため、Map インスタンス自体の解放は
+  // コンテナ div の破棄後の GC に委ねるしかない (ここでは対処できない)。
+  //
+  // markers を依存に入れると「生成 → 破棄」を繰り返すため、ref 経由で
+  // 最新値を読んで unmount 時だけ破棄する。ref の更新は effect で行う
+  // (render 中の書き込みは React の推奨に反する)。
   const markersRef = useRef<google.maps.Marker[]>([]);
-  markersRef.current = markers;
+  useEffect(() => {
+    markersRef.current = markers;
+  }, [markers]);
 
   useEffect(
     () => () => {

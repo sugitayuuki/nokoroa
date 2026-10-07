@@ -66,18 +66,26 @@ export const SearchForm = ({ onSearch, initialFilters }: SearchFormProps) => {
     }),
   );
   useEffect(() => {
-    const next = JSON.stringify({
+    const incoming = {
       tags: initialFilters?.tags ?? [],
       location: initialFilters?.location ?? '',
-    });
+    };
+    const next = JSON.stringify(incoming);
+    // 入力中の値は踏まない。initialFilters が変わっていなければ何もしない
+    // (tags / location を依存に入れているので打鍵ごとにここへ来る)。
     if (next === appliedInitialRef.current) return;
     appliedInitialRef.current = next;
-    setTags(initialFilters?.tags ?? []);
-    setLocation(initialFilters?.location ?? '');
-    if (initialFilters?.tags?.length || initialFilters?.location) {
+
+    // 自分が送信した値がそのまま親から返ってきただけなら触らない。
+    // 触ると、手で閉じた詳細パネルをタグ付き検索のたびに開き直してしまう。
+    if (next === JSON.stringify({ tags, location })) return;
+
+    setTags(incoming.tags);
+    setLocation(incoming.location);
+    if (incoming.tags.length || incoming.location) {
       setIsAdvancedOpen(true);
     }
-  }, [initialFilters?.tags, initialFilters?.location]);
+  }, [initialFilters?.tags, initialFilters?.location, tags, location]);
 
   // タグ候補を取得
   const { tags: availableTags } = useTags();
