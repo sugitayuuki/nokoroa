@@ -63,13 +63,10 @@ export const useSearchPosts = (
   const url =
     shouldFetch && !isSemanticWithoutQuery ? buildSearchUrl(filters) : null;
 
+  // keepPreviousData を使わない理由は usePosts.ts のコメントを参照
+  // (前ページの data を現ページとして取り込みページが飛ぶ)。
   return useSWR<SearchResponse>(url, fetcher, {
     revalidateOnFocus: false,
     dedupingInterval: 5000,
-    // 検索も offset を変えて SWR キーを変えるため、これが無いと 2 ページ目の
-    // 取得中に data が undefined になり、search/page.tsx の
-    // `data ? { ...data, posts: allPosts } : undefined` が undefined に落ちて
-    // 累積済みの検索結果ごと全面スピナーに差し替わる (usePosts と同じ理由)。
-    keepPreviousData: true,
   });
 };

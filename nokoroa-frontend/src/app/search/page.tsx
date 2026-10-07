@@ -2,8 +2,9 @@
 
 import SearchIcon from '@mui/icons-material/Search';
 import { Box, CircularProgress, Container, Typography } from '@mui/material';
+import type { ReadonlyURLSearchParams } from 'next/navigation';
 import { useSearchParams } from 'next/navigation';
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 
 import { usePaginatedPosts } from '@/hooks/usePaginatedPosts';
 
@@ -15,24 +16,30 @@ import { SearchFilters } from '../../types/search';
 /** 1 ページあたりの取得件数 */
 const PAGE_SIZE = 10;
 
+/**
+ * URL のクエリから初期検索条件を組む。
+ *
+ * マウント後の useEffect で入れると、SearchForm が初回 render の空 filters を
+ * useState の初期値として確定させてしまい、フォームにタグが表示されない
+ * (結果一覧だけ絞られる)。そのままキーワードを足して再検索すると
+ * tags が送られず URL のタグ条件が黙って消えるため、初期化時点で決める。
+ */
+function initialFiltersFromParams(
+  params: URLSearchParams | ReadonlyURLSearchParams,
+): SearchFilters {
+  const tagParam = params.get('tags');
+  if (!tagParam) return {};
+  return { tags: [tagParam], mode: 'keyword', limit: PAGE_SIZE, offset: 0 };
+}
+
 function SearchPageContent() {
   const searchParams = useSearchParams();
-  const [filters, setFilters] = useState<SearchFilters>({});
-  const [hasSearched, setHasSearched] = useState(false);
-
-  useEffect(() => {
-    const tagParam = searchParams.get('tags');
-    if (tagParam) {
-      const initialFilters: SearchFilters = {
-        tags: [tagParam],
-        mode: 'keyword',
-        limit: PAGE_SIZE,
-        offset: 0,
-      };
-      setFilters(initialFilters);
-      setHasSearched(true);
-    }
-  }, [searchParams]);
+  const [filters, setFilters] = useState<SearchFilters>(() =>
+    initialFiltersFromParams(searchParams),
+  );
+  const [hasSearched, setHasSearched] = useState(
+    () => !!searchParams.get('tags'),
+  );
 
   const { data, isLoading, error } = useSearchPosts(filters, hasSearched);
 
@@ -57,6 +64,33 @@ function SearchPageContent() {
       })),
   });
 
+  // 件数などのメタ情報は data から直接読むとページ送り中に消えるため、
+  // 直前のレスポンスの値を保持しておく(一覧は allPosts が正)。
+  const [resultMeta, setResultMeta] = useState<{
+    total: number;
+    aiAvailable?: boolean;
+  }>();
+
+  useEffect(() => {
+    if (data) {
+      setResultMeta({ total: data.total, aiAvailable: data.aiAvailable });
+    }
+  }, [data]);
+
+  // 同じページに留まったまま ?tags= が変わる経路(タグチップの連続クリック等)に追従する。
+  // 初期値は useState 側で入れているので、ここは「変化したとき」だけを担う。
+  const appliedTagParamRef = useRef(searchParams.get('tags'));
+  useEffect(() => {
+    const tagParam = searchParams.get('tags');
+    if (tagParam && tagParam !== appliedTagParamRef.current) {
+      appliedTagParamRef.current = tagParam;
+      setFilters(initialFiltersFromParams(searchParams));
+      setHasSearched(true);
+      setResultMeta(undefined);
+      reset();
+    }
+  }, [searchParams, reset]);
+
   const handleSearch = (newFilters: SearchFilters) => {
     const searchFilters = {
       ...newFilters,
@@ -65,6 +99,7 @@ function SearchPageContent() {
     };
     setFilters(searchFilters);
     setHasSearched(true);
+    setResultMeta(undefined);
     reset();
   };
 
@@ -84,7 +119,12 @@ function SearchPageContent() {
       </Box>
 
       <SearchResults
-        data={data ? { ...data, posts: allPosts } : undefined}
+        // 一覧は累積を持つ usePaginatedPosts から直接渡す。
+        // SWR の data はページごとにキーが変わって undefined になるため、
+        // これを経由すると 2 ページ目の取得中に結果が全部消える。
+        posts={allPosts}
+        total={resultMeta?.total}
+        aiAvailable={resultMeta?.aiAvailable}
         isLoading={isLoading}
         error={error}
         hasSearched={hasSearched}

@@ -32,14 +32,16 @@ export const usePosts = ({
     `${API_CONFIG.endpoints.posts}?${params.toString()}`,
   );
 
+  // keepPreviousData は使わない。新キーが未キャッシュの間、前ページの data を
+  // 同一参照で返すため「data が何ページ目のものか」が偽られる。
+  // usePaginatedPosts の取り込み effect は [data, page] 依存なので、
+  // page だけ進んだ時点で前ページのデータを現ページとして取り込み、
+  // lastLoadedPageRef を進めて isLoadingMore を解除してしまう
+  // → observer が即再発火してページが 1 つ飛ぶ。
+  // ページ送り中に一覧を消さないのは「累積を持つ usePaginatedPosts を正とし、
+  // 呼び出し側が SWR のキー単位 isLoading で描画をゲートしない」ことで解決する。
   return useSWR<PostsResponse>(url, fetcher, {
     revalidateOnFocus: false,
     dedupingInterval: 5000,
-    // 無限スクロールは page を変えて URL(= SWR キー)を変える。これが無いと
-    // 2 ページ目の取得中に data が undefined / isLoading が true になり、
-    // 呼び出し側がそれで描画をゲートしているため、usePaginatedPosts が
-    // 保持している累積ごと一覧が画面から消えて点滅する。
-    // 前ページのデータを保持することで、ページ送り中も一覧が残る。
-    keepPreviousData: true,
   });
 };
