@@ -43,15 +43,19 @@ function AuthCallbackContent() {
   // 待機中のリダイレクトはアンマウント時だけ取り消す。検証 effect の cleanup に
   // 置くと、下で呼ぶ replaceState が searchParams を差し替えて cleanup を走らせ、
   // 成功後の遷移そのものを消してしまう
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    // StrictMode は setup → cleanup → setup の順に走り ref は保持されるため、
+    // setup で戻さないと追加 cleanup で立った離脱フラグが残り、
+    // dev では検証結果が常に捨てられて画面が固着する
+    leftRef.current = false;
+
+    return () => {
       // 検証は最大 10 秒かかる。その間にユーザーがヘッダー等から離脱したら、
       // 後から解決した検証結果で勝手にトップへ引き戻さない
       leftRef.current = true;
       clearTimeout(redirectTimerRef.current);
-    },
-    [],
-  );
+    };
+  }, []);
 
   useEffect(() => {
     const completeLogin = async () => {
