@@ -5,6 +5,7 @@ import {
   Button,
   CircularProgress,
   Container,
+  Stack,
   Typography,
 } from '@mui/material';
 import { useSearchParams } from 'next/navigation';
@@ -12,20 +13,23 @@ import { Suspense, useEffect, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 
 import { fetchAuthSession } from '@/lib/authSession';
+import { CallbackOutcome, decideCallbackOutcome } from '@/lib/callbackOutcome';
 import { removeToken, setToken } from '@/utils/auth';
 
-import { decideCallbackOutcome } from './callbackOutcome';
-
 /** 成功トーストを読める時間だけ見せてから遷移する */
-const SUCCESS_TOAST_MS = 1000;
+const REDIRECT_DELAY_MS = 1500;
 
-type CallbackState =
-  | { phase: 'verifying' }
-  | { phase: 'failed'; message: string; detail: string };
+const FAILED_UNEXPECTEDLY: CallbackOutcome = {
+  kind: 'failure',
+  message: 'ログインを完了できませんでした',
+  detail:
+    'この端末ではログイン情報を保存できませんでした。プライベートブラウズや Cookie のブロックを解除してお試しください。',
+  discardToken: false,
+};
 
 function AuthCallbackContent() {
   const searchParams = useSearchParams();
-  const [state, setState] = useState<CallbackState>({ phase: 'verifying' });
+  const [outcome, setOutcome] = useState<CallbackOutcome>();
   // StrictMode は effect を 2 回実行する。素通しすると成功トーストが 2 回出て、
   // プロフィール API も二重に叩かれる。
   // 入口は常にフルページ遷移なので、再実行が必要になることはない
@@ -36,7 +40,9 @@ function AuthCallbackContent() {
     hasRunRef.current = true;
 
     const completeLogin = async () => {
-      const token = searchParams.get('token');
+      // 空文字も「受け取れなかった」として扱う。保存と判定で述語が分かれると、
+      // URL のトークンではなく既存トークンの検証結果で成否が決まってしまう
+      const token = searchParams.get('token') || null;
 
       // トークンと(バックエンドが付与する)メールアドレス入り user をアドレスバー・
       // 履歴・Referer に残さない。失敗時はこの画面に留まるため特に必要
@@ -48,47 +54,52 @@ function AuthCallbackContent() {
 
       // トークンを保存しただけでは「ログインできた」とは言えない。
       // 実際にセッションが使えることを確かめてから成功を名乗る
-      const outcome = decideCallbackOutcome(
-        token === null
-          ? { token: null }
-          : { token, session: await fetchAuthSession() },
-      );
-
-      if (outcome.kind === 'success') {
-        toast.success(outcome.toast);
-        // フルロードで遷移する。AuthProvider の検証 effect は deps が空で
-        // 再実行されないため、SPA 遷移では認証状態が反映されない
-        setTimeout(() => window.location.replace('/'), SUCCESS_TOAST_MS);
-        return;
-      }
-
-      if (outcome.discardToken) {
-        removeToken();
-      }
-      setState({
-        phase: 'failed',
-        message: outcome.message,
-        detail: outcome.detail,
-      });
+      return decideCallbackOutcome(token ? await fetchAuthSession() : null);
     };
 
-    void completeLogin();
+    const apply = (next: CallbackOutcome) => {
+      if (next.kind === 'success') {
+        toast.success(next.toast);
+        // フルロードで遷移する。AuthProvider の検証 effect は deps が空で
+        // 再実行されないため、SPA 遷移では認証状態が反映されない
+        setTimeout(() => window.location.replace('/'), REDIRECT_DELAY_MS);
+        return;
+      }
+      if (next.discardToken) {
+        removeToken();
+      }
+      setOutcome(next);
+    };
+
+    // localStorage が使えない端末では setToken が throw する。投げ捨てると
+    // 失敗 UI に到達できず「認証処理中...」のまま固着する
+    completeLogin().then(apply, () => apply(FAILED_UNEXPECTEDLY));
   }, [searchParams]);
 
-  if (state.phase === 'failed') {
+  if (outcome?.kind === 'failure') {
     return (
       <Container maxWidth="sm" sx={{ py: 8 }}>
         <Alert severity="error" sx={{ mb: 3 }}>
           <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
-            {state.message}
+            {outcome.message}
           </Typography>
           <Typography variant="body2" sx={{ mt: 0.5 }}>
-            {state.detail}
+            {outcome.detail}
           </Typography>
         </Alert>
-        <Button variant="contained" href="/login">
-          ログイン画面へ
-        </Button>
+        <Stack direction="row" spacing={2}>
+          {outcome.retryHref && (
+            <Button variant="contained" href={outcome.retryHref}>
+              再試行
+            </Button>
+          )}
+          <Button
+            variant={outcome.retryHref ? 'outlined' : 'contained'}
+            href="/login"
+          >
+            ログイン画面へ
+          </Button>
+        </Stack>
       </Container>
     );
   }

@@ -16,8 +16,8 @@ import { useSmoothNavigation } from '@/hooks/useSmoothNavigation';
 import { API_CONFIG, createApiRequest } from '@/lib/apiConfig';
 import {
   AuthUser,
+  decideAuthAction,
   fetchAuthSession,
-  resolveAuthState,
   toAuthUser,
 } from '@/lib/authSession';
 import { getToken, removeToken, setToken } from '@/utils/auth';
@@ -54,41 +54,44 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const validateToken = async () => {
-      const validated = getToken();
-      if (!validated) {
+      const tokenAtStart = getToken();
+      if (!tokenAtStart) {
         setIsAuthenticated(false);
         setUser(undefined);
-        setIsLoading(false);
         return;
       }
 
-      // トークンの有効性を確認するため、プロフィールAPIを呼び出し
       const result = await fetchAuthSession();
 
       // 検証中に別のトークンへ差し替わっていたら、この結果は古いトークンに対する
       // 判定なので適用しない。OAuth コールバックと同時に走ると、古いトークンの
       // 401 が保存直後の新しいトークンを消してしまう
-      if (getToken() !== validated) {
-        setIsLoading(false);
+      if (getToken() !== tokenAtStart) {
         return;
       }
 
-      const state = resolveAuthState(result);
-      if (state.discardToken) {
+      const decision = decideAuthAction(result);
+      if (decision.action === 'discard') {
         removeToken();
       }
-      setIsAuthenticated(state.isAuthenticated);
-      setUser(state.user);
-      if (state.unverified) {
+      setIsAuthenticated(decision.action === 'accept');
+      setUser(decision.action === 'accept' ? decision.user : undefined);
+      if (decision.action === 'retain') {
         // 黙って未ログインにすると、ユーザーには理由のない強制ログアウトに見える
         toast.error(
-          'サーバーに接続できないため、ログイン状態を確認できませんでした。時間をおいて再読み込みしてください。',
+          'ログイン状態を確認できませんでした。時間をおいて再読み込みしてください。',
         );
       }
-      setIsLoading(false);
     };
 
-    validateToken();
+    // localStorage が使えない端末では getToken が throw する。放置すると
+    // isLoading が下りず、保護ページが永久にスピナーのまま残る
+    void validateToken()
+      .catch(() => {
+        setIsAuthenticated(false);
+        setUser(undefined);
+      })
+      .finally(() => setIsLoading(false));
   }, []);
 
   const login = useCallback(
@@ -121,10 +124,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         setToken(token);
 
-        // ログイン後、プロフィールAPIを呼び出してユーザー情報を取得。
+        // 発行されたトークンが実際に使えるかを確かめる。ここを省くと、
+        // 自分のガードに拒否されるトークンでも成功を名乗り、次の読み込みで
+        // 理由なくログアウトされる
+        const fetched = await fetchAuthSession();
+        if (fetched.status === 'unauthenticated') {
+          removeToken();
+          toast.error(
+            'ログインできませんでした。お手数ですがもう一度お試しください。',
+          );
+          return false;
+        }
+
         // 取得できなければログインレスポンスの user を使い、それも無ければ undefined のままにする。
         // (取得失敗時に偽のユーザーを置くと、他人の名前でログインしたように見えてしまう)
-        const fetched = await fetchAuthSession();
         setUser(
           (fetched.status === 'ok' ? fetched.user : undefined) ??
             toAuthUser(result.user),

@@ -1,9 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { API_CONFIG } from '@/lib/apiConfig';
 import {
+  decideAuthAction,
   fetchAuthSession,
-  resolveAuthState,
   toAuthUser,
 } from '@/lib/authSession';
 
@@ -35,6 +35,10 @@ beforeEach(() => {
   createApiRequest.mockReset();
 });
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe('fetchAuthSession', () => {
   it('プロフィール API を中断可能な形で叩く', async () => {
     createApiRequest.mockResolvedValue(respond(200, validProfile));
@@ -46,6 +50,21 @@ describe('fetchAuthSession', () => {
       API_CONFIG.endpoints.userProfile,
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
+  });
+
+  // AbortSignal.timeout は Safari 16+ が必要で、Next の既定ターゲット
+  // (safari 12) を外れる。使うと未対応環境で検証が常に失敗する
+  it('AbortSignal.timeout が無い環境でも検証できる', async () => {
+    const original = AbortSignal.timeout;
+    // @ts-expect-error 互換性の退行を検知するため意図的に欠落させる
+    delete AbortSignal.timeout;
+    createApiRequest.mockResolvedValue(respond(200, validProfile));
+
+    try {
+      expect((await fetchAuthSession()).status).toBe('ok');
+    } finally {
+      AbortSignal.timeout = original;
+    }
   });
 
   it('200 ならセッション有効として user を組み立てる', async () => {
@@ -61,7 +80,7 @@ describe('fetchAuthSession', () => {
   // 直らないものは「トークンが無効」側に寄せる。
   // unavailable にするとトークンが永久に残り、全 API に添付され続ける
   it.each([400, 401, 403, 404, 422])(
-    '%i は unauthenticated を返す',
+    '%i はトークンが無効と判定する',
     async (status) => {
       createApiRequest.mockResolvedValue(respond(status));
 
@@ -69,27 +88,46 @@ describe('fetchAuthSession', () => {
     },
   );
 
-  // ここが本件の回帰テスト。サーバが一時的に落ちただけでトークンを
-  // 無効と判定すると、ログイン直後に理由なく強制ログアウトされる
+  // サーバが一時的に落ちただけでトークンを無効と判定すると、
+  // ログイン直後に理由なく強制ログアウトされる
   it.each([408, 429, 500, 502, 503])(
-    '%i は unavailable を返す',
+    '%i は検証不能(server)として扱う',
     async (status) => {
       createApiRequest.mockResolvedValue(respond(status));
 
-      const result = await fetchAuthSession();
-
-      expect(result.status).toBe('unavailable');
-      expect(result.status === 'unavailable' && result.statusCode).toBe(status);
+      expect(await fetchAuthSession()).toEqual({
+        status: 'unavailable',
+        reason: 'server',
+        statusCode: status,
+      });
     },
   );
 
-  it('通信失敗・タイムアウトは statusCode 無しの unavailable', async () => {
+  it('到達できなければ network として扱う', async () => {
     createApiRequest.mockRejectedValue(new TypeError('Failed to fetch'));
 
-    const result = await fetchAuthSession();
+    expect(await fetchAuthSession()).toEqual({
+      status: 'unavailable',
+      reason: 'network',
+    });
+  });
 
-    // HTTP ステータスが存在しないことを statusCode の不在で表す
-    expect(result).toEqual({ status: 'unavailable' });
+  // 到達はしているので、ユーザーの通信環境のせいにしてはいけない
+  it('応答が無いまま上限に達したら timeout として打ち切る', async () => {
+    vi.useFakeTimers();
+    createApiRequest.mockImplementation(
+      (_endpoint: string, options: { signal: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          options.signal.addEventListener('abort', () =>
+            reject(new DOMException('aborted', 'AbortError')),
+          );
+        }),
+    );
+
+    const pending = fetchAuthSession();
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(await pending).toEqual({ status: 'unavailable', reason: 'timeout' });
   });
 
   it('リダイレクトされた 200 は認証済みとみなさない', async () => {
@@ -98,17 +136,21 @@ describe('fetchAuthSession', () => {
     createApiRequest.mockResolvedValue(hijacked);
 
     // 前段のプロキシに攫われた応答。API の答えではないので ok にしてはいけない
-    expect((await fetchAuthSession()).status).toBe('unavailable');
+    expect(await fetchAuthSession()).toEqual({
+      status: 'unavailable',
+      reason: 'intercepted',
+    });
   });
 
   it('200 だが本文が壊れていても認証は有効扱いにする', async () => {
     createApiRequest.mockResolvedValue(respond(200, 'not json'));
 
-    const result = await fetchAuthSession();
-
     // ここで unauthenticated を返すと、API の一時的な応答形不良だけで
     // 強制ログアウトになる
-    expect(result).toEqual({ status: 'ok', user: undefined });
+    expect(await fetchAuthSession()).toEqual({
+      status: 'ok',
+      user: undefined,
+    });
   });
 
   it('200 でも必須項目が欠けていれば user は undefined', async () => {
@@ -121,34 +163,32 @@ describe('fetchAuthSession', () => {
   });
 });
 
-describe('resolveAuthState', () => {
-  it('ok なら認証済みにし、トークンは残す', () => {
-    expect(resolveAuthState({ status: 'ok', user: validProfile })).toEqual({
-      isAuthenticated: true,
-      discardToken: false,
+describe('decideAuthAction', () => {
+  it('ok なら認証を受け入れる', () => {
+    expect(decideAuthAction({ status: 'ok', user: validProfile })).toEqual({
+      action: 'accept',
       user: validProfile,
-      unverified: false,
     });
   });
 
   it('unauthenticated ならトークンを破棄する', () => {
-    expect(resolveAuthState({ status: 'unauthenticated' })).toEqual({
-      isAuthenticated: false,
-      discardToken: true,
-      unverified: false,
+    expect(decideAuthAction({ status: 'unauthenticated' })).toEqual({
+      action: 'discard',
     });
   });
 
-  // 本件の核心。5xx や通信失敗でトークンを捨てると、
-  // サーバの一時障害だけで強制ログアウトになる
-  it('unavailable ではトークンを破棄せず、検証不能であることを伝える', () => {
-    expect(
-      resolveAuthState({ status: 'unavailable', statusCode: 500 }),
-    ).toEqual({
-      isAuthenticated: false,
-      discardToken: false,
-      unverified: true,
-    });
+  // 5xx や通信失敗でトークンを捨てると、サーバの一時障害だけで
+  // 強制ログアウトになる
+  it.each([
+    [
+      'server',
+      { status: 'unavailable', reason: 'server', statusCode: 500 } as const,
+    ],
+    ['timeout', { status: 'unavailable', reason: 'timeout' } as const],
+    ['network', { status: 'unavailable', reason: 'network' } as const],
+    ['intercepted', { status: 'unavailable', reason: 'intercepted' } as const],
+  ])('検証不能(%s)ではトークンを残す', (_label, result) => {
+    expect(decideAuthAction(result)).toEqual({ action: 'retain' });
   });
 });
 

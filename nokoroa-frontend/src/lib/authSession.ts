@@ -1,10 +1,8 @@
 import { API_CONFIG, createApiRequest } from '@/lib/apiConfig';
 
 /**
- * 認証セッションの本人情報。
- * ヘッダー等の「ログイン中は誰か」の表示に使う最小限の項目のみを持つ。
- * bio や投稿数まで含むプロフィール全体が必要な画面は useUser() を使うこと
- * (プロフィール情報の正は API = useUser 側であり、ここはその部分集合)。
+ * 認証セッションの本人情報。「ログイン中は誰か」の表示に使う最小限のみを持つ。
+ * bio や投稿数まで含むプロフィール全体が必要な画面は useUser() を使うこと。
  */
 export type AuthUser = {
   id: number;
@@ -14,34 +12,85 @@ export type AuthUser = {
 };
 
 /**
- * セッション検証の結果。
- *
- * `unauthenticated` と `unavailable` を必ず分けること。
- * 「トークンが悪い」(保持しても無意味) のと「サーバ側が一時的に答えられない」
- * (トークンは有効かもしれない) を混ぜると、サーバの一時障害だけで
- * 強制ログアウトになる。
+ * 検証できなかった理由。ユーザーに出す説明と対処がこれで決まるため、
+ * 到達できたか (server / timeout) と出来なかったか (network) を分けて持つ。
  */
-export type AuthSessionResult =
-  /** 認証は有効。user は 200 でも本文が想定外なら undefined になりうる */
-  | { status: 'ok'; user: AuthUser | undefined }
-  /** トークンが恒久的に無効。破棄してよい */
-  | { status: 'unauthenticated' }
-  /** 検証できなかった。トークンは有効かもしれないので残す。statusCode 無しは通信失敗 */
-  | { status: 'unavailable'; statusCode?: number };
-
-/** 検証が応答しないまま画面が固着するのを防ぐ上限 */
-const SESSION_TIMEOUT_MS = 10_000;
-
-/** 時間をおけば直りうるステータス。これ以外の 4xx はトークン側の問題として扱う */
-const TRANSIENT_STATUSES = new Set([408, 429]);
-
-const isTransient = (status: number) =>
-  status >= 500 || TRANSIENT_STATUSES.has(status);
+export type UnavailableReason =
+  | { reason: 'server'; statusCode: number }
+  | { reason: 'timeout' }
+  | { reason: 'network' }
+  /** 前段のプロキシ等に攫われ、API の応答が返っていない */
+  | { reason: 'intercepted' };
 
 /**
- * API レスポンスから認証ユーザーを組み立てる。
- * 必須項目が欠けている場合は undefined を返し、偽のユーザーを作らない。
+ * セッション検証の結果。
+ * 「トークンが悪い」(保持しても無意味) と「検証できなかった」(有効かもしれない)
+ * を混ぜると、サーバの一時障害だけで強制ログアウトになる。
  */
+export type AuthSessionResult =
+  /** 認証は有効。本文が想定外なら user は undefined になりうる */
+  | { status: 'ok'; user: AuthUser | undefined }
+  | { status: 'unauthenticated' }
+  | ({ status: 'unavailable' } & UnavailableReason);
+
+/** 検証が応答しないまま画面が固着するのを防ぐ上限 */
+const VERIFY_TIMEOUT_MS = 10_000;
+
+/** 4xx のうち再試行で直りうるもの。これ以外の 4xx はトークン側の問題として扱う */
+const RETRIABLE_CLIENT_STATUSES = new Set([408, 429]);
+
+/**
+ * 保存済みトークンで実際にセッションが使えるかをプロフィール API で確かめる。
+ * 「認証が通ったか」をこのエンドポイントのガードから推定しているため、
+ * /users/profile が JwtAuthGuard で保護されている限りにおいて成立する。
+ */
+export const fetchAuthSession = async (): Promise<AuthSessionResult> => {
+  // AbortSignal.timeout は Safari 16+ が必要で、Next の既定ターゲット (safari 12) を
+  // 外れる。未対応環境では TypeError が下の catch に落ち、検証が常に失敗する
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, VERIFY_TIMEOUT_MS);
+
+  let response: Response;
+  try {
+    response = await createApiRequest(API_CONFIG.endpoints.userProfile, {
+      signal: controller.signal,
+    });
+  } catch {
+    return {
+      status: 'unavailable',
+      ...(timedOut
+        ? { reason: 'timeout' as const }
+        : { reason: 'network' as const }),
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+
+  // 攫われた応答は 200 でも API の答えではない。通すと無効なトークンで認証済みになる
+  if (response.redirected) {
+    return { status: 'unavailable', reason: 'intercepted' };
+  }
+
+  if (!response.ok) {
+    return response.status >= 500 ||
+      RETRIABLE_CLIENT_STATUSES.has(response.status)
+      ? { status: 'unavailable', reason: 'server', statusCode: response.status }
+      : { status: 'unauthenticated' };
+  }
+
+  try {
+    return { status: 'ok', user: toAuthUser(await response.json()) };
+  } catch {
+    // 本文が壊れていてもガードは通っている。認証自体は有効
+    return { status: 'ok', user: undefined };
+  }
+};
+
+/** 必須項目が欠けていれば undefined を返し、偽のユーザーを作らない */
 export const toAuthUser = (raw: unknown): AuthUser | undefined => {
   if (!raw || typeof raw !== 'object') {
     return undefined;
@@ -61,68 +110,19 @@ export const toAuthUser = (raw: unknown): AuthUser | undefined => {
   };
 };
 
-/**
- * 保存済みトークンで実際にセッションが使えるかをプロフィール API で確かめる。
- *
- * AuthProvider の起動時検証と OAuth コールバックの成功判定の両方がこれを使う。
- * コールバック側が独自に「保存できたら成功」と判断すると、セッションが
- * 使えなくても成功トーストが出てしまう。
- *
- * 「認証が通ったか」を /users/profile のガードから推定している点に注意。
- * このエンドポイントが JwtAuthGuard で保護されている限りにおいて成立する。
- */
-export const fetchAuthSession = async (): Promise<AuthSessionResult> => {
-  let response: Response;
-  try {
-    response = await createApiRequest(API_CONFIG.endpoints.userProfile, {
-      signal: AbortSignal.timeout(SESSION_TIMEOUT_MS),
-    });
-  } catch {
-    // 到達不能・タイムアウト。トークンの有効性については何も分からない
-    return { status: 'unavailable' };
-  }
+/** 検証結果に対してクライアントが取るべき扱い */
+export type AuthDecision =
+  | { action: 'accept'; user?: AuthUser }
+  /** 恒久的に無効。トークンを破棄する */
+  | { action: 'discard' }
+  /** 検証できなかった。トークンは残し、理由をユーザーに伝える */
+  | { action: 'retain' };
 
-  // 前段のプロキシやキャプティブポータルに攫われた応答は 200 でも API の答えではない。
-  // これを通すと無効なトークンで認証済みになる
-  if (response.redirected) {
-    return { status: 'unavailable', statusCode: response.status };
-  }
-
-  if (!response.ok) {
-    return isTransient(response.status)
-      ? { status: 'unavailable', statusCode: response.status }
-      : { status: 'unauthenticated' };
-  }
-
-  try {
-    return { status: 'ok', user: toAuthUser(await response.json()) };
-  } catch {
-    // 本文が壊れていてもガードは通っている。認証自体は有効
-    return { status: 'ok', user: undefined };
-  }
-};
-
-/** 検証結果から決まる認証状態。React に依存しないのでそのまま検証できる */
-export type AuthState = {
-  isAuthenticated: boolean;
-  /** トークンを破棄すべきか。恒久的に無効なときだけ true */
-  discardToken: boolean;
-  user?: AuthUser;
-  /** 検証できなかった。黙って未ログインにするとユーザーに理由が分からない */
-  unverified: boolean;
-};
-
-export const resolveAuthState = (result: AuthSessionResult): AuthState => {
+export const decideAuthAction = (result: AuthSessionResult): AuthDecision => {
   if (result.status === 'ok') {
-    return {
-      isAuthenticated: true,
-      discardToken: false,
-      user: result.user,
-      unverified: false,
-    };
+    return { action: 'accept', user: result.user };
   }
-  if (result.status === 'unauthenticated') {
-    return { isAuthenticated: false, discardToken: true, unverified: false };
-  }
-  return { isAuthenticated: false, discardToken: false, unverified: true };
+  return result.status === 'unauthenticated'
+    ? { action: 'discard' }
+    : { action: 'retain' };
 };
