@@ -18,6 +18,8 @@ export type AuthUser = {
 export type UnavailableReason =
   | { reason: 'server'; statusCode: number }
   | { reason: 'timeout' }
+  /** レート制限。すぐ再試行させると悪化するので server と分ける */
+  | { reason: 'ratelimited' }
   | { reason: 'network' }
   /** 前段のプロキシ等に攫われ、API の応答が返っていない */
   | { reason: 'intercepted' };
@@ -36,8 +38,14 @@ export type AuthSessionResult =
 /** 検証が応答しないまま画面が固着するのを防ぐ上限 */
 const VERIFY_TIMEOUT_MS = 10_000;
 
-/** 4xx のうち再試行で直りうるもの。これ以外の 4xx はトークン側の問題として扱う */
-const RETRIABLE_CLIENT_STATUSES = new Set([408, 429]);
+/**
+ * 時間をおけば直りうる 4xx。これ以外の 4xx はトークン側の問題として扱う
+ * (削除済みユーザーの 404 等は保持しても無意味なので破棄させる)。
+ */
+const RETRIABLE_CLIENT_STATUSES: Record<number, 'timeout' | 'ratelimited'> = {
+  408: 'timeout',
+  429: 'ratelimited',
+};
 
 /**
  * 保存済みトークンで実際にセッションが使えるかをプロフィール API で確かめる。
@@ -77,13 +85,16 @@ export const fetchAuthSession = async (): Promise<AuthSessionResult> => {
     }
 
     if (!response.ok) {
-      return response.status >= 500 ||
-        RETRIABLE_CLIENT_STATUSES.has(response.status)
-        ? {
-            status: 'unavailable',
-            reason: 'server',
-            statusCode: response.status,
-          }
+      if (response.status >= 500) {
+        return {
+          status: 'unavailable',
+          reason: 'server',
+          statusCode: response.status,
+        };
+      }
+      const retriable = RETRIABLE_CLIENT_STATUSES[response.status];
+      return retriable
+        ? { status: 'unavailable', reason: retriable }
         : { status: 'unauthenticated' };
     }
 

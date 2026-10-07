@@ -88,8 +88,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         decision.action === 'retain' &&
         window.location.pathname !== AUTH_CALLBACK_PATH
       ) {
+        // 保護ページでは直後に /login へ飛ばされるため、「再読み込み」など
+        // この画面に留まる前提の案内はできない
         toast.error(
-          'ログイン状態を確認できませんでした。時間をおいて再読み込みしてください。',
+          'ログイン状態を確認できませんでした。時間をおいてもう一度お試しください。',
         );
       }
     };
@@ -134,24 +136,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         setToken(token);
 
-        // 発行されたトークンが実際に使えるかを確かめる。ここを省くと、
-        // 自分のガードに拒否されるトークンでも成功を名乗り、次の読み込みで
-        // 理由なくログアウトされる
-        const fetched = await fetchAuthSession();
-        if (fetched.status === 'unauthenticated') {
-          removeToken();
+        // 発行されたトークンが実際に使えるかを確かめる。判定は起動時検証と
+        // 同じものを通す。ここで accept 以外を成功にすると、成功を名乗った
+        // 直後の読み込みで未認証に覆るという本末転倒になる
+        const decision = decideAuthAction(await fetchAuthSession());
+        if (decision.action !== 'accept') {
+          if (decision.action === 'discard') {
+            removeToken();
+          }
           toast.error(
-            'ログインできませんでした。お手数ですがもう一度お試しください。',
+            decision.action === 'discard'
+              ? 'ログインできませんでした。お手数ですがもう一度お試しください。'
+              : 'サーバーの状態を確認できないため、ログインを完了できませんでした。時間をおいてお試しください。',
           );
           return false;
         }
 
-        // 取得できなければログインレスポンスの user を使い、それも無ければ undefined のままにする。
-        // (取得失敗時に偽のユーザーを置くと、他人の名前でログインしたように見えてしまう)
-        setUser(
-          (fetched.status === 'ok' ? fetched.user : undefined) ??
-            toAuthUser(result.user),
-        );
+        // 検証で user が取れなければログインレスポンスの user を使い、
+        // それも無ければ undefined のままにする
+        // (偽のユーザーを置くと、他人の名前でログインしたように見えてしまう)
+        setUser(decision.user ?? toAuthUser(result.user));
 
         setIsAuthenticated(true);
         toast.success('ログインしました');

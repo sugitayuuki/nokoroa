@@ -90,7 +90,7 @@ describe('fetchAuthSession', () => {
 
   // サーバが一時的に落ちただけでトークンを無効と判定すると、
   // ログイン直後に理由なく強制ログアウトされる
-  it.each([408, 429, 500, 502, 503])(
+  it.each([500, 502, 503])(
     '%i は検証不能(server)として扱う',
     async (status) => {
       createApiRequest.mockResolvedValue(respond(status));
@@ -102,6 +102,17 @@ describe('fetchAuthSession', () => {
       });
     },
   );
+
+  // 時間をおけば直りうる 4xx。ただし「サーバーエラー」と案内すると
+  // 対処を誤らせるので理由を分ける
+  it.each([
+    [408, 'timeout'],
+    [429, 'ratelimited'],
+  ])('%i は検証不能(%s)として扱う', async (status, reason) => {
+    createApiRequest.mockResolvedValue(respond(status));
+
+    expect(await fetchAuthSession()).toEqual({ status: 'unavailable', reason });
+  });
 
   it('到達できなければ network として扱う', async () => {
     createApiRequest.mockRejectedValue(new TypeError('Failed to fetch'));
@@ -214,6 +225,7 @@ describe('decideAuthAction', () => {
       { status: 'unavailable', reason: 'server', statusCode: 500 } as const,
     ],
     ['timeout', { status: 'unavailable', reason: 'timeout' } as const],
+    ['ratelimited', { status: 'unavailable', reason: 'ratelimited' } as const],
     ['network', { status: 'unavailable', reason: 'network' } as const],
     ['intercepted', { status: 'unavailable', reason: 'intercepted' } as const],
   ])('検証不能(%s)ではトークンを残す', (_label, result) => {

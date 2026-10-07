@@ -15,6 +15,7 @@ describe('decideCallbackOutcome', () => {
       { status: 'unavailable', reason: 'server', statusCode: 500 } as const,
     ],
     ['応答なし', { status: 'unavailable', reason: 'timeout' } as const],
+    ['レート制限', { status: 'unavailable', reason: 'ratelimited' } as const],
     ['到達不能', { status: 'unavailable', reason: 'network' } as const],
     [
       '応答が差し替えられた',
@@ -71,6 +72,11 @@ describe('decideCallbackOutcome', () => {
       'timeout',
       { status: 'unavailable', reason: 'timeout' } as const,
       'サーバーの応答がありませんでした。時間をおいてもう一度お試しください。',
+    ],
+    [
+      'ratelimited',
+      { status: 'unavailable', reason: 'ratelimited' } as const,
+      'アクセスが集中しています。しばらく待ってからもう一度お試しください。',
     ],
     [
       'network',

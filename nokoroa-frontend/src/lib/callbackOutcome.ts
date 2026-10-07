@@ -23,6 +23,8 @@ const UNAVAILABLE_DETAIL: Record<UnavailableReason['reason'], string> = {
     'サーバーでエラーが発生しました。時間をおいてお試しいただき、解消しない場合は管理者にお問い合わせください。',
   timeout:
     'サーバーの応答がありませんでした。時間をおいてもう一度お試しください。',
+  ratelimited:
+    'アクセスが集中しています。しばらく待ってからもう一度お試しください。',
   network:
     'サーバーに接続できませんでした。通信環境を確認してもう一度お試しください。',
   intercepted:
