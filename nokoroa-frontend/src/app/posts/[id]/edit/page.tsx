@@ -17,6 +17,7 @@ import { toast } from 'react-toastify';
 import { PostForm } from '@/components/post/PostForm';
 import { useRequireAuth } from '@/hooks/useRequireAuth';
 import { API_CONFIG, createApiRequest } from '@/lib/apiConfig';
+import { useAuth } from '@/providers/AuthProvider';
 import { CreatePostData, PostData } from '@/types/post';
 import { geocodeLocation } from '@/utils/geocoding';
 
@@ -24,6 +25,7 @@ export default function EditPostPage() {
   const { id } = useParams();
   const router = useRouter();
   const { isAuthenticated, isAuthLoading, isReady } = useRequireAuth();
+  const { user } = useAuth();
 
   const [post, setPost] = useState<PostData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -221,6 +223,27 @@ export default function EditPostPage() {
     return (
       <Container maxWidth="md" sx={{ py: 4 }}>
         <Alert severity="error">投稿が見つかりません</Alert>
+        <Button
+          startIcon={<ArrowBackIcon />}
+          onClick={() => router.back()}
+          sx={{ mt: 2 }}
+        >
+          戻る
+        </Button>
+      </Container>
+    );
+  }
+
+  // 所有者チェック。PostDetail (isOwner で編集メニューを出し分け) と
+  // MyPostCard (isOwner で actions を出し分け) は持っているのに、
+  // 直接 URL で開けるこのページだけ判定が無く、他人の公開投稿が
+  // 編集可能な状態で開けていた。送信して初めて backend が 403 を返すため、
+  // 入力内容が丸ごと捨てられる。描画前に弾く。
+  // 認可の正はあくまで backend 側 (posts.service の ForbiddenException)。
+  if (user && user.id !== post.author.id) {
+    return (
+      <Container maxWidth="md" sx={{ py: 4 }}>
+        <Alert severity="error">自分の投稿のみ編集できます</Alert>
         <Button
           startIcon={<ArrowBackIcon />}
           onClick={() => router.back()}
