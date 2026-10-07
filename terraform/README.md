@@ -11,11 +11,12 @@ Nokoroa の AWS インフラを Terraform で管理しています。
 ただし**インフラの定義はすべてこのディレクトリに残っています。** 空の state から `plan` を実行すると、この構成が定義しているリソースの全量が出ます。
 
 ```
-$ terraform plan -var runtime_enabled=true -var db_start_from_empty=true
+$ terraform plan -var runtime_enabled=true -var db_start_from_empty=true \
+    -var db_final_snapshot_identifier=nokoroa-prod-plan-dryrun
 Plan: 79 to add, 0 to change, 0 to destroy.
 ```
 
-`db_start_from_empty` が必要なのは、`modules/rds` の `precondition` が「復元元の指定」か「空から始める明示」のどちらかを要求するためです（素の `-var runtime_enabled=true` だけでは plan がエラーで止まります）。
+`-var` が 3 つ必要なのは、`modules/rds` の `precondition` 2 本が「最終スナップショット名」と「復元元の指定 または 空から始める明示」を要求するためです。素の `-var runtime_enabled=true` だけでは plan がエラーで止まります。
 
 この 79 件は「停止によって削除された分」ではなく「`runtime_enabled = true` で定義されている全量」です。AWS 上に実在するのに state に載っていないリソース（下記）があるため、現状の `plan` はそれらも新規作成として数えます。実際に再構築で作られるのは、それらを `import` で取り込んだあとの差分になります。
 
@@ -157,8 +158,6 @@ DB パスワード・JWT シークレット・OAuth クライアントシーク�
 >
 > **`-var runtime_enabled` の値はアドレスによって変わります。** 常時保持分（ECR・S3・Secrets Manager・IAM ポリシー）は `count` を持たないので `false` で取り込めますが、`module.rds[0]` / `module.alb[0]` / `module.ecs[0]` / `aws_route53_record.alb[0]` のような `[0]` 付きアドレスは `false` ではインスタンスが存在せず、`Configuration for import target does not exist` で拒否されます。これらは `true` が必要です。
 
-詳しい対象一覧は「[import する](#import-する)」にまとめています。
-
 ### import する
 
 未 import のまま `apply` すると**確実に名前衝突で落ちるのは 14 件**です。これだけは先に取り込んでください。
@@ -181,7 +180,7 @@ aws secretsmanager list-secrets --include-planned-deletion \
 
 注意点がいくつかあります。
 
-- **`modules/s3` の state バケット系 4 件と DynamoDB は `[0]` が必要**（リソース側に `count` があるため）。一方 `module.s3` / `module.secrets` 自体には `count` が無いので `module.s3[0]` と書くのは誤りです。`[0]` が付くのは `module.rds[0]` のようなモジュール単位の `count` と、リソース単位の `count` の 2 種類で、形が違います
+- **`modules/s3` の state バケット系 4 件と DynamoDB は `[0]` が必要**（リソース側に `count` があるため）。一方 `module.s3` / `module.secrets` 自体には `count` が無いので `module.s3[0]` と書くのは誤りです（`[0]` が付くのは上の表のアドレスだけ）
 - **`aws_acm_certificate.main` も実在するなら import してください。** 過去の停止は `-target=module.rds` / `-target=module.vpc` だったのでルートモジュールの証明書には届いておらず、残っている可能性が高いです。未 import だと ACM は名前が一意でないため**衝突せず新しい証明書が発行され**、`aws_acm_certificate_validation` が DNS 検証の完了を待ちます（= 「再開時に検証待ちは発生しない」が初回だけ崩れ、旧証明書が孤児として残る）
 - **`aws_acm_certificate_validation` と `data` ソース 3 件は import できません**（前者はプロバイダが Import 非対応の論理リソース）。証明書が ISSUED なら create は即完了するので問題ありません
 - バケットのバージョニング・暗号化・CORS・ポリシー・パブリックアクセスブロック、ECR のライフサイクルポリシー、`aws_secretsmanager_secret_version` は**未 import でも apply が上書きして収束する**ので任意です
@@ -232,22 +231,12 @@ cp terraform.tfvars.example terraform.tfvars
 
 ```bash
 terraform init
-
-# サイクル変数を置く（詳細は「サイクル変数を固定する」）。
-# 初回は復元元が無いため空の DB から始める。
-cat > cycle.auto.tfvars <<'EOF'
-db_final_snapshot_identifier = "nokoroa-prod-initial"
-EOF
-
-terraform apply \
-  -var runtime_enabled=true \
-  -var db_start_from_empty=true \
-  -var allow_placeholder_images=true
+terraform apply -var runtime_enabled=false
 ```
 
-`db_final_snapshot_identifier` は**停止時に作るスナップショットの名前**で、起動時に渡しておく必要があります（理由は「[停止と再開](#停止と再開)」）。
+**1 回目は `false` で打ちます。** ECR・VPC・S3・Secrets Manager・ACM はいずれも `runtime_enabled` の `count` を持たないので `false` でも作られ、これでイメージの push 先が揃います。ALB・ECS・RDS はまだ作りません。
 
-`-var` が 3 つ必要な理由はそれぞれ別です。`db_start_from_empty` は復元元が無いこと、`allow_placeholder_images` は ECR にまだイメージが無いこと（指定しないと `modules/ecs` の `precondition` が止めます）を明示しています。どちらも**危険な側を明示オプトインにする**ための変数で、`cycle.auto.tfvars` のような永続ファイルには置きません。
+この順序にしているのは、**イメージが無い状態で ECS を作らせないため**です。`modules/ecs` はイメージ変数が空のときパブリックのプレースホルダへフォールバックするので、`true` で打つと「apply は成功して ALB の DNS も返るのに backend が永久に起動しない」本番が立ちます。`false` ならその経路自体が存在しません（`modules/ecs` の `precondition` も、イメージ未指定を無条件で弾きます）。
 
 ### 3. イメージをビルドして push する
 
@@ -277,11 +266,17 @@ frontend_image = "<account-id>.dkr.ecr.ap-northeast-1.amazonaws.com/nokoroa-fron
 ai_image       = "<account-id>.dkr.ecr.ap-northeast-1.amazonaws.com/nokoroa-ai:latest"
 ```
 
+ここで初めて `runtime_enabled=true` にします。あわせてサイクル変数を置きます（詳細は「[サイクル変数を固定する](#サイクル変数を固定する)」）。
+
 ```bash
+cat > cycle.auto.tfvars <<'EOF'
+db_final_snapshot_identifier = "nokoroa-prod-initial"
+EOF
+
 terraform apply -var runtime_enabled=true -var db_start_from_empty=true
 ```
 
-> 手順 2 で作った `cycle.auto.tfvars` は自動で読まれるので、`db_final_snapshot_identifier` を付け直す必要はありません。`db_start_from_empty` は毎回コマンドラインで渡します（復元元がまだ無いため）。
+> `db_final_snapshot_identifier` は**停止時に作るスナップショットの名前**で、起動時に state へ入れておく必要があります（理由は「[運用上の落とし穴](#運用上の落とし穴)」）。`db_start_from_empty` は初回だけ必要です（復元元がまだ無いため）。
 >
 > `runtime_enabled` には既定値がありません。付け忘れると Terraform が入力を促して止まります（黙って何かを壊すより良い、という設計です）。
 
@@ -369,8 +364,6 @@ EOF
 `*.tfvars` は `.gitignore` 済みなのでコミットされません。
 
 > **このファイルは停止中にだけ書き換えてください。** `db_snapshot_identifier` は ForceNew なので、**稼働中に値を変えると本番の DB が作り直されます**（それまでの書き込みが失われ、さらに `db_final_snapshot_identifier` の名前も 1 つ消費されるため、次の停止が同名衝突で失敗します）。plan に `must be replaced` が出たら中断して値を戻してください。次サイクルの値は停止してから書き換えます。
->
-> `db_snapshot_identifier` と `db_start_from_empty` は**どちらか一方だけ**を書きます。両方書くと `modules/rds` の `precondition` が弾きます。`||` ではなく排他条件にしてあるのは、初回構築で `db_start_from_empty = true` にしたまま消し忘れると、復元元の指定忘れを検知できなくなるからです。
 
 これを使う理由は 2 つあります。まず **`-var` の落とし忘れを構造的に無くせる**こと。この 2 変数は `modules/rds` の `precondition` が要求するため、サイクル中のどの `plan` / `apply` でも必要で、毎回 3 つのフラグを正しく並べるのは落としやすい形でした。もうひとつは **値が勝手に変わらない**こと。`$(date)` をコマンドに直接書くと実行ごとに別の名前が state へ入り、停止時に作られるスナップショット名が実行者の記憶と合わなくなります。
 
@@ -428,7 +421,7 @@ terraform apply -var runtime_enabled=true -var db_start_from_empty=true
 
 `db_start_from_empty` を明示させているのは、`db_snapshot_identifier` の渡し忘れで**空の DB が本番として立つ**のを防ぐためです。黙って通すと、その後の書き込みは空 DB 側に入り、次の停止が「空 DB の中身」を新しいスナップショットとして保存するため、以降「旧スナップショットに戻すと新規分が消える / 新しい方を使うと旧データが消える」の二択になります。
 
-**次に復元で再開するときは `db_start_from_empty` の行を消してください。** 消し忘れたまま `db_snapshot_identifier` を書くと `precondition` が弾くので気付けます（`||` ではなく排他条件にしているのはこのためです）。
+**`db_start_from_empty` は `cycle.auto.tfvars` に書かないでください。** 毎回コマンドラインで渡します。ファイルに置くと消し忘れが残り、次のサイクルで復元元を書き忘れたときに `precondition` がそれを検知できなくなります（`||` ではなく排他条件にしているのは、両方指定も弾いてこの取り違えに気付けるようにするためです）。
 
 | 工程 | 時間 | 備考 |
 |---|---|---|
@@ -485,7 +478,6 @@ aws rds reboot-db-instance --db-instance-identifier nokoroa-prod-postgres
 # cycle.auto.tfvars
 db_snapshot_identifier       = "nokoroa-prod-20261007-1030"  # 本来使うべきだった復元元
 db_final_snapshot_identifier = "nokoroa-prod-20261008-1200"  # ★ 前の値から変える
-# db_start_from_empty は消す（または false）
 ```
 
 ```bash
@@ -563,4 +555,4 @@ aws rds delete-db-snapshot --db-snapshot-identifier <古い名前>
 - **state が S3 に置かれていない**: `versions.tf` の S3 backend がコメントアウトされたままで、state はローカル管理です。保管先のバケットと DynamoDB ロックテーブルは `modules/s3` に定義済みですが、state を置くバケット自身を同じ設定で作る循環があるため、ブートストラップを分ける必要があります。
 - **残しているリソースが state に載っていない**: AWS 上に実在する ECR・S3・Secrets Manager が、現在の state には記録されていません。このため今のまま `terraform apply` を実行すると、ECR・S3・Secrets Manager が既存と衝突します。再構築の前に `terraform import` で state に取り込む必要があります。Secrets Manager は削除待ち中のものが混ざりうるため、`import` の前に `list-secrets --include-planned-deletion` で状態を確認してください（削除待ちのものは `import` できず、`restore-secret` か待機満了が必要です）。
 - **変数の `validation` がほぼ未設定**: 101 個の変数すべてに `description` と `type` はありますが、値域の検証が入っているのは `final_snapshot_identifier`（AWS の識別子規則）の 1 個だけです。
-- **`import` 対象の一覧が無い**: 上記の 3 種に加えて、実在するなら state ロック用の DynamoDB テーブルも対象です。また `modules/s3` は 11 リソースあり、バケット本体を `import` してもバージョニング・暗号化・CORS・バケットポリシーは別途 `import` か再作成になります。アドレスと物理 ID の対応表を用意していません。
+- **`import` 後に周辺設定が残る**: 「[import する](#import-する)」に必須 14 件の対応表を載せていますが、`modules/s3` の周辺設定（バージョニング・暗号化・CORS・ポリシー）は任意扱いで、`import` せず apply で上書きさせる前提です。state とクラウドの対応が完全に一致した状態にはなりません。

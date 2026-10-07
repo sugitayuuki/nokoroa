@@ -23,16 +23,6 @@ variable "ecs_security_group_id" {
   type        = string
 }
 
-# 空文字のときパブリックのプレースホルダイメージへフォールバックする挙動を許すか。
-# 既定を false にしているのは、黙って通すと「apply は成功して ALB の DNS も返るのに
-# backend が永久に起動しない」本番が立つため（ai が python:3.12-slim になり HTTP を
-# 喋らず dependsOn: HEALTHY を満たせない）。初回構築のときだけ true にする。
-variable "allow_placeholder_images" {
-  description = "Allow falling back to public placeholder images when an image variable is empty"
-  type        = bool
-  default     = false
-}
-
 variable "backend_image" {
   description = "Backend Docker image"
   type        = string

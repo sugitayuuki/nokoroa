@@ -65,30 +65,14 @@ variable "db_snapshot_identifier" {
   default     = null
 }
 
-# 空の DB から始めることを明示する。
-#
-# これは runtime_enabled と同じ「その apply の意図」なので、cycle.auto.tfvars のような
-# 永続ファイルには書かず、毎回コマンドラインで渡す。ファイルに置くと消し忘れが残り、
-# 「復元元の指定を忘れた」状態を precondition が検知できなくなる
-# （true が残っていると XOR が指定忘れ側を通してしまい、空の DB が本番として立つ）。
+# 空の DB から始めることを明示する。永続ファイルに置くと消し忘れが precondition を
+# すり抜けるため、毎回コマンドラインで渡す（詳細は modules/rds/variables.tf 側）。
 variable "db_start_from_empty" {
   description = "Create an empty database instead of restoring. Pass on the command line only (never in *.auto.tfvars) so a stale value cannot mask a forgotten db_snapshot_identifier"
   type        = bool
   default     = false
 }
 
-# プレースホルダのパブリックイメージでの起動を許す。
-#
-# *_image が空文字のとき modules/ecs は public.ecr.aws のイメージへフォールバックする。
-# 初回構築（ECR にイメージを push する前）には必要だが、黙って通すと「apply は成功して
-# ALB の DNS も返るのに、backend が永久に起動しない」本番が立つ。ai コンテナが
-# python:3.12-slim になり HTTP を喋らないため dependsOn: HEALTHY を満たせない。
-# db_start_from_empty と同じく、危険な側は明示オプトインに限る。
-variable "allow_placeholder_images" {
-  description = "Allow booting with public placeholder images when *_image is empty. Only for the first build before images are pushed"
-  type        = bool
-  default     = false
-}
 
 variable "db_username" {
   description = "Database username"

@@ -9,13 +9,9 @@ output "jwt_secret_arn" {
   value       = aws_secretsmanager_secret.jwt_secret.arn
 }
 
-# version 側の arn を返す（値はシークレット本体の ARN と同一）。本体を参照すると
-# 「タスク定義が参照する ARN」と「値を書き込む secret_version」の間に順序エッジが無く、
-# 再開 apply でタスク起動が値の書き込みより先に走って停止中の placeholder を掴みうる。
-# version 経由にすることで、本物のデータフロー依存として順序が決まる。
 output "database_url_arn" {
-  description = "ARN of the database URL secret (via the version, so consumers wait for the value to be written)"
-  value       = aws_secretsmanager_secret_version.database_url.arn
+  description = "ARN of the database URL secret"
+  value       = aws_secretsmanager_secret.database_url.arn
 }
 
 output "google_client_id_arn" {

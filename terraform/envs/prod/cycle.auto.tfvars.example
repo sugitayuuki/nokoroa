@@ -15,6 +15,6 @@ db_snapshot_identifier = "nokoroa-prod-20261007-1030"
 # 次の停止で作る最終スナップショットの名前。復元元とは必ず別名にする。
 db_final_snapshot_identifier = "nokoroa-prod-20261008-0900"
 
-# 復元元が無い場合（初回構築 / 意図的な初期化）は上の db_snapshot_identifier を消して
-# これを true にする。両方書くと precondition が弾く。復元に戻すときはこの行を消す。
-# db_start_from_empty = true
+# 復元元が無い場合（意図的な初期化）は上の db_snapshot_identifier を消して、
+# apply に -var db_start_from_empty=true を付ける。このファイルには書かない
+# （消し忘れが残ると、復元元の指定忘れを precondition が検知できなくなる）。
