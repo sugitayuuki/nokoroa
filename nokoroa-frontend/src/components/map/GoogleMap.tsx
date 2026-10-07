@@ -308,22 +308,21 @@ export const GoogleMap: React.FC<GoogleMapProps> = ({
   // google.maps.Map インスタンスが積み上がる。
   // markers / map を依存に入れると「生成 → 破棄」を繰り返してしまうため、
   // ref 経由で最新値を読んで unmount 時だけ破棄する。
-  const cleanupRef = useRef<{
-    markers: google.maps.Marker[];
-    map: google.maps.Map | null;
-  }>({ markers: [], map: null });
-  cleanupRef.current = { markers, map };
+  // map インスタンスには clearInstanceListeners を呼ばない。あれは
+  // Maps API 内部のリスナー(パン/ズーム等)まで消すため地図が操作不能になる。
+  // StrictMode の effect 二重実行では state(map) が保持され initializeMap も
+  // `!map` ガードで再生成しないので、一度壊すと開発環境では復帰しない。
+  // マーカーは下の生成 effect が作り直すので破棄して問題ない。
+  // map 自体に addListener は付けていない (リスナーは全てマーカー側)。
+  const markersRef = useRef<google.maps.Marker[]>([]);
+  markersRef.current = markers;
 
   useEffect(
     () => () => {
-      const { markers: lastMarkers, map: lastMap } = cleanupRef.current;
-      lastMarkers.forEach((marker) => {
+      markersRef.current.forEach((marker) => {
         window.google?.maps?.event?.clearInstanceListeners(marker);
         marker.setMap(null);
       });
-      if (lastMap) {
-        window.google?.maps?.event?.clearInstanceListeners(lastMap);
-      }
     },
     [],
   );
