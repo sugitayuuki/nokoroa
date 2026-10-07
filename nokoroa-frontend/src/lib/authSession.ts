@@ -102,6 +102,8 @@ export const fetchAuthSession = async (): Promise<AuthSessionResult> => {
     }
   } finally {
     clearTimeout(timer);
+    // 早期 return したときは本文を読んでいないので、未消費のストリームを閉じる
+    controller.abort();
   }
 };
 

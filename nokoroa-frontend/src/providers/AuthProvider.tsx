@@ -141,10 +141,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // 直後の読み込みで未認証に覆るという本末転倒になる
         const decision = decideAuthAction(await fetchAuthSession());
         if (decision.action !== 'accept') {
-          if (decision.action === 'discard') {
-            removeToken();
-          }
-          // setToken は済んでいるので、state を戻さないと「前のユーザーの
+          // 起動時検証やコールバックと違い、ここは「今この操作が失敗した」と
+          // 明言する地点。保存したトークンを残すと、失敗と伝えたログインが
+          // 次の読み込みで無断に成立する。再試行は新しいトークンを取り直す
+          removeToken();
+          // setToken は済んでいるので、state も戻さないと「前のユーザーの
           // 表示のまま別のトークンで API を叩く」状態が残る
           setIsAuthenticated(false);
           setUser(undefined);
