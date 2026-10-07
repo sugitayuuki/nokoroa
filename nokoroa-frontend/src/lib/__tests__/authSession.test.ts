@@ -103,7 +103,6 @@ describe('fetchAuthSession', () => {
       expect(await fetchAuthSession()).toEqual({
         status: 'unavailable',
         reason: 'server',
-        statusCode: status,
       });
     },
   );
@@ -225,10 +224,7 @@ describe('decideAuthAction', () => {
   // 5xx や通信失敗でトークンを捨てると、サーバの一時障害だけで
   // 強制ログアウトになる
   it.each([
-    [
-      'server',
-      { status: 'unavailable', reason: 'server', statusCode: 500 } as const,
-    ],
+    ['server', { status: 'unavailable', reason: 'server' } as const],
     ['timeout', { status: 'unavailable', reason: 'timeout' } as const],
     ['ratelimited', { status: 'unavailable', reason: 'ratelimited' } as const],
     ['network', { status: 'unavailable', reason: 'network' } as const],

@@ -16,7 +16,7 @@ export type AuthUser = {
  * 到達できたか (server / timeout) と出来なかったか (network) を分けて持つ。
  */
 export type UnavailableReason =
-  | { reason: 'server'; statusCode: number }
+  | { reason: 'server' }
   | { reason: 'timeout' }
   /** レート制限。すぐ再試行させると悪化するので server と分ける */
   | { reason: 'ratelimited' }
@@ -86,11 +86,7 @@ export const fetchAuthSession = async (): Promise<AuthSessionResult> => {
 
     if (!response.ok) {
       if (response.status >= 500) {
-        return {
-          status: 'unavailable',
-          reason: 'server',
-          statusCode: response.status,
-        };
+        return { status: 'unavailable', reason: 'server' };
       }
       const retriable = RETRIABLE_CLIENT_STATUSES[response.status];
       return retriable

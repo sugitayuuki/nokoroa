@@ -37,6 +37,11 @@ function AuthCallbackContent() {
   const hasRunRef = useRef(false);
   const redirectTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
+  // 待機中のリダイレクトはアンマウント時だけ取り消す。検証 effect の cleanup に
+  // 置くと、下で呼ぶ replaceState が searchParams を差し替えて cleanup を走らせ、
+  // 成功後の遷移そのものを消してしまう
+  useEffect(() => () => clearTimeout(redirectTimerRef.current), []);
+
   useEffect(() => {
     const completeLogin = async () => {
       // 空文字も「受け取れなかった」として扱う。保存と判定で述語が分かれると、
@@ -85,20 +90,15 @@ function AuthCallbackContent() {
       setOutcome(next);
     };
 
-    if (!hasRunRef.current) {
-      hasRunRef.current = true;
-      // localStorage が使えない端末では setToken が throw する。投げ捨てると
-      // 失敗 UI に到達できず「認証処理中...」のまま固着する。
-      // apply 自身の throw も拾えるよう then の第 2 引数ではなく catch を使う
-      completeLogin()
-        .then(apply)
-        .catch(() => apply(FAILED_UNEXPECTEDLY));
-    }
+    if (hasRunRef.current) return;
+    hasRunRef.current = true;
 
-    // トースト表示中にユーザーが自分で遷移したら待機中の遷移を取り消す。
-    // hasRunRef で早期 return するとここが登録されず機能しないため、
-    // 実行の有無にかかわらず返す
-    return () => clearTimeout(redirectTimerRef.current);
+    // localStorage が使えない端末では setToken が throw する。投げ捨てると
+    // 失敗 UI に到達できず「認証処理中...」のまま固着する。
+    // apply 自身の throw も拾えるよう then の第 2 引数ではなく catch を使う
+    completeLogin()
+      .then(apply)
+      .catch(() => apply(FAILED_UNEXPECTEDLY));
   }, [searchParams]);
 
   if (outcome?.kind === 'failure') {

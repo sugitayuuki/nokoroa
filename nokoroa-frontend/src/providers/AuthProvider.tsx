@@ -144,6 +144,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (decision.action === 'discard') {
             removeToken();
           }
+          // setToken は済んでいるので、state を戻さないと「前のユーザーの
+          // 表示のまま別のトークンで API を叩く」状態が残る
+          setIsAuthenticated(false);
+          setUser(undefined);
           toast.error(
             decision.action === 'discard'
               ? 'ログインできませんでした。お手数ですがもう一度お試しください。'

@@ -10,10 +10,7 @@ describe('decideCallbackOutcome', () => {
   it.each([
     ['トークンを受け取れなかった', null],
     ['トークンが無効', { status: 'unauthenticated' } as const],
-    [
-      'サーバエラー',
-      { status: 'unavailable', reason: 'server', statusCode: 500 } as const,
-    ],
+    ['サーバエラー', { status: 'unavailable', reason: 'server' } as const],
     ['応答なし', { status: 'unavailable', reason: 'timeout' } as const],
     ['レート制限', { status: 'unavailable', reason: 'ratelimited' } as const],
     ['到達不能', { status: 'unavailable', reason: 'network' } as const],
@@ -65,7 +62,7 @@ describe('decideCallbackOutcome', () => {
   it.each([
     [
       'server',
-      { status: 'unavailable', reason: 'server', statusCode: 500 } as const,
+      { status: 'unavailable', reason: 'server' } as const,
       'サーバーでエラーが発生しました。時間をおいてお試しいただき、解消しない場合は管理者にお問い合わせください。',
     ],
     [
@@ -105,7 +102,7 @@ describe('decideCallbackOutcome', () => {
   // 通信環境を疑って無駄な対処をする
   it('サーバが応答している理由では通信環境のせいにしない', () => {
     for (const session of [
-      { status: 'unavailable', reason: 'server', statusCode: 503 } as const,
+      { status: 'unavailable', reason: 'server' } as const,
       { status: 'unavailable', reason: 'timeout' } as const,
     ]) {
       const outcome = decideCallbackOutcome(session);
