@@ -78,6 +78,8 @@ describe('PostsService', () => {
         tag: { id: 1, name: 'travel', slug: 'travel' },
       },
     ],
+    // findAll / search は postWithFavoritesCountInclude で引くため _count が付く
+    _count: { bookmarks: 3 },
   };
 
   const mockEmbeddingsService = {
@@ -200,6 +202,23 @@ describe('PostsService', () => {
       expect(result.posts).toHaveLength(1);
       expect(result.total).toBe(1);
       expect(result.hasMore).toBe(false);
+    });
+
+    it('一覧も favoritesCount を返す(カードの件数が0固定にならない)', async () => {
+      // 一覧が件数を返さないと、カードの BookmarkButton は
+      // initialBookmarkCount をそのまま出すため 0 固定になり、
+      // favoritesCount を返す詳細画面と食い違う。
+      mockPrismaService.post.findMany.mockResolvedValue([mockPost]);
+      mockPrismaService.post.count.mockResolvedValue(1);
+
+      const result = await service.findAll(10, 0);
+
+      expect(result.posts[0].favoritesCount).toBe(3);
+      // _count は集計の内部表現なので外へは出さない
+      expect(result.posts[0]).not.toHaveProperty('_count');
+      // タグと場所も整形済みで返る
+      expect(result.posts[0].tags).toEqual(['travel']);
+      expect(result.posts[0].location).toBe('Tokyo');
     });
 
     it('ページネーションが正しく動作する', async () => {

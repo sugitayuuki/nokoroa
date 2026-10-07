@@ -15,7 +15,12 @@ import { SearchPostsByLocationDto } from './dto/search-posts-by-location.dto';
 import { SearchPostsSemanticDto } from './dto/search-posts-semantic.dto';
 import { SearchPostsDto } from './dto/search-posts.dto';
 import { UpdatePostDto } from './dto/update-post.dto';
-import { formatPost, postInclude } from './post-format';
+import {
+  formatPost,
+  formatPostWithFavoritesCount,
+  postInclude,
+  postWithFavoritesCountInclude,
+} from './post-format';
 
 const MAX_PAGE_SIZE = 50;
 
@@ -207,7 +212,11 @@ export class PostsService {
     const [posts, total] = await Promise.all([
       this.prisma.post.findMany({
         where: { isPublic: true },
-        include: postInclude,
+        // favoritesCount を含めないと、カードの BookmarkButton が
+        // initialBookmarkCount をそのまま表示するため件数が 0 固定になり、
+        // findOne が正しい数を返す詳細画面と食い違う。
+        // 集計は bookmark(postId) の索引で引ける。
+        include: postWithFavoritesCountInclude,
         orderBy: { createdAt: 'desc' },
         skip,
         take,
@@ -216,7 +225,7 @@ export class PostsService {
     ]);
 
     return {
-      posts: posts.map(formatPost),
+      posts: posts.map(formatPostWithFavoritesCount),
       total,
       hasMore: skip + take < total,
     };
@@ -264,7 +273,8 @@ export class PostsService {
     const [posts, total] = await Promise.all([
       this.prisma.post.findMany({
         where,
-        include: postInclude,
+        // 一覧と同じ理由で favoritesCount を含める (findAll のコメント参照)
+        include: postWithFavoritesCountInclude,
         orderBy: { createdAt: 'desc' },
         skip: offset,
         take: limit,
@@ -273,7 +283,7 @@ export class PostsService {
     ]);
 
     return {
-      posts: posts.map(formatPost),
+      posts: posts.map(formatPostWithFavoritesCount),
       total,
       hasMore: offset + limit < total,
     };
