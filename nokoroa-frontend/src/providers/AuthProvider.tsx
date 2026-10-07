@@ -90,10 +90,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       const result = await fetchAuthSession();
 
-      // 現状ここは成立しない。Layout が isLoading 中は children を描画しないため、
-      // トークンを差し替える画面 (OAuth コールバック) はこの検証の完了後にしか
-      // マウントされない。その順序に依存せず、古いトークンに対する 401 で
-      // 保存直後の新しいトークンを消さないための保険として残す
+      // 検証中に別のトークンへ差し替わっていたら、この結果は古いトークンに対する
+      // 判定なので適用しない。本番では Layout が isLoading 中に children を
+      // 描画しないため成立しないが、dev の StrictMode では検証が 2 回走り、
+      // 1 本目の完了でコールバック画面がマウントされて 2 本目がここを踏む
       if (getToken() !== tokenAtStart) {
         return;
       }
@@ -108,9 +108,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // ただしコールバック画面は自前の失敗表示を持つので、1 つの事象に対して
       // 文面の違う通知を 2 つ出さないよう譲る
       // pathname はこの effect を再実行させたくないので location から読む
+      // 末尾スラッシュ等で完全一致が崩れると抑止が外れて通知が二重になる
       if (
         decision.action === 'retain' &&
-        window.location.pathname !== AUTH_CALLBACK_PATH
+        !window.location.pathname.startsWith(AUTH_CALLBACK_PATH)
       ) {
         // 保護ページでは直後に /login へ飛ばされるため、「再読み込み」など
         // この画面に留まる前提の案内はできない

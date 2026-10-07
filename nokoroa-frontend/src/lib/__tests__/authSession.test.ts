@@ -148,7 +148,7 @@ describe('fetchAuthSession', () => {
   // ヘッダを返して本文を送り終えないサーバでは fetch が resolve した後の
   // json() が永久に pending になる。本文読み出しまでタイマーを生かしていないと
   // ここで画面が固着する
-  it('本文が終わらない応答でも上限で打ち切る', async () => {
+  it('本文が終わらない応答でも上限で待機を止める', async () => {
     vi.useFakeTimers();
     // 本物の Response では abort と本文ストリームの連動を再現できないため、
     // signal に反応する最小のスタブを使う
