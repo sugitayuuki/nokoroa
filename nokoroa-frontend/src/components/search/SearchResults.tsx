@@ -8,6 +8,7 @@ import {
   Typography,
 } from '@mui/material';
 
+import { EmptyState } from '@/components/common/EmptyState';
 import PostCard from '@/components/post/PostCard';
 import { GRID_LAYOUT } from '@/constants/theme';
 
@@ -109,13 +110,7 @@ export const SearchResults = ({
     // useSearchPosts は semantic でクエリが空のとき url を null にしてフェッチせず、
     // SearchForm はその状態でも送信できるため、未確定が永続してスピナーが
     // 止まらなくなる。
-    return (
-      <Box sx={{ p: 4, textAlign: 'center' }}>
-        <Typography variant="h6" color="text.secondary">
-          検索条件にマッチする投稿がありません
-        </Typography>
-      </Box>
-    );
+    return <EmptyState message="検索条件にマッチする投稿がありません" />;
   }
 
   return (

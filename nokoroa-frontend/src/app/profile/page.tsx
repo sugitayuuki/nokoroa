@@ -5,7 +5,6 @@ import {
   Alert,
   Box,
   Button,
-  CircularProgress,
   Container,
   Stack,
   Tab,
@@ -17,6 +16,8 @@ import {
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 
+import { PageSpinner } from '@/components/common/PageSpinner';
+import { RetryableError } from '@/components/common/RetryableError';
 import { MyPostList } from '@/components/post/MyPostCard';
 import { useRequireAuth } from '@/hooks/useRequireAuth';
 import { useUser } from '@/hooks/useUser';
@@ -73,35 +74,11 @@ export default function ProfilePage() {
   }
 
   if (isAuthLoading || isLoading) {
-    return (
-      <Box
-        sx={{
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          minHeight: '50vh',
-        }}
-      >
-        <CircularProgress />
-      </Box>
-    );
+    return <PageSpinner />;
   }
 
   if (error) {
-    return (
-      <Container maxWidth="md" sx={{ mt: 4 }}>
-        <Alert
-          severity="error"
-          action={
-            <Button color="inherit" size="small" onClick={refetch}>
-              再試行
-            </Button>
-          }
-        >
-          {error}
-        </Alert>
-      </Container>
-    );
+    return <RetryableError message={error} onRetry={refetch} />;
   }
 
   if (!user) {

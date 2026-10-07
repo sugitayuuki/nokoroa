@@ -1,16 +1,12 @@
 'use client';
 
 import LocalOfferIcon from '@mui/icons-material/LocalOffer';
-import {
-  Alert,
-  Box,
-  Button,
-  Chip,
-  CircularProgress,
-  Typography,
-} from '@mui/material';
+import { Box, Chip, Typography } from '@mui/material';
 import { useRouter } from 'next/navigation';
 
+import { EmptyState } from '@/components/common/EmptyState';
+import { PageSpinner } from '@/components/common/PageSpinner';
+import { RetryableError } from '@/components/common/RetryableError';
 import { useTags } from '@/hooks/useTags';
 import { getTagColor } from '@/utils/tagColors';
 
@@ -26,45 +22,15 @@ export default function TagsPage() {
   };
 
   if (isLoading) {
-    return (
-      <Box
-        sx={{
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          minHeight: '50vh',
-        }}
-      >
-        <CircularProgress />
-      </Box>
-    );
+    return <PageSpinner />;
   }
 
   if (error) {
-    return (
-      <Box sx={{ p: 4, textAlign: 'center' }}>
-        <Alert
-          severity="error"
-          action={
-            <Button color="inherit" size="small" onClick={refetch}>
-              再試行
-            </Button>
-          }
-        >
-          {error}
-        </Alert>
-      </Box>
-    );
+    return <RetryableError message={error} onRetry={refetch} />;
   }
 
   if (tags.length === 0) {
-    return (
-      <Box sx={{ p: 4, textAlign: 'center' }}>
-        <Typography variant="h6" color="text.secondary">
-          タグがありません
-        </Typography>
-      </Box>
-    );
+    return <EmptyState message="タグがありません" />;
   }
 
   return (

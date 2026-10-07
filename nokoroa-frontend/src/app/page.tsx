@@ -11,6 +11,8 @@ import Typography from '@mui/material/Typography';
 import Link from 'next/link';
 import { useState } from 'react';
 
+import { EmptyState } from '@/components/common/EmptyState';
+import { PageSpinner } from '@/components/common/PageSpinner';
 import PostCard from '@/components/post/PostCard';
 import { GRID_LAYOUT } from '@/constants/theme';
 import { usePaginatedPosts } from '@/hooks/usePaginatedPosts';
@@ -36,18 +38,7 @@ export default function TopPage() {
   } = usePaginatedPosts({ data: posts, page, onPageChange: setPage, error });
 
   if (isLoading) {
-    return (
-      <Box
-        sx={{
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          minHeight: '50vh',
-        }}
-      >
-        <CircularProgress />
-      </Box>
-    );
+    return <PageSpinner />;
   }
 
   if (isAuthenticated) {
@@ -91,11 +82,10 @@ export default function TopPage() {
           </Box>
         )}
         {!postsLoading && !error && allPosts.length === 0 && (
-          <Box sx={{ p: 4, textAlign: 'center', gridColumn: '1 / -1' }}>
-            <Typography variant="h6" color="text.secondary">
-              投稿がありません
-            </Typography>
-          </Box>
+          <EmptyState
+            message="投稿がありません"
+            sx={{ gridColumn: '1 / -1' }}
+          />
         )}
         {allPosts.map((post, index) => (
           <Box

@@ -5,7 +5,6 @@ import {
   Alert,
   Box,
   Button,
-  CircularProgress,
   Container,
   IconButton,
   Typography,
@@ -14,6 +13,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 
+import { PageSpinner } from '@/components/common/PageSpinner';
 import { PostForm } from '@/components/post/PostForm';
 import { useRequireAuth } from '@/hooks/useRequireAuth';
 import { API_CONFIG, createApiRequest } from '@/lib/apiConfig';
@@ -190,18 +190,7 @@ export default function EditPostPage() {
   }
 
   if (isAuthLoading || loading) {
-    return (
-      <Box
-        sx={{
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          minHeight: '50vh',
-        }}
-      >
-        <CircularProgress />
-      </Box>
-    );
+    return <PageSpinner />;
   }
 
   if (error) {

@@ -17,12 +17,12 @@ import {
   IconButton,
   Menu,
   MenuItem,
-  Typography,
 } from '@mui/material';
 import { useRouter } from 'next/navigation';
 import React, { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 
+import { EmptyState } from '@/components/common/EmptyState';
 import { GRID_LAYOUT } from '@/constants/theme';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { useUser } from '@/hooks/useUser';
@@ -262,13 +262,7 @@ export const MyPostList = ({
   }
 
   if (posts.length === 0) {
-    return (
-      <Box sx={{ p: 4, textAlign: 'center' }}>
-        <Typography variant="h6" color="text.secondary">
-          投稿がありません
-        </Typography>
-      </Box>
-    );
+    return <EmptyState message="投稿がありません" />;
   }
 
   return (

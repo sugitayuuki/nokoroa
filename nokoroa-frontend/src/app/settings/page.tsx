@@ -8,7 +8,6 @@ import {
   Box,
   Card,
   CardContent,
-  CircularProgress,
   Container,
   Divider,
   List,
@@ -19,6 +18,7 @@ import {
 } from '@mui/material';
 import Link from 'next/link';
 
+import { PageSpinner } from '@/components/common/PageSpinner';
 import { useRequireAuth } from '@/hooks/useRequireAuth';
 import { useUser } from '@/hooks/useUser';
 
@@ -94,18 +94,7 @@ export default function SettingsPage() {
   }
 
   if (isAuthLoading || isLoading) {
-    return (
-      <Box
-        sx={{
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          minHeight: '50vh',
-        }}
-      >
-        <CircularProgress />
-      </Box>
-    );
+    return <PageSpinner />;
   }
 
   if (error) {

@@ -1,7 +1,8 @@
 'use client';
 
-import { Box, CircularProgress, Typography } from '@mui/material';
+import { Box, Typography } from '@mui/material';
 
+import { PageSpinner } from '@/components/common/PageSpinner';
 import ProfileEditForm from '@/components/profile/ProfileEditForm';
 import { useRequireAuth } from '@/hooks/useRequireAuth';
 
@@ -9,18 +10,7 @@ export default function ProfileEditPage() {
   const { isAuthLoading, isReady } = useRequireAuth();
 
   if (!isReady) {
-    return isAuthLoading ? (
-      <Box
-        sx={{
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          minHeight: '50vh',
-        }}
-      >
-        <CircularProgress />
-      </Box>
-    ) : null;
+    return isAuthLoading ? <PageSpinner /> : null;
   }
 
   return (
