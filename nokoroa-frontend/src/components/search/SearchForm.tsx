@@ -131,7 +131,7 @@ export const SearchForm = ({ onSearch, initialFilters }: SearchFormProps) => {
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [query]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [query, getKeywordSuggestions]);
 
   // 場所入力時のサジェスト取得
   useEffect(() => {
@@ -142,7 +142,7 @@ export const SearchForm = ({ onSearch, initialFilters }: SearchFormProps) => {
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [location]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [location, getLocationSuggestions]);
 
   // キーワード候補リストを生成（重複を除去）
   const keywordOptions = [

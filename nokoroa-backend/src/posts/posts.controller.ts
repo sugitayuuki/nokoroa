@@ -97,7 +97,7 @@ export class PostsController {
   )
   async uploadImage(@UploadedFile() file: Express.Multer.File) {
     if (!file) {
-      throw new BadRequestException('No file uploaded');
+      throw new BadRequestException('ファイルが選択されていません');
     }
 
     const url = await this.s3Service.uploadFile(file, 'public/images');

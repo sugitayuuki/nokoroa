@@ -32,7 +32,6 @@ export default function MyPostsPage() {
         author: {
           id: user.id,
           name: user.name,
-          email: user.email,
           avatar: user.avatar,
         },
         _count: post._count || {

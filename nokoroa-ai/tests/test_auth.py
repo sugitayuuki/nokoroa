@@ -7,10 +7,8 @@
 import pytest
 
 PROTECTED_PATHS = [
-    "/api/chat/",
     "/api/chat/stream",
     "/api/chat/suggestions",
-    "/api/chat/related-keywords",
     "/api/embeddings/",
 ]
 
@@ -53,5 +51,5 @@ def test_missing_configured_token_fails_closed(client, monkeypatch):
     from app import deps
 
     monkeypatch.setattr(deps.settings, "internal_ai_token", "")
-    response = client.post("/api/chat/", json={"message": "x"})
+    response = client.post("/api/chat/stream", json={"message": "x"})
     assert response.status_code == 503

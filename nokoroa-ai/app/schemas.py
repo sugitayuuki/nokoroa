@@ -58,23 +58,8 @@ class ChatRequest(BaseModel):
     context_posts: list[ContextPost] | None = Field(default=None, max_length=MAX_CONTEXT_POSTS)
 
 
-class GroundingSource(BaseModel):
-    title: str | None = None
-    uri: str | None = None
-
-
-class GroundingMetadata(BaseModel):
-    rendered_content: str | None = None
-    sources: list[GroundingSource] | None = None
-
-
-class ChatResponse(BaseModel):
-    response: str
-    grounding_metadata: GroundingMetadata | None = None
-
-
 class FollowUpRequest(BaseModel):
-    """/suggestions と /related-keywords は同じ入力を取るため共通化する。"""
+    """/suggestions の入力。"""
 
     message: str = Field(..., max_length=MAX_MESSAGE_LENGTH)
     # AIの生成結果が入るため、ユーザー入力より緩い上限にする
@@ -83,18 +68,6 @@ class FollowUpRequest(BaseModel):
 
 class SuggestionsResponse(BaseModel):
     suggestions: list[str]
-
-
-class SearchKeywords(BaseModel):
-    # backend は location のみ参照する (chat.service.ts の keywords.location) が、
-    # 抽出結果の構造を明示するため tags / query も型に残す。
-    location: str
-    tags: list[str] = Field(default_factory=list)
-    query: str | None = None
-
-
-class RelatedKeywordsResponse(BaseModel):
-    keywords: SearchKeywords | None = None
 
 
 class EmbeddingRequest(BaseModel):

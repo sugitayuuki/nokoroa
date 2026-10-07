@@ -17,7 +17,6 @@ interface BookmarkButtonProps {
   postId: number;
   initialBookmarkCount?: number;
   size?: 'small' | 'medium' | 'large';
-  showCount?: boolean;
   /**
    * 親が既にブックマーク状態を知っている場合に渡す。
    * 渡された場合は状態問い合わせ API を呼ばない
@@ -30,7 +29,6 @@ export default function BookmarkButton({
   postId,
   initialBookmarkCount = 0,
   size = 'medium',
-  showCount = true,
   initialIsBookmarked,
 }: BookmarkButtonProps) {
   const { isAuthenticated } = useAuth();
@@ -133,17 +131,15 @@ export default function BookmarkButton({
           {isBookmarked ? <BookmarkIcon /> : <BookmarkBorderIcon />}
         </IconButton>
       </Tooltip>
-      {showCount && (
-        <Typography
-          variant="body2"
-          sx={{
-            color: 'text.secondary',
-            fontSize: size === 'small' ? '0.75rem' : '0.875rem',
-          }}
-        >
-          {bookmarkCount}
-        </Typography>
-      )}
+      <Typography
+        variant="body2"
+        sx={{
+          color: 'text.secondary',
+          fontSize: size === 'small' ? '0.75rem' : '0.875rem',
+        }}
+      >
+        {bookmarkCount}
+      </Typography>
     </Box>
   );
 }

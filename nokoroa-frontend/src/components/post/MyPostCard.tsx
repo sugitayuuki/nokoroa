@@ -36,8 +36,6 @@ import PostCard from './PostCard';
 interface MyPostListProps {
   posts: PostData[];
   isLoading: boolean;
-  hasMore?: boolean;
-  onLoadMore?: () => void;
   onUpdate?: (postId: number, updates: { isPublic?: boolean }) => void;
   onDelete?: (postId: number) => void;
 }
@@ -252,8 +250,6 @@ const MyPostCard = ({
 export const MyPostList = ({
   posts,
   isLoading,
-  hasMore: _hasMore,
-  onLoadMore: _onLoadMore,
   onUpdate,
   onDelete,
 }: MyPostListProps) => {

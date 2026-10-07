@@ -187,7 +187,7 @@ export class UsersController {
     @UploadedFile() file: Express.Multer.File,
   ) {
     if (!file) {
-      throw new BadRequestException('No file uploaded');
+      throw new BadRequestException('ファイルが選択されていません');
     }
     const avatarUrl = await this.s3Service.uploadFile(file, 'public/avatars');
     return this.usersService.updateAvatar(req.user.userId, avatarUrl);

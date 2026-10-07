@@ -42,7 +42,6 @@ export default function ProfilePage() {
         author: {
           id: user.id,
           name: user.name,
-          email: user.email,
           avatar: user.avatar,
         },
         _count: {
@@ -192,8 +191,6 @@ export default function ProfilePage() {
           <MyPostList
             posts={publicPosts}
             isLoading={false}
-            hasMore={false}
-            onLoadMore={() => {}}
             onUpdate={handlePostUpdate}
           />
         )}
@@ -201,8 +198,6 @@ export default function ProfilePage() {
           <MyPostList
             posts={privatePosts}
             isLoading={false}
-            hasMore={false}
-            onLoadMore={() => {}}
             onUpdate={handlePostUpdate}
           />
         )}
@@ -210,8 +205,6 @@ export default function ProfilePage() {
           <MyPostList
             posts={localPosts}
             isLoading={false}
-            hasMore={false}
-            onLoadMore={() => {}}
             onUpdate={handlePostUpdate}
           />
         )}

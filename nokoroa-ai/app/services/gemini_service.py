@@ -1,19 +1,12 @@
 import asyncio
 import logging
 from collections.abc import Iterator
-from typing import Any
 
 from google import genai
 from google.genai import types
 
 from app.config import settings
-from app.schemas import (
-    ContextPost,
-    GroundingMetadata,
-    GroundingSource,
-    Message,
-    SearchKeywords,
-)
+from app.schemas import ContextPost, Message
 
 logger = logging.getLogger(__name__)
 
@@ -42,21 +35,6 @@ Nokoroaは旅行体験を共有するSNSプラットフォームです。
 
 # 会話ではなく単発の抽出タスク用プロンプト。str.format は差し込む値の中身を
 # 再解釈しないため、ユーザー入力に波括弧が含まれていても壊れない。
-KEYWORD_PROMPT = """ユーザーの質問: {user_message}
-AIの回答: {ai_response}
-
-上記の会話から、旅行に関連する検索キーワードを抽出してください。
-具体的な地名（都市名、観光地名、温泉名など）が含まれる場合のみ抽出してください。
-一般的な挨拶や旅行と無関係な会話の場合は「NONE」とだけ出力してください。
-
-フォーマット（地名がある場合）:
-location:地名
-tags:タグ1,タグ2
-query:検索語
-
-tags と query は省略可能ですが、location は必須です。
-フォーマット以外のテキストは出力しないでください。"""
-
 SUGGESTIONS_PROMPT = """ユーザーの質問: {user_message}
 AIの回答: {ai_response}
 
@@ -118,24 +96,13 @@ class GeminiService:
             http_options=types.HttpOptions(timeout=GEMINI_STREAM_TIMEOUT_MS),
         )
         self.model = settings.chat_model
-        self.config = self._generation_config(GEMINI_REQUEST_TIMEOUT_MS)
-        # ストリームは生成が終わるまで接続を保つため、非ストリームと同じ
-        # 15 秒では足りない。timeout 以外は同一。
-        self.stream_config = self._generation_config(GEMINI_STREAM_TIMEOUT_MS)
-
-    @staticmethod
-    def _generation_config(timeout_ms: int) -> types.GenerateContentConfig:
-        """chat / chat_stream 共通の生成設定。timeout だけを差し替える。
-
-        設定を 2 か所に書くと片方だけ直したときに静かに食い違うため、
-        ここを唯一の定義にする。
-        """
-        return types.GenerateContentConfig(
+        # ストリームは生成が終わるまで接続を保つため、他経路より長い上限を使う。
+        self.stream_config = types.GenerateContentConfig(
             system_instruction=SYSTEM_PROMPT,
             temperature=0.7,
             top_p=0.95,
             max_output_tokens=2048,
-            http_options=types.HttpOptions(timeout=timeout_ms),
+            http_options=types.HttpOptions(timeout=GEMINI_STREAM_TIMEOUT_MS),
             tools=[GOOGLE_SEARCH_TOOL],
         )
 
@@ -155,28 +122,6 @@ class GeminiService:
             ),
         )
         return list(result.embeddings[0].values)
-
-    async def chat(
-        self,
-        message: str,
-        history: list[Message] | None = None,
-    ) -> tuple[str, GroundingMetadata | None]:
-        contents = self._build_contents(message, history)
-
-        # generate_content は同期ブロッキング。async 関数から直接呼ぶと応答が返るまで
-        # イベントループ全体が止まり、同居する /health や他リクエストも応答しなくなる。
-        # SDK の client.aio.* も 1.x では内部で asyncio.to_thread しているだけなので
-        # ここでの退避と等価。2.x へ上げる際は .aio (httpx の真の非同期) へ寄せる。
-        response = await asyncio.to_thread(
-            self.client.models.generate_content,
-            model=self.model,
-            contents=contents,
-            config=self.config,
-        )
-
-        # safety block や finish_reason が STOP 以外のとき text は None になる。
-        # ChatResponse.response は非 Optional なのでここで空文字に倒す。
-        return response.text or "", self._extract_grounding(response)
 
     def chat_stream(
         self,
@@ -202,33 +147,6 @@ class GeminiService:
             if chunk.text:
                 yield chunk.text
 
-    async def extract_search_keywords(
-        self, user_message: str, ai_response: str
-    ) -> SearchKeywords | None:
-        text = await self._one_shot(
-            KEYWORD_PROMPT.format(user_message=user_message, ai_response=ai_response),
-            temperature=0.3,
-            max_output_tokens=150,
-        )
-        if not text or text == "NONE":
-            return None
-
-        fields: dict[str, Any] = {}
-        for raw_line in text.split("\n"):
-            line = raw_line.strip()
-            if line.startswith("location:"):
-                fields["location"] = line.removeprefix("location:").strip()
-            elif line.startswith("tags:"):
-                tags = line.removeprefix("tags:").strip()
-                fields["tags"] = [t.strip() for t in tags.split(",") if t.strip()]
-            elif line.startswith("query:"):
-                fields["query"] = line.removeprefix("query:").strip()
-
-        # location が無い抽出結果は backend 側で使い道がない (検索キーにならない)。
-        if not fields.get("location"):
-            return None
-        return SearchKeywords(**fields)
-
     async def generate_suggestions(self, user_message: str, ai_response: str) -> list[str]:
         text = await self._one_shot(
             SUGGESTIONS_PROMPT.format(user_message=user_message, ai_response=ai_response),
@@ -240,7 +158,7 @@ class GeminiService:
     async def _one_shot(self, prompt: str, *, temperature: float, max_output_tokens: int) -> str:
         """履歴も検索ツールも使わない単発生成。失敗時は空文字を返す。
 
-        chat() と違い system_instruction を付けないのは、抽出タスクに
+        chat_stream と違い system_instruction を付けないのは、抽出タスクに
         「Sora AI として振る舞う」指示が混ざると出力フォーマットが崩れるため。
         """
         try:
@@ -315,35 +233,3 @@ class GeminiService:
             )
         )
         return contents
-
-    def _extract_grounding(self, response: Any) -> GroundingMetadata | None:
-        # grounding は付加情報なので、SDK のレスポンス形が想定と違っても
-        # チャット本体を失敗させない。フィールドの有無は SDK のバージョンで
-        # 変わりうるため、個別アクセスまで含めて try で包む。
-        try:
-            metadata = response.candidates[0].grounding_metadata
-            if not metadata:
-                return None
-
-            rendered = (
-                metadata.search_entry_point.rendered_content
-                if metadata.search_entry_point
-                else None
-            )
-            sources = (
-                [
-                    GroundingSource(
-                        title=chunk.web.title if chunk.web else None,
-                        uri=chunk.web.uri if chunk.web else None,
-                    )
-                    for chunk in metadata.grounding_chunks
-                ]
-                if metadata.grounding_chunks
-                else None
-            )
-        except (AttributeError, IndexError):
-            return None
-
-        if rendered is None and sources is None:
-            return None
-        return GroundingMetadata(rendered_content=rendered, sources=sources)

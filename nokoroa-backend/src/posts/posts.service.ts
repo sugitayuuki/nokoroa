@@ -353,13 +353,13 @@ export class PostsService {
     ]);
 
     if (!post) {
-      throw new NotFoundException(`Post with ID ${id} not found`);
+      throw new NotFoundException(`ID ${id} の投稿が見つかりません`);
     }
 
     // 非公開投稿は投稿者本人のみ閲覧できる。
     // 存在自体を隠すため403ではなく404を返す。
     if (!post.isPublic && post.authorId !== requesterId) {
-      throw new NotFoundException(`Post with ID ${id} not found`);
+      throw new NotFoundException(`ID ${id} の投稿が見つかりません`);
     }
 
     return {
@@ -375,11 +375,11 @@ export class PostsService {
     });
 
     if (!post) {
-      throw new NotFoundException(`Post with ID ${id} not found`);
+      throw new NotFoundException(`ID ${id} の投稿が見つかりません`);
     }
 
     if (post.authorId !== userId) {
-      throw new ForbiddenException('You can only update your own posts');
+      throw new ForbiddenException('自分の投稿のみ編集できます');
     }
 
     const {
@@ -456,11 +456,11 @@ export class PostsService {
     });
 
     if (!post) {
-      throw new NotFoundException(`Post with ID ${id} not found`);
+      throw new NotFoundException(`ID ${id} の投稿が見つかりません`);
     }
 
     if (post.authorId !== userId) {
-      throw new ForbiddenException('You can only delete your own posts');
+      throw new ForbiddenException('自分の投稿のみ削除できます');
     }
 
     await this.prisma.post.delete({
