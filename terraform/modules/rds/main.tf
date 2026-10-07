@@ -123,9 +123,14 @@ resource "aws_db_instance" "main" {
     # 復元元の指定忘れを弾く。渡し忘れると CreateDBInstance が走って空の DB が本番として
     # 立ち、以降「旧スナップショットに戻すと新規分が消える / 新しい方を使うと旧データが
     # 消える」の二択になる。空から始めるのは明示オプトインに限る。
+    #
+    # || ではなく排他（XOR）にしているのが要点。start_from_empty は永続ファイルに書く値なので、
+    # || だと「初回構築で true にして以降消し忘れた」状態でこの precondition が無条件に通り、
+    # 存在しないのと同じになる。排他なら両方指定も両方未指定も弾けるので、
+    # 「復元するなら start_from_empty を消す」が構成側で強制される。
     precondition {
-      condition     = var.start_from_empty || var.snapshot_identifier != null
-      error_message = "snapshot_identifier を指定するか、空の DB から始める場合に限り start_from_empty = true を指定してください。"
+      condition     = var.start_from_empty != (var.snapshot_identifier != null)
+      error_message = "snapshot_identifier と start_from_empty はどちらか一方だけを指定してください（復元するなら start_from_empty を外す / 空から始めるなら snapshot_identifier を外す）。"
     }
   }
 }

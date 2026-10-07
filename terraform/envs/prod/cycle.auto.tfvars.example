@@ -21,7 +21,14 @@ db_final_snapshot_identifier = "nokoroa-prod-20261008-0900"
 
 # 復元元が存在しない場合（初回構築、または意図的な初期化）は
 # db_snapshot_identifier を消して、代わりにこれを true にする。
+# 両方を同時に書くと modules/rds の precondition が弾く（排他条件にしてあるのは、
+# 初回構築で true にしたまま消し忘れると復元元の指定忘れを検知できなくなるため）。
+# 次に復元で再開するときはこの行を消すこと。
 # db_start_from_empty = true
+
+# 注意: このファイルは停止中にだけ書き換える。db_snapshot_identifier は ForceNew なので、
+# 稼働中に値を変えると本番の DB が作り直され、それまでの書き込みが失われる。
+# さらに db_final_snapshot_identifier の名前が 1 つ消費され、次の停止が同名衝突で失敗する。
 
 # runtime_enabled はここに書かないこと。
 # true で固定すれば素の apply が課金を始め、false で固定すれば稼働中の本番を落とす。

@@ -42,6 +42,7 @@ CI が毎コミットで `terraform fmt -check` / `init` / `validate` を実行�
 | S3 バケット | 約 $1 | 投稿画像の実データ。state 用バケットも作るが backend は未設定（「既知の課題」参照） |
 | Secrets Manager | $2.80 | 削除すると 30 日間は同名で作り直せない。1 件 $0.40 × 7 件（下記参照） |
 | RDS スナップショット | 約 $0.30 | 停止時の最終スナップショット。次回の再開時のデータ源になる |
+| RDS の保持バックアップ | 下記参照 | `delete_automated_backups = false` のため、削除後も自動バックアップが保持期間ぶん残る |
 | VPC・サブネット・SG・IGW | $0 | NAT を置いていないため無料。消す理由がない |
 
 > **この表は新しい設計で「残すことにしたもの」であり、いま AWS 上に実在するものの一覧ではありません。**
@@ -53,6 +54,8 @@ CI が毎コミットで `terraform fmt -check` / `init` / `validate` を実行�
 `module "secrets"` と `module "s3"` に `count` を付けていないのは意図的です。シークレットを destroy すると `recovery_window_in_days` 既定の 30 日間削除待ちに入り、**同名のシークレットを 30 日間作り直せない = 次の再開ができなくなる**ためです。月 $2.80 を払って残す方が安く済みます。
 
 素の `terraform destroy` を止めるための `prevent_destroy` を 2 箇所だけ置いています（`modules/secrets` の `jwt_secret` と uploads バケット）。効く範囲と効かない範囲、2 箇所に絞った理由は「[運用上の落とし穴](#運用上の落とし穴)」にまとめています。ECR・ACM 証明書・DynamoDB ロックテーブルは保持対象ですがガードを付けていません（いずれも再作成できます。ACM は再発行に DNS 検証の待ち時間、ECR は 3 イメージの再ビルドが必要）。
+
+**保持バックアップは停止のたびに積み上がります。** `delete_automated_backups = false` にしているため、インスタンス削除後も自動バックアップが「retained automated backup」として `backup_retention_period`（現在 **14 日**）ぶん残ります。無料枠は割当ストレージ相当（20GB）までで、超えた分は $0.095/GB 月です。頻繁に停止・再開するとサイクルごとの保持分が重なるため、**サイクルを回す運用では `backup_retention_period` を 1〜7 に落とす方が合理的です**（1 日稼働では 14 日分の保持がそもそも成立しません）。リージョンあたりの保持バックアップ数にも上限があります。
 
 この表に載っていない課金もあります。`enabled_cloudwatch_logs_exports` によって AWS が作る `/aws/rds/instance/nokoroa-prod-postgres/postgresql` は Terraform の管理外・保持期間無期限で、停止しても残り続けます。
 
@@ -279,6 +282,10 @@ EOF
 
 `*.tfvars` は `.gitignore` 済みなのでコミットされません。
 
+> **このファイルは停止中にだけ書き換えてください。** `db_snapshot_identifier` は ForceNew なので、**稼働中に値を変えると本番の DB が作り直されます**（それまでの書き込みが失われ、さらに `db_final_snapshot_identifier` の名前も 1 つ消費されるため、次の停止が同名衝突で失敗します）。plan に `must be replaced` が出たら中断して値を戻してください。次サイクルの値は停止してから書き換えます。
+>
+> `db_snapshot_identifier` と `db_start_from_empty` は**どちらか一方だけ**を書きます。両方書くと `modules/rds` の `precondition` が弾きます。`||` ではなく排他条件にしてあるのは、初回構築で `db_start_from_empty = true` にしたまま消し忘れると、復元元の指定忘れを検知できなくなるからです。
+
 これを使う理由は 2 つあります。まず **`-var` の落とし忘れを構造的に無くせる**こと。この 2 変数は `modules/rds` の `precondition` が要求するため、サイクル中のどの `plan` / `apply` でも必要で、毎回 3 つのフラグを正しく並べるのは落としやすい形でした。もうひとつは **値が勝手に変わらない**こと。`$(date)` をコマンドに直接書くと実行ごとに別の名前が state へ入り、停止時に作られるスナップショット名が実行者の記憶と合わなくなります。
 
 **`runtime_enabled` はこのファイルに入れないこと。** `true` で固定すれば素の `apply` が課金を始め、`false` で固定すれば稼働中の本番を落とします。これは「いま何をしたいか」という意図なので、毎回コマンドラインで明示します（`TF_VAR_runtime_enabled` も同じ理由で使わないこと。詳細は `terraform.tfvars.example`）。
@@ -328,10 +335,12 @@ terraform apply -var runtime_enabled=true
 # cycle.auto.tfvars
 db_start_from_empty          = true
 db_final_snapshot_identifier = "nokoroa-prod-20261008-0900"
-# db_snapshot_identifier は書かない
+# db_snapshot_identifier は書かない（両方書くと precondition が弾く）
 ```
 
 `db_start_from_empty` を明示させているのは、`db_snapshot_identifier` の渡し忘れで**空の DB が本番として立つ**のを防ぐためです。黙って通すと、その後の書き込みは空 DB 側に入り、次の停止が「空 DB の中身」を新しいスナップショットとして保存するため、以降「旧スナップショットに戻すと新規分が消える / 新しい方を使うと旧データが消える」の二択になります。
+
+**次に復元で再開するときは `db_start_from_empty` の行を消してください。** 消し忘れたまま `db_snapshot_identifier` を書くと `precondition` が弾くので気付けます（`||` ではなく排他条件にしているのはこのためです）。
 
 | 工程 | 時間 | 備考 |
 |---|---|---|
