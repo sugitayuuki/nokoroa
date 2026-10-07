@@ -51,7 +51,11 @@ export class UsersService {
           select: {
             followers: true,
             following: true,
-            posts: true,
+            // posts と同じ可視性条件を必ず付ける。where を付けないと
+            // 一覧には出ない非公開投稿まで数に含まれ、
+            // 「posts は 2 件なのに postsCount は 7」から
+            // 非公開投稿の件数が第三者に割り出せてしまう(UI 上も不整合)。
+            posts: isOwner ? true : { where: { isPublic: true } },
           },
         },
       },

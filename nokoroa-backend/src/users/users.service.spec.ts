@@ -154,6 +154,38 @@ describe('UsersService', () => {
       expect(args.include.posts.where).toBeUndefined();
     });
 
+    it('_count.posts にも posts と同じ可視性条件を付ける', async () => {
+      // posts だけ絞って _count を絞らないと、一覧には出ない非公開投稿まで
+      // 件数に含まれ、「posts は 2 件なのに postsCount は 7」の差から
+      // 非公開投稿の件数を第三者が割り出せてしまう。
+      mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
+
+      await service.findById(1, 999);
+      await service.findById(1, 1);
+
+      const calls = (
+        mockPrismaService.user.findUnique as jest.Mock<
+          unknown,
+          [
+            {
+              include: {
+                _count: {
+                  select: { posts: true | { where: { isPublic: boolean } } };
+                };
+              };
+            },
+          ]
+        >
+      ).mock.calls;
+
+      // 他人・未認証: 公開投稿のみ数える
+      expect(calls[0][0].include._count.select.posts).toEqual({
+        where: { isPublic: true },
+      });
+      // 本人: 非公開も数える
+      expect(calls[1][0].include._count.select.posts).toBe(true);
+    });
+
     it('存在しないユーザーIDでNotFoundExceptionを投げる', async () => {
       mockPrismaService.user.findUnique.mockResolvedValue(null);
 
