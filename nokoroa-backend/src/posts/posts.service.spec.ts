@@ -24,7 +24,9 @@ describe('PostsService', () => {
       create: jest.fn(),
     },
     tag: {
-      findUnique: jest.fn(),
+      // getOrCreateTags は name か slug のどちらかの一致で既存タグを探すため
+      // findUnique ではなく findFirst({ where: { OR: [...] } }) を使う
+      findFirst: jest.fn(),
       create: jest.fn(),
     },
     postTag: {
@@ -106,7 +108,7 @@ describe('PostsService', () => {
         id: 1,
         name: 'Tokyo',
       });
-      mockPrismaService.tag.findUnique.mockResolvedValue(null);
+      mockPrismaService.tag.findFirst.mockResolvedValue(null);
       mockPrismaService.tag.create.mockResolvedValue({
         id: 1,
         name: 'travel',
@@ -371,7 +373,7 @@ describe('PostsService', () => {
     it('タグを更新できる', async () => {
       mockPrismaService.post.findUnique.mockResolvedValue({ authorId: 1 });
       mockPrismaService.postTag.deleteMany.mockResolvedValue({ count: 1 });
-      mockPrismaService.tag.findUnique.mockResolvedValue({
+      mockPrismaService.tag.findFirst.mockResolvedValue({
         id: 2,
         name: 'newtag',
         slug: 'newtag',
@@ -512,7 +514,7 @@ describe('PostsService', () => {
       it('タグ解決に失敗したら既存タグを削除しない', async () => {
         setupOwner();
         // findUnique が null -> create が P2002 以外で落ちる = 解決不能
-        mockPrismaService.tag.findUnique.mockResolvedValue(null);
+        mockPrismaService.tag.findFirst.mockResolvedValue(null);
         mockPrismaService.tag.create.mockRejectedValue(new Error('db down'));
 
         await expect(
@@ -524,7 +526,7 @@ describe('PostsService', () => {
 
       it('削除・作成・本体更新を同一トランザクションで行う', async () => {
         setupOwner();
-        mockPrismaService.tag.findUnique.mockResolvedValue({
+        mockPrismaService.tag.findFirst.mockResolvedValue({
           id: 2,
           name: 'newtag',
           slug: 'newtag',
@@ -540,7 +542,7 @@ describe('PostsService', () => {
         const txCallOrder =
           mockPrismaService.$transaction.mock.invocationCallOrder[0];
         expect(
-          mockPrismaService.tag.findUnique.mock.invocationCallOrder[0],
+          mockPrismaService.tag.findFirst.mock.invocationCallOrder[0],
         ).toBeLessThan(txCallOrder);
         expect(
           mockPrismaService.postTag.deleteMany.mock.invocationCallOrder[0],
@@ -557,7 +559,7 @@ describe('PostsService', () => {
           { code: 'P2002', clientVersion: 'test' },
         );
         // 1回目: 未存在 -> create が競合 -> 取り直しで見つかる
-        mockPrismaService.tag.findUnique
+        mockPrismaService.tag.findFirst
           .mockResolvedValueOnce(null)
           .mockResolvedValueOnce({ id: 9, name: 'race', slug: 'race' });
         mockPrismaService.tag.create.mockRejectedValue(conflict);
@@ -571,6 +573,33 @@ describe('PostsService', () => {
 
         expect(mockPrismaService.postTag.createMany).toHaveBeenCalledWith({
           data: [{ postId: 1, tagId: 9 }],
+        });
+      });
+
+      it('既存タグの検索は name と slug の両方で引く', async () => {
+        // slugify は記号を落として区切りを正規化するため、異なる name が
+        // 同じ slug に落ちる ("# Kyoto" -> "kyoto")。name だけで引くと
+        // slug 衝突を検出できず tag_slug_key の P2002 が上がり、
+        // PrismaExceptionFilter が 409 に写像して投稿作成自体が失敗する。
+        setupOwner();
+        mockPrismaService.tag.findFirst.mockResolvedValue({
+          id: 5,
+          name: 'Kyoto',
+          slug: 'kyoto',
+        });
+        mockPrismaService.postTag.deleteMany.mockResolvedValue({ count: 0 });
+        mockPrismaService.postTag.createMany.mockResolvedValue({ count: 1 });
+        mockPrismaService.post.update.mockResolvedValue(mockPost);
+
+        await service.update(1, { tags: ['# Kyoto'] }, 1);
+
+        expect(mockPrismaService.tag.findFirst).toHaveBeenCalledWith({
+          where: { OR: [{ name: '# Kyoto' }, { slug: 'kyoto' }] },
+        });
+        // slug 一致で既存タグを再利用し、重複 create を発行しない
+        expect(mockPrismaService.tag.create).not.toHaveBeenCalled();
+        expect(mockPrismaService.postTag.createMany).toHaveBeenCalledWith({
+          data: [{ postId: 1, tagId: 5 }],
         });
       });
     });
@@ -871,7 +900,7 @@ describe('PostsService', () => {
           clientVersion: 'test',
         }),
       );
-      mockPrismaService.tag.findUnique = jest.fn().mockResolvedValue(null);
+      mockPrismaService.tag.findFirst = jest.fn().mockResolvedValue(null);
       mockPrismaService.tag.create = jest.fn().mockResolvedValue({
         id: 1,
         name: 'travel',

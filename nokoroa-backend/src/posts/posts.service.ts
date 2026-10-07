@@ -121,18 +121,24 @@ export class PostsService {
   private async getOrCreateTags(tagNames: string[]) {
     const tags = await Promise.all(
       tagNames.map(async (name) => {
-        const existing = await this.prisma.tag.findUnique({ where: { name } });
+        // slugify は記号を落とし区切りを正規化するため、異なる name が
+        // 同じ slug に落ちる（"Kyoto" と "# Kyoto" はどちらも "kyoto"、
+        // "Kyoto Trip" / "Kyoto-Trip" / "kyoto_trip" はどちらも "kyoto-trip"）。
+        // name だけで引くと slug 衝突を検出できず tag_slug_key の P2002 が
+        // そのまま上がり、PrismaExceptionFilter が 409 に写像して
+        // 「投稿の作成自体が失敗する」。slug は正規化後の同一性なので、
+        // name か slug のどちらかが一致する既存タグを再利用する。
+        const slug = slugify(name) || name.toLowerCase();
+        const findExisting = () =>
+          this.prisma.tag.findFirst({ where: { OR: [{ name }, { slug }] } });
+
+        const existing = await findExisting();
         if (existing) return existing;
 
         try {
-          return await this.prisma.tag.create({
-            data: {
-              name,
-              slug: slugify(name) || name.toLowerCase(),
-            },
-          });
+          return await this.prisma.tag.create({ data: { name, slug } });
         } catch (err) {
-          // findUnique と create の間に別リクエストが同じタグを作ると
+          // 検索と create の間に別リクエストが同じタグを作ると
           // tag.name / tag.slug の unique 制約で P2002 になる。
           // competing insert は成功しているので取り直せばよい
           // (getOrCreateLocation と同じ方針)。
@@ -140,7 +146,7 @@ export class PostsService {
             err instanceof Prisma.PrismaClientKnownRequestError &&
             err.code === 'P2002'
           ) {
-            const retry = await this.prisma.tag.findUnique({ where: { name } });
+            const retry = await findExisting();
             if (retry) return retry;
           }
           throw err;
