@@ -25,7 +25,6 @@ import {
   ApiConsumes,
   ApiBody,
   ApiParam,
-  ApiQuery,
 } from '@nestjs/swagger';
 import { memoryStorage } from 'multer';
 
@@ -33,6 +32,7 @@ import {
   ALLOWED_IMAGE_EXTENSIONS,
   hasAllowedImageExtension,
 } from '../common/image-upload';
+import { OffsetPaginationDto } from '../common/pagination.dto';
 import { S3Service } from '../common/s3.service';
 import { CreatePostDto } from './dto/create-post.dto';
 import { SearchPostsByLocationDto } from './dto/search-posts-by-location.dto';
@@ -42,6 +42,10 @@ import { UpdatePostDto } from './dto/update-post.dto';
 import { PostsService } from './posts.service';
 import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import {
+  AuthenticatedRequest,
+  OptionallyAuthenticatedRequest,
+} from '../common/authenticated-request';
 
 @ApiTags('posts')
 @Controller('posts')
@@ -118,12 +122,12 @@ export class PostsController {
   @ApiResponse({ status: 400, description: '入力値エラー' })
   @ApiResponse({ status: 401, description: '認証エラー' })
   create(
-    @Request() req: { user: { id: number } },
+    @Request() req: AuthenticatedRequest,
     @Body() createPostDto: CreatePostDto,
   ) {
     return this.postsService.create({
       ...createPostDto,
-      authorId: req.user.id,
+      authorId: req.user.userId,
     });
   }
 
@@ -132,24 +136,10 @@ export class PostsController {
     summary: '投稿一覧取得',
     description: '公開されている投稿の一覧を取得します',
   })
-  @ApiQuery({
-    name: 'limit',
-    required: false,
-    description: '取得件数',
-    example: 10,
-  })
-  @ApiQuery({
-    name: 'offset',
-    required: false,
-    description: 'オフセット',
-    example: 0,
-  })
   @ApiResponse({ status: 200, description: '取得成功' })
-  findAll(@Query('limit') limit?: string, @Query('offset') offset?: string) {
-    return this.postsService.findAll(
-      limit ? parseInt(limit) : 10,
-      offset ? parseInt(offset) : 0,
-    );
+  @ApiResponse({ status: 400, description: 'ページネーション指定が不正です' })
+  findAll(@Query() pagination: OffsetPaginationDto) {
+    return this.postsService.findAll(pagination.limit, pagination.offset);
   }
 
   @Get('search')
@@ -219,9 +209,9 @@ export class PostsController {
   @ApiResponse({ status: 404, description: '投稿が見つかりません' })
   findOne(
     @Param('id', ParseIntPipe) id: number,
-    @Request() req: { user?: { id: number } },
+    @Request() req: OptionallyAuthenticatedRequest,
   ) {
-    return this.postsService.findOne(id, req.user?.id);
+    return this.postsService.findOne(id, req.user?.userId);
   }
 
   @Put(':id')
@@ -234,11 +224,11 @@ export class PostsController {
   @ApiResponse({ status: 403, description: '権限がありません' })
   @ApiResponse({ status: 404, description: '投稿が見つかりません' })
   update(
-    @Request() req: { user: { id: number } },
+    @Request() req: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
     @Body() updatePostDto: UpdatePostDto,
   ) {
-    return this.postsService.update(id, updatePostDto, req.user.id);
+    return this.postsService.update(id, updatePostDto, req.user.userId);
   }
 
   @Delete(':id')
@@ -252,9 +242,9 @@ export class PostsController {
   @ApiResponse({ status: 403, description: '権限がありません' })
   @ApiResponse({ status: 404, description: '投稿が見つかりません' })
   remove(
-    @Request() req: { user: { id: number } },
+    @Request() req: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
   ) {
-    return this.postsService.remove(id, req.user.id);
+    return this.postsService.remove(id, req.user.userId);
   }
 }

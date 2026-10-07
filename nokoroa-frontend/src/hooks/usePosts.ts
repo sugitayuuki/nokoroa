@@ -15,18 +15,12 @@ const fetcher = async (url: string): Promise<PostsResponse> => {
 interface UsePostsOptions {
   page?: number;
   limit?: number;
-  authorId?: number;
 }
 
-export const usePosts = ({
-  page = 0,
-  limit = 10,
-  authorId,
-}: UsePostsOptions = {}) => {
+export const usePosts = ({ page = 0, limit = 10 }: UsePostsOptions = {}) => {
   const params = new URLSearchParams();
   params.append('limit', limit.toString());
   params.append('offset', (page * limit).toString());
-  if (authorId) params.append('authorId', authorId.toString());
 
   const url = API_CONFIG.buildUrl(
     `${API_CONFIG.endpoints.posts}?${params.toString()}`,
