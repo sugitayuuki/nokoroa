@@ -5,6 +5,9 @@
 # 同じ理由で `TF_VAR_runtime_enabled` もシェルや direnv に置かないこと。既定値を置かない
 # ガードが塞ぐのは default と tfvars の 2 経路だけで、環境変数は素通りする。
 #
+# db_start_from_empty も書かない。消し忘れが残ると、復元元の指定忘れを
+# precondition が検知できなくなる（TF_VAR_db_start_from_empty も同じ理由で使わない）。
+#
 # db_snapshot_identifier / db_final_snapshot_identifier も書かない。
 # これはサイクルごとに変わる値なので cycle.auto.tfvars.example を使う。
 
@@ -13,9 +16,15 @@
 # app_domain = "nokoroa.com"
 
 # Docker Images (ECR URLs)
-backend_image  = "YOUR_AWS_ACCOUNT_ID.dkr.ecr.ap-northeast-1.amazonaws.com/nokoroa-backend:latest"
-frontend_image = "YOUR_AWS_ACCOUNT_ID.dkr.ecr.ap-northeast-1.amazonaws.com/nokoroa-frontend:latest"
-ai_image       = "YOUR_AWS_ACCOUNT_ID.dkr.ecr.ap-northeast-1.amazonaws.com/nokoroa-ai:latest"
+# 既定でコメントアウトしている。イメージを push したあと（再構築の手順 4）に
+# 実際の URL を入れて有効化する。
+#
+# プレースホルダのまま有効にしないこと。modules/ecs の precondition は空文字しか
+# 弾けないので、"YOUR_AWS_ACCOUNT_ID..." のままだと plan を通過し、存在しない
+# レジストリを指すタスク定義が作られて CannotPullContainerError を繰り返す。
+# backend_image  = "<account-id>.dkr.ecr.ap-northeast-1.amazonaws.com/nokoroa-backend:latest"
+# frontend_image = "<account-id>.dkr.ecr.ap-northeast-1.amazonaws.com/nokoroa-frontend:latest"
+# ai_image       = "<account-id>.dkr.ecr.ap-northeast-1.amazonaws.com/nokoroa-ai:latest"
 
 # Google OAuth (https://console.cloud.google.com/apis/credentials)
 google_client_id     = "YOUR_GOOGLE_CLIENT_ID"

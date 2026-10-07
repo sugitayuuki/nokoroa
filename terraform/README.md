@@ -16,7 +16,7 @@ $ terraform plan -var runtime_enabled=true -var db_start_from_empty=true \
 Plan: 79 to add, 0 to change, 0 to destroy.
 ```
 
-`-var` が 3 つ必要なのは、`modules/rds` の `precondition` 2 本が「最終スナップショット名」と「復元元の指定 または 空から始める明示」を要求するためです。素の `-var runtime_enabled=true` だけでは plan がエラーで止まります。
+`-var` が 3 つ必要なのは、`modules/rds` の `precondition` 2 本が「最終スナップショット名」と「復元元の指定 または 空から始める明示」を要求するためです。素の `-var runtime_enabled=true` だけでは plan がエラーで止まります。あわせて `terraform.tfvars` に 3 つのイメージ URL が入っている必要があります（`modules/ecs` の `precondition` が空を弾くため）。
 
 この 79 件は「停止によって削除された分」ではなく「`runtime_enabled = true` で定義されている全量」です。AWS 上に実在するのに state に載っていないリソース（下記）があるため、現状の `plan` はそれらも新規作成として数えます。実際に再構築で作られるのは、それらを `import` で取り込んだあとの差分になります。
 
@@ -202,6 +202,11 @@ aws secretsmanager list-secrets --include-planned-deletion \
 # 1. RDS の 3 リソースをまとめて import する（instance だけだと次の apply が
 #    DBSubnetGroupAlreadyExists / DBParameterGroupAlreadyExists で落ち、
 #    skip_final_snapshot の是正が実行されないまま残る）
+#
+#    import 後の plan は必ず確認すること。パラメータグループ名は pg15-params だが
+#    config の family は postgres16 で、実在するものが postgres15 だと family は
+#    ForceNew なので replace が計画される。name 固定・create_before_destroy 無しのため
+#    稼働インスタンスに紐づいた PG の destroy が失敗し、手順 3 の是正まで届かない。
 terraform import -var runtime_enabled=true 'module.rds[0].aws_db_instance.main'        nokoroa-prod-postgres
 terraform import -var runtime_enabled=true 'module.rds[0].aws_db_subnet_group.main'    nokoroa-prod-db-subnet-group
 terraform import -var runtime_enabled=true 'module.rds[0].aws_db_parameter_group.main' nokoroa-prod-pg15-params
@@ -211,8 +216,11 @@ terraform import -var runtime_enabled=true 'module.rds[0].aws_db_parameter_group
 # 3. 復元を伴わない起動 apply で state を是正する（差分は in-place のみ）
 terraform apply -var runtime_enabled=true -var db_start_from_empty=true
 
-# 4. cycle.auto.tfvars を元に戻す。以降は通常のサイクル運用
+# 4. ここでは cycle.auto.tfvars を戻さない。次の「停止」を済ませてから、
+#    再開の直前に db_snapshot_identifier を書き戻す
 ```
+
+**手順 4 が重要です。** 稼働中に `db_snapshot_identifier` を書き戻すと、state 側が空のままなので次の apply が `null → "snap-..."` を ForceNew と判定し、**稼働中の本番 DB を作り直します**（「[サイクル変数を固定する](#サイクル変数を固定する)」が禁じている操作そのものです）。戻すのは停止したあと、次の再開の直前です。
 
 手順 3 を飛ばすと、次の停止で最終スナップショットも自動バックアップも取られずに削除されます。現在は RDS インスタンスが存在しないため import 対象に入りませんが、稼働中に state を失った場合はこの経路を踏みます。
 
