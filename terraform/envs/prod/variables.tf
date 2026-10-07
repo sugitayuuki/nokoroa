@@ -59,11 +59,18 @@ variable "db_final_snapshot_identifier" {
 }
 
 # 前回の停止で作ったスナップショットから復元する場合にその名前を渡す。
-# null だと空の DB で起動するため、再開時は指定を忘れないこと。
+# 渡し忘れは modules/rds の precondition が弾く（空の DB が本番として立つのを防ぐため）。
 variable "db_snapshot_identifier" {
-  description = "Restore the database from this snapshot. Leave null only when intentionally starting from an empty database"
+  description = "Restore the database from this snapshot"
   type        = string
   default     = null
+}
+
+# 空の DB から始めることを明示する。初回構築と意図的な初期化のときだけ true にする。
+variable "db_start_from_empty" {
+  description = "Create an empty database instead of restoring. Required when db_snapshot_identifier is not set"
+  type        = bool
+  default     = false
 }
 
 variable "db_username" {

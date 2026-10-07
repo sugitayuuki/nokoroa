@@ -7,11 +7,12 @@ resource "aws_s3_bucket" "uploads" {
     Environment = var.environment
   }
 
-  # 投稿画像の実データが入っており、消すと復旧できない。
-  # envs/prod が RDS の deletion_protection をやめた（停止を 1 変数で完結させるため）結果、
-  # 素の terraform destroy を止めるものが構成全体から無くなったため、ここで塞ぐ。
-  # runtime_enabled による停止・再開はこのバケットを destroy 対象にしないので干渉しない。
-  # 本当に消す場合はこの 3 行を外してから destroy する。
+  # 投稿画像の実データが入っており、消すと復旧できない。envs/prod が RDS の
+  # deletion_protection をやめた結果、素の terraform destroy を止めるものが構成から
+  # 無くなったため、ここで塞ぐ（判定の詳細は modules/secrets の jwt_secret 側コメント）。
+  # terraform_state バケットには付けない。count を持つので create_terraform_state_bucket を
+  # false に戻す経路が解除不能な plan エラーになり、README の既知の課題が掲げる
+  # 「ブートストラップを分ける」移行を自分で塞いでしまう。
   lifecycle {
     prevent_destroy = true
   }
@@ -93,11 +94,6 @@ resource "aws_s3_bucket" "terraform_state" {
     Environment = "global"
   }
 
-  # state の保管先そのものなので、destroy すると以降インフラを管理できなくなる。
-  # 理由は uploads バケットと同じ（prevent_destroy のコメント参照）。
-  lifecycle {
-    prevent_destroy = true
-  }
 }
 
 resource "aws_s3_bucket_versioning" "terraform_state" {

@@ -13,9 +13,6 @@ resource "aws_db_parameter_group" "main" {
   name = "${var.project_name}-${var.environment}-pg15-params"
   # ローカル compose / CI は pgvector/pgvector:pg16。検証環境と本番の
   # メジャーバージョンを揃える。
-  # 注意: snapshot_identifier による復元を入れたため、再開は「新規作成」ではなくなった。
-  # スナップショット側のエンジンバージョンがこの family と var.engine_version に
-  # 整合している必要がある（自分で取ったスナップショットから戻す限りは一致する）。
   family = "postgres16"
 
   parameter {
@@ -65,9 +62,8 @@ resource "aws_db_instance" "main" {
   storage_type          = "gp3"
   storage_encrypted     = true
 
-  # snapshot_identifier から復元する場合、RDS API は db_name を無視する（DB 名は
-  # スナップショットに含まれるものが使われる）。自分で取ったスナップショットから戻す限りは
-  # 同名なので plan に差分は出ないが、他所から持ち込んだスナップショットでは食い違う。
+  # 復元時、RDS API は db_name を無視する（DB 名はスナップショット側の値が使われる）。
+  # 他所から持ち込んだスナップショットでは config と食い違う。
   db_name  = var.db_name
   username = var.db_username
   password = var.db_password
@@ -86,9 +82,20 @@ resource "aws_db_instance" "main" {
   # スナップショット名が必須になるのに変数が無く、destroy が常に失敗していた。
   deletion_protection       = var.deletion_protection
   skip_final_snapshot       = var.skip_final_snapshot
-  final_snapshot_identifier = var.skip_final_snapshot ? null : var.final_snapshot_identifier
+  final_snapshot_identifier = var.final_snapshot_identifier
 
   snapshot_identifier = var.snapshot_identifier
+
+  # 既定の true だと、destroy のたびに backup_retention_period 日分の自動バックアップと
+  # PITR 履歴が最終スナップショットの作成と同時に全削除される。停止・再開を繰り返す構成では
+  # 「停止後に残るデータの複製が常に 1 本だけ」になり、その 1 本を取り違えて消したら終わる。
+  # deletion_protection をやめた分、ここは保持側に倒す。
+  delete_automated_backups = false
+
+  # 既定の true だと AWS がメンテナンス窓でマイナー版を上げうる。復元が正常系になった以上、
+  # 上がった後のスナップショットから戻すと provider が restore 後の ModifyDBInstance へ
+  # 古い engine_version を渡し、ダウングレード不可で失敗する。
+  auto_minor_version_upgrade = false
 
   enabled_cloudwatch_logs_exports = ["postgresql"]
 
@@ -97,16 +104,13 @@ resource "aws_db_instance" "main" {
   }
 
   lifecycle {
-    # スナップショット名が無いまま skip_final_snapshot = false だと、destroy を叩いた
-    # 瞬間に「名前が必須」で落ちて停止がブロックされる。しかもその時点では -var で
-    # 後付けできない (variables.tf の final_snapshot_identifier のコメント参照) ため、
-    # インスタンスが存在するうちの apply で弾く。
-    #
-    # 2 つ目の条件が無いと、final_snapshot_identifier に「復元元と同じ名前」を渡せてしまう。
-    # README の再開コマンドは 2 つの -var を隣接行に並べているためコピペで同値になりやすく、
-    # その場合 ALB・ECS・A レコードが先に消えた後で DeleteDBInstance だけが
-    # DBSnapshotAlreadyExists で失敗する。アプリは消えたのに RDS だけ課金が続き、
-    # かつ destroy 時には -var で直せないので、起動し直してからやり直すしかなくなる。
+    # ignore_changes = [snapshot_identifier] は入れない。replace の暴発は防げるが、
+    # 「復元指定を忘れた再開」の是正まで黙って殺す（README「再開する」参照）。
+
+    # 停止時の失敗を apply 時点へ前倒しする。destroy の瞬間には -var で直せない
+    # (variables.tf の final_snapshot_identifier のコメント参照) ため、ここで弾く。
+    # 復元元と同名を渡すと、ALB・ECS・A レコードが消えた後で DeleteDBInstance だけが
+    # DBSnapshotAlreadyExists で落ち、RDS だけ課金が残る。
     precondition {
       condition = var.skip_final_snapshot || (
         var.final_snapshot_identifier != null &&
@@ -114,13 +118,15 @@ resource "aws_db_instance" "main" {
       )
       error_message = "final_snapshot_identifier には snapshot_identifier と異なる一意な名前を指定してください（データを捨てて良い場合に限り skip_final_snapshot = true）。"
     }
+
+    # 復元元の指定忘れを弾く。渡し忘れると RestoreDBInstanceFromDBSnapshot ではなく
+    # CreateDBInstance が走り、空の DB が本番として立つ。その後の書き込みは空 DB 側に入り、
+    # 次の停止が「空 DB の中身」を新しいスナップショットとして保存するため、
+    # 以降「旧スナップショットに戻すと新規分が消える / 新しい方を使うと旧データが消える」
+    # の二択になる。空から始めるのは start_from_empty の明示オプトインに限る。
+    precondition {
+      condition     = var.start_from_empty || var.snapshot_identifier != null
+      error_message = "snapshot_identifier を指定するか、空の DB から始める場合に限り start_from_empty = true を指定してください。"
+    }
   }
 }
-
-# ignore_changes = [snapshot_identifier] は意図的に採用していない。
-# replace の暴発は防げるが、代償として「復元指定を忘れた再開」の是正まで無効化する:
-# -var db_snapshot_identifier を付け忘れて空 DB で起動したあと、正しい名前を足して
-# 再 apply しても plan が "No changes" を返し、空の DB が本番として公開され続ける。
-# 採用しない場合は plan に "must be replaced" が出て確認を求められ、しかも replace の
-# destroy 側も final_snapshot_identifier を尊重するためスナップショットは取られる。
-# 「黙って間違った状態が続く」より「見える形で確認を求められ、データも残る」を選ぶ。

@@ -1,6 +1,6 @@
-# runtime_enabled = false のとき、以下 3 つのモジュールはインスタンスを持たない。
-# one() は要素 0 の場合に null を返すため、停止中でも `terraform output` が
-# 「存在しないインデックス参照」で落ちない（[0] 直書きだと落ちる）。
+# one() を使っている output（alb / rds / ecs）は runtime_enabled = false で
+# インスタンスを持たない。one() は要素 0 で null を返すため、停止中でも
+# `terraform output` が「存在しないインデックス参照」で落ちない（[0] 直書きだと落ちる）。
 output "alb_dns_name" {
   description = "DNS name of the load balancer (null while runtime_enabled = false)"
   value       = one(module.alb[*].alb_dns_name)

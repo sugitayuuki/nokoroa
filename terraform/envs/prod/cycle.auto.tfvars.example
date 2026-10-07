@@ -1,0 +1,29 @@
+# 停止・再開サイクルのあいだ固定しておく値。
+#
+# cycle.auto.tfvars にコピーして使う。*.auto.tfvars は terraform が自動で読むため、
+# 以降すべての plan / apply に効く（*.tfvars は .gitignore 済み）。
+#
+#   cp cycle.auto.tfvars.example cycle.auto.tfvars
+#
+# この 2 つをファイルに置くのは、modules/rds の precondition がサイクル中のどの
+# plan / apply でも要求するため。毎回 -var で並べると落としやすく、$(date) を
+# コマンドに直接書くと実行ごとに別名が state へ入って、停止時に作られる
+# スナップショット名が実行者の記憶と合わなくなる。
+
+# 復元元。前回の停止で作られたスナップショット名を入れる。
+# 一覧は README「再開する」の describe-db-snapshots で確認する。
+db_snapshot_identifier = "nokoroa-prod-20261007-1030"
+
+# 次の停止で作る最終スナップショットの名前。
+# 復元元とは必ず別名にすること（同名だと停止 apply が DBSnapshotAlreadyExists で
+# 途中失敗し、アプリが消えたまま RDS だけ課金が続く）。
+db_final_snapshot_identifier = "nokoroa-prod-20261008-0900"
+
+# 復元元が存在しない場合（初回構築、または意図的な初期化）は
+# db_snapshot_identifier を消して、代わりにこれを true にする。
+# db_start_from_empty = true
+
+# runtime_enabled はここに書かないこと。
+# true で固定すれば素の apply が課金を始め、false で固定すれば稼働中の本番を落とす。
+# 「いま何をしたいか」の意図なので、毎回コマンドラインで明示する:
+#   terraform apply -var runtime_enabled=true

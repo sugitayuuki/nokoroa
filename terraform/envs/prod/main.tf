@@ -104,14 +104,9 @@ resource "aws_ecr_lifecycle_policy" "frontend" {
 }
 
 # Random Password for RDS
-#
-# このリソースに count を付けてはならず、再生成させてもならない（停止中も state に残す）。
-# 停止・再開は RDS をスナップショットから復元する形で回るが、スナップショット内の
-# master password は取得時点の値である。Terraform 経由の復元は provider が restore 後の
-# ModifyDBInstance で新しいパスワードを当て直すため一見通るが、
-# スナップショットを AWS CLI / コンソールから直接復元した場合（障害時の緊急復旧経路）は
-# Secrets Manager に入っている値で認証できなくなる。
-# 「他の時間課金リソースに揃える」名目で count や keepers を足さないこと。
+# count も keepers も付けない（停止中も state に残す）。スナップショット内の master
+# password は取得時点の値なので、再生成すると AWS CLI やコンソールから直接復元する
+# 緊急経路で Secrets Manager の値と食い違う。
 resource "random_password" "db_password" {
   length           = 16
   special          = true
@@ -196,14 +191,13 @@ module "rds" {
   # 削除保護は使わない。停止のたびに手で true → false へ書き換えて apply する運用になり、
   # その書き換えを忘れた状態で destroy が失敗する形が以前の詰まりだった。
   # データは最終スナップショットで守り、停止は 1 変数で完結させる。
-  # 代償として、誤って runtime_enabled = false を apply したときに AWS 側の保護は働かない
-  # （最終スナップショットは取られるので復元は可能）。
-  # runtime_enabled を経由しない破壊（素の terraform destroy / -target）への備えは、
-  # 常時保持する側に寄せている: modules/s3 のバケットと modules/secrets の
-  # シークレット 7 件に prevent_destroy を入れ、そこでフェイルクローズさせる。
+  # 代償として runtime_enabled = false の誤 apply を AWS 側では止められない
+  # （最終スナップショットは取られるので復元は可能）。素の terraform destroy への備えは
+  # modules/secrets と modules/s3 の prevent_destroy 側にある。
   deletion_protection       = false
   final_snapshot_identifier = var.db_final_snapshot_identifier
   snapshot_identifier       = var.db_snapshot_identifier
+  start_from_empty          = var.db_start_from_empty
 }
 
 # Secrets Module
@@ -213,25 +207,19 @@ module "secrets" {
   project_name = var.project_name
   environment  = var.environment
 
-  # secrets モジュールには count を付けない（停止しても消さない）。
-  # recovery_window_in_days を明示していないため destroy は既定 30 日の削除待ちに入り、
-  # 同名のシークレットを 30 日間作り直せなくなる = 次の再開ができない。月 $2.8 で残す方が安い。
+  # secrets モジュールには count を付けない（停止しても消さない）。destroy すると
+  # recovery_window_in_days 既定の 30 日削除待ちに入り、同名で作り直せない = 再開できない。
   #
-  # その結果、常時保持の secrets が条件付きの rds を参照する形になるため、停止中は
-  # 参照先が存在しない。RDS は復元ごとにエンドポイントが変わりうるので database-url は
-  # 再開時に必ず書き換わる必要があり、停止中だけ無効値になるのは許容できる
-  # （この値を読む主体は modules/ecs のタスク定義の valueFrom だけで、停止中は
-  #   そのタスクが存在しない。再開時の順序は module "ecs" の
-  #   depends_on = [module.secrets] で担保している。あれを外すとバージョン書き込みと
-  #   タスク起動が並列になり、placeholder を掴む窓が開く）。
-  # .invalid は RFC 2606 で予約された絶対に解決しない TLD。万一参照されても
-  # 無関係なホストへ接続せず DNS 解決で即失敗する。
-  # なお「placeholder」はホストだけが無効で、ユーザー名とパスワードは実値のまま
-  # シークレットのバージョン履歴に積まれる。無害な文字列ではない。
+  # その結果、常時保持の secrets が条件付きの rds を参照する形になり、停止中は参照先が無い。
+  # 停止中だけ無効値になるのは許容できる（この値を読む主体は modules/ecs のタスク定義の
+  # valueFrom だけで、停止中はそのタスクが存在しない）。RDS は復元ごとにエンドポイントが
+  # 変わりうるので、再開 apply では必ず実値へ書き換わる。
+  # .invalid は RFC 2606 で予約された絶対に解決しない TLD なので、万一参照されても
+  # 無関係なホストへ繋がらず DNS 解決で即失敗する。
+  # ただしホストだけが無効で、ユーザー名とパスワードは実値のままバージョン履歴に積まれる。
   #
-  # 却下案: aws_secretsmanager_secret_version 側に count を付けて停止中はバージョンを消す。
-  # シークレットの最後のバージョンを削除できるかが API 依存で、空のシークレットを経由すると
-  # 再開時の復旧がバージョン作成順に依存する。ここでリスクを取る理由がない。
+  # 却下案: secret_version 側に count を付けて停止中はバージョンを消す。最後のバージョンを
+  # 削除できるかが API 依存で、空のシークレットを経由すると再開が作成順に依存する。
   db_host              = coalesce(one(module.rds[*].db_instance_address), "rds-not-provisioned.invalid")
   db_port              = 5432
   db_name              = var.db_name
@@ -245,16 +233,13 @@ module "secrets" {
 }
 
 # S3 Module
+# runtime_enabled の count を付けていない（停止しても消さない）。投稿画像の実データが
+# 入っているため、消すと復旧できない。
 module "s3" {
   source = "../../modules/s3"
 
   project_name = var.project_name
   environment  = var.environment
-
-  # runtime_enabled の count を付けていない（停止しても消さない）。投稿画像の実データと
-  # terraform state の保管先が入っているため、消すと復旧できない。
-  # 誤 destroy への備えは modules/s3 側の prevent_destroy で持つ。
-
   # 本番バケットにローカル開発用オリジンは許可しない。
   # www は ALB で apex へ 301 されるため通常到達しないが、リダイレクト設定が
   # 外れた場合に画像表示まで巻き添えにしない保険として残している。
@@ -335,13 +320,6 @@ module "ecs" {
   backend_memory         = 512
   frontend_cpu           = 256
   frontend_memory        = 512
-
-  # 上の database_url_secret_arn が参照しているのはシークレット「本体」の ARN であり、
-  # 値を書き込む aws_secretsmanager_secret_version との間に順序エッジが無い。
-  # それだけだとタスク起動とバージョン更新が並列に走り、再開時にタスクが停止中の
-  # placeholder (rds-not-provisioned.invalid) を掴んでクラッシュループする窓が残る。
-  # module 単位で待たせて閉じる。
-  depends_on = [module.secrets]
 }
 
 # Route 53 A Record for ALB

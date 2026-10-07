@@ -52,9 +52,9 @@ CI が毎コミットで `terraform fmt -check` / `init` / `validate` を実行�
 
 `module "secrets"` と `module "s3"` に `count` を付けていないのは意図的です。シークレットを destroy すると `recovery_window_in_days` 既定の 30 日間削除待ちに入り、**同名のシークレットを 30 日間作り直せない = 次の再開ができなくなる**ためです。月 $2.80 を払って残す方が安く済みます。
 
-どちらのモジュールも `lifecycle { prevent_destroy = true }` で保護しています（シークレット 7 件 + バケット 2 件）。RDS の `deletion_protection` をやめた（停止を 1 変数で完結させるため）結果、素の `terraform destroy` を止めるものが構成から無くなったので、**消えて困るものだけをコード側で止める**形に寄せました。`runtime_enabled` による停止・再開はこれらを destroy 対象にしないため干渉しません。
+素の `terraform destroy` を止めるための `prevent_destroy` を 2 箇所だけ置いています（`modules/secrets` の `jwt_secret` と uploads バケット）。効く範囲と効かない範囲、2 箇所に絞った理由は「[設計上の注意点](#設計上の注意点)」にまとめています。ECR・ACM 証明書・DynamoDB ロックテーブルは保持対象ですがガードを付けていません（いずれも再作成できます。ACM は再発行に DNS 検証の待ち時間、ECR は 3 イメージの再ビルドが必要）。
 
-なお `recovery_window_in_days = 0` にはしていません。即時完全削除になって誤 destroy からの復旧が一切できなくなり、事故耐性が下がるためです。30 日待ちは事故時の保険として機能していて、困るのは「同名で作り直せない」ことだけなので、destroy させない方で解いています。
+この表に載っていない課金もあります。`enabled_cloudwatch_logs_exports` によって AWS が作る `/aws/rds/instance/nokoroa-prod-postgres/postgresql` は Terraform の管理外・保持期間無期限で、停止しても残り続けます。
 
 `modules/secrets` が定義しているシークレットは **7 件**です（`db-password`(現在アプリからは未消費。接続は `database-url` を使用) / `jwt-secret` / `database-url` / `google-client-id` / `google-client-secret` / `gemini-api-key` / `internal-api-key`）。**過去の停止（`-target=module.rds` を指定した destroy）は、依存側としてこの 7 件を巻き込んで削除しました。** `recovery_window_in_days` を明示していないため既定の **30 日間の削除待ち**に入り、待機中も課金対象として残ります。請求上「2 件分」しか見えていないのは、残りが削除待ち期間を終えて消えた後の状態と考えられます（AWS 上の実数は未確認）。`runtime_enabled` を導入した現在はシークレットを destroy 対象に含めないため、この巻き込みは再発しません。
 
@@ -147,6 +147,8 @@ DB パスワード・JWT シークレット・OAuth クライアントシーク�
 イメージが存在しない状態から始めるため、**`apply` を 2 回に分けます**。1 回目で ECR を含むインフラを作り、イメージを push してから 2 回目でコンテナを起動します。
 
 > **先に「既知の課題」を確認してください。** 停止中も AWS 上に残しているリソース（ECR・S3・Secrets Manager）は現在 state に載っておらず、この手順をそのまま実行すると名前の衝突で失敗します。先に `terraform import` での取り込みが必要です。
+>
+> `import` は下の手順 1〜2（変数ファイルの用意と `terraform init`）を済ませたあとに実行してください。`init` 前では `Could not load plugin` で、`runtime_enabled` を渡さないと `Error: No value for required variable` で止まります。`import` にも `-var runtime_enabled=false` が必要です（`import` 自体は `prevent_destroy` には阻害されません）。
 
 ### 1. 変数ファイルを用意する
 
@@ -164,12 +166,17 @@ cp terraform.tfvars.example terraform.tfvars
 ```bash
 terraform init
 
-terraform apply \
-  -var runtime_enabled=true \
-  -var db_final_snapshot_identifier="nokoroa-prod-$(date +%Y%m%d-%H%M)"
+# サイクル変数を置く（詳細は「サイクル変数を固定する」）。
+# 初回は復元元が無いため空の DB から始める。
+cat > cycle.auto.tfvars <<'EOF'
+db_start_from_empty          = true
+db_final_snapshot_identifier = "nokoroa-prod-initial"
+EOF
+
+terraform apply -var runtime_enabled=true
 ```
 
-`db_final_snapshot_identifier` は**停止時に作るスナップショットの名前**で、起動時に渡しておく必要があります（理由は「[停止と再開](#停止と再開)」）。初回は復元元が無いため `db_snapshot_identifier` は指定しません（空の DB で起動します）。
+`db_final_snapshot_identifier` は**停止時に作るスナップショットの名前**で、起動時に渡しておく必要があります（理由は「[停止と再開](#停止と再開)」）。`db_start_from_empty` を明示しないと `modules/rds` の `precondition` が止めます。
 
 ### 3. イメージをビルドして push する
 
@@ -200,19 +207,12 @@ ai_image       = "<account-id>.dkr.ecr.ap-northeast-1.amazonaws.com/nokoroa-ai:l
 ```
 
 ```bash
-# 2 で渡した値を state から読み出す（$(date) で作ったので記憶に残っていないはず）
-SNAP=$(terraform state show 'module.rds[0].aws_db_instance.main' \
-  | sed -n 's/.*final_snapshot_identifier *= *"\(.*\)"/\1/p')
-echo "$SNAP"
-
-terraform apply \
-  -var runtime_enabled=true \
-  -var db_final_snapshot_identifier="$SNAP"
+terraform apply -var runtime_enabled=true
 ```
 
-> `runtime_enabled` には既定値がありません。付け忘れると Terraform が入力を促して止まります（黙って何かを壊すより良い、という設計です）。
+> 手順 2 で作った `cycle.auto.tfvars` は自動で読まれるので、スナップショット関連の `-var` を付け直す必要はありません。
 >
-> `db_final_snapshot_identifier` は 2 と同じ値を渡します。違う値でも plan に差分が 1 行出るだけで API 呼び出しは起きませんが、**停止時に作られるスナップショットの名前が静かに変わる**ため、サイクル中は同じ値を使い回すのが安全です。
+> `runtime_enabled` には既定値がありません。付け忘れると Terraform が入力を促して止まります（黙って何かを壊すより良い、という設計です）。
 
 以降のデプロイは GitHub Actions（`.github/workflows/deploy.yml`）が担います。backend・ai・frontend の 3 イメージを ARM64 でビルドして push し、ECS のサービスを更新します。
 
@@ -261,12 +261,27 @@ aws logs tail /ecs/nokoroa-prod/backend --follow
 
 価格は AWS Price List API の `ap-northeast-1` 実値（2026-10 時点）に基づく概算です。Fargate は ARM64 単価（$0.04045/vCPU 時・$0.00442/GB 時）、RDS は `db.t4g.micro` Single-AZ（$0.025/時）+ gp3 20GB（$0.138/GB 月）で計算しています。
 
-**「常時稼働」は上 2 行の足し算にはなりません。** 稼働 24 時間 $2.70 × 30 日 + 停止中 $5.60 では約 $87 で、$95〜130 には届きません。差分は 1 日単位の利用では無視できる次の項目です。
+常時稼働は上 2 行の足し算（約 $87）より高くなります。差は Container Insights のカスタムメトリクス（月 $10〜18）と ALB の LCU・データ転送で、いずれも稼働時間に比例しないため日割りに乗りません。スナップショットはサイクルごとに増えるので、下の「古いスナップショットを掃除する」も参照してください。
 
-- **CloudWatch**: `modules/ecs` が Container Insights を有効にしており（`containerInsights = enabled`）、カスタムメトリクス $0.30/個 × 推定 30〜60 個で月 $10〜18。ログ取り込みは $0.76/GB。いずれも稼働時間ではなくメトリクス本数に比例するため、日割りに乗らない
-- **ALB の LCU** とデータ転送: トラフィック量に依存し、常時公開だと月数ドル規模になる
+### サイクル変数を固定する
 
-常時稼働を選ぶなら Container Insights を切る（`modules/ecs/main.tf` の `value = "enabled"` → `disabled`）だけで月 $10〜18 下がります。停止・再開運用では稼働時間が短く効きが小さいため、そのままにしています。
+`runtime_enabled` 以外の 2 変数は、**サイクルのあいだ固定しておきます**。`terraform` は `*.auto.tfvars` を自動で読むため、ファイルに置けば以降すべての `plan` / `apply` に自動で効きます。
+
+```bash
+cd terraform/envs/prod
+cat > cycle.auto.tfvars <<'EOF'
+# 復元元（前回の停止で作られたスナップショット）
+db_snapshot_identifier       = "nokoroa-prod-20261007-1030"
+# 次の停止で作る最終スナップショット。復元元とは必ず別名にする
+db_final_snapshot_identifier = "nokoroa-prod-20261008-0900"
+EOF
+```
+
+`*.tfvars` は `.gitignore` 済みなのでコミットされません。
+
+これを使う理由は 2 つあります。まず **`-var` の落とし忘れを構造的に無くせる**こと。この 2 変数は `modules/rds` の `precondition` が要求するため、サイクル中のどの `plan` / `apply` でも必要で、毎回 3 つのフラグを正しく並べるのは落としやすい形でした。もうひとつは **値が勝手に変わらない**こと。`$(date)` をコマンドに直接書くと実行ごとに別の名前が state へ入り、停止時に作られるスナップショット名が実行者の記憶と合わなくなります。
+
+**`runtime_enabled` はこのファイルに入れないこと。** `true` で固定すれば素の `apply` が課金を始め、`false` で固定すれば稼働中の本番を落とします。これは「いま何をしたいか」という意図なので、毎回コマンドラインで明示します（`TF_VAR_runtime_enabled` も同じ理由で使わないこと。詳細は `terraform.tfvars.example`）。
 
 ### 停止する
 
@@ -289,18 +304,34 @@ terraform apply -var runtime_enabled=false
 
 ### 再開する
 
+> **初回だけは `import` が先に必要です。** AWS 上に実在する ECR・S3・Secrets Manager が state に載っていないため、そのまま apply すると名前の衝突で落ちます（「[既知の課題](#既知の課題)」）。
+
 ```bash
-# 直前の停止で作られたスナップショット名を確認する
+# 1. 復元元のスナップショットを確認する
+#    --db-instance-identifier で絞らないと他プロジェクトのものが混ざる。
+#    作成中のスナップショットは SnapshotCreateTime が null で sort_by が落ちるため除外する。
 aws rds describe-db-snapshots \
   --snapshot-type manual \
-  --query 'reverse(sort_by(DBSnapshots,&SnapshotCreateTime))[:5].[DBSnapshotIdentifier,SnapshotCreateTime]' \
+  --db-instance-identifier nokoroa-prod-postgres \
+  --query 'reverse(sort_by(DBSnapshots[?SnapshotCreateTime!=null],&SnapshotCreateTime))[:5].[DBSnapshotIdentifier,SnapshotCreateTime]' \
   --output table
 
-terraform apply \
-  -var runtime_enabled=true \
-  -var db_snapshot_identifier="<上で確認した名前>" \
-  -var db_final_snapshot_identifier="nokoroa-prod-$(date +%Y%m%d-%H%M)"
+# 2. cycle.auto.tfvars を書く（上記「サイクル変数を固定する」）
+
+# 3. 立ち上げる
+terraform apply -var runtime_enabled=true
 ```
+
+**一覧が 0 件だった場合**は復元元が存在しません（現状がこれに該当します。前回の停止はこの設計より前で、最終スナップショットが作られていません）。その場合は空の DB から始めることを明示します。
+
+```hcl
+# cycle.auto.tfvars
+db_start_from_empty          = true
+db_final_snapshot_identifier = "nokoroa-prod-20261008-0900"
+# db_snapshot_identifier は書かない
+```
+
+`db_start_from_empty` を明示させているのは、`db_snapshot_identifier` の渡し忘れで**空の DB が本番として立つ**のを防ぐためです。黙って通すと、その後の書き込みは空 DB 側に入り、次の停止が「空 DB の中身」を新しいスナップショットとして保存するため、以降「旧スナップショットに戻すと新規分が消える / 新しい方を使うと旧データが消える」の二択になります。
 
 | 工程 | 時間 | 備考 |
 |---|---|---|
@@ -316,14 +347,51 @@ ACM 証明書と DNS 検証レコードは停止しても残しているため�
 
 ただし **A レコードそのものは停止中に消えている**（ALB と生死を共にするため）ので、停止中にドメインを引いたリゾルバは NXDOMAIN をホストゾーンの SOA minimum TTL ぶんキャッシュします（Route 53 の既定は 900 秒）。再開直後に同じリゾルバ経由でアクセスすると最大 15 分引けません。**面談の 30 分前ではなく前日に立てることを強く勧めます。**
 
-`db_snapshot_identifier` を省くと**空の DB で起動します**。意図的に初期化したいとき以外は必ず指定してください。
+### 再開後にマイグレーションを当てる
 
-空の DB から始める場合は、**先にスキーマを適用してから** seed を流します。テーブルが無い状態で seed を実行すると全 INSERT が `relation does not exist` で失敗します。
+**スナップショットから復元した場合も `migrate deploy` は必要です。** 前回の停止から今回の再開までに backend のマイグレーションが増えていると、復元した DB は旧スキーマのままで ECS がランタイムエラーになります。
 
-1. 「[5. データベースをマイグレーションする](#5-データベースをマイグレーションする)」の `run-task` で `prisma migrate deploy` を実行する
-2. そのうえで `nokoroa-backend/prisma/seed.ts`（`npm run seed`）でデモデータを入れる
+空の DB から始めた場合は、**先にスキーマを適用してから** seed を流します。テーブルが無い状態で seed を実行すると全 INSERT が `relation does not exist` で失敗します。
 
-**復元を指定し忘れて空の DB で起動してしまった場合**は、正しい名前を付けて再 apply すれば plan に `must be replaced` が出ます（`snapshot_identifier` を `ignore_changes` に入れていないため、是正が効きます）。その replace でも最終スナップショットは取られるので、空 DB に書き込んでしまった分も失われません。
+どちらも手元からは実行できません。RDS は database サブネットにあり、セキュリティグループの ingress は ECS のセキュリティグループ参照のみで `publicly_accessible` も付けていないため、ローカルから接続できません。「[5. データベースをマイグレーションする](#5-データベースをマイグレーションする)」と同じ `run-task` で流します。
+
+```bash
+# 共通の引数（手順 5 のものを使う）
+NET="awsvpcConfiguration={subnets=[PUBLIC_SUBNET_ID],securityGroups=[ECS_SG_ID],assignPublicIp=ENABLED}"
+
+# スキーマ適用（復元した場合も空から始めた場合も実行する）
+aws ecs run-task --cluster nokoroa-prod-cluster --task-definition nokoroa-prod-backend \
+  --launch-type FARGATE --network-configuration "$NET" \
+  --overrides '{"containerOverrides":[{"name":"backend","command":["npx","prisma","migrate","deploy"]}]}'
+
+# デモデータ投入（空から始めた場合のみ。上が終わってから）
+aws ecs run-task --cluster nokoroa-prod-cluster --task-definition nokoroa-prod-backend \
+  --launch-type FARGATE --network-configuration "$NET" \
+  --overrides '{"containerOverrides":[{"name":"backend","command":["npm","run","seed"]}]}'
+```
+
+`vector` 拡張について 1 点。パラメータグループは毎サイクル作り直され、`shared_preload_libraries` は `apply_method = "pending-reboot"` です。復元直後のインスタンスでベクトル検索が失敗する場合は再起動してください。
+
+```bash
+aws rds reboot-db-instance --db-instance-identifier nokoroa-prod-postgres
+```
+
+### 復元を指定し忘れたとき
+
+空の DB で起動してしまった場合は是正できます（`snapshot_identifier` を `ignore_changes` に入れていないため）。ただし **`db_final_snapshot_identifier` には新しい名前を付けてください。**
+
+```hcl
+# cycle.auto.tfvars
+db_snapshot_identifier       = "nokoroa-prod-20261007-1030"  # 本来使うべきだった復元元
+db_final_snapshot_identifier = "nokoroa-prod-20261008-1200"  # ★ 前の値から変える
+# db_start_from_empty は消す（または false）
+```
+
+```bash
+terraform apply -var runtime_enabled=true
+```
+
+plan に `must be replaced` が出て確認を求められます。この replace の destroy 側も最終スナップショットを取るため、空 DB に書き込んでしまった分も失われません。**ただしその時点で古い名前のスナップショットが 1 つ消費されます。** 名前を変えずに是正すると、次の停止が同名衝突（`DBSnapshotAlreadyExists`）で失敗します。ここだけは「サイクル中は同じ値を使い回す」より優先してください。
 
 ### 設計上の注意点
 
@@ -331,32 +399,65 @@ ACM 証明書と DNS 検証レコードは停止しても残しているため�
 
 `modules/rds` の `lifecycle.precondition` は、名前を渡さないままの起動を apply の時点で弾きます。**この場合の実際の挙動はデータ損失ではなく「停止 apply が『名前が必須』で失敗して止まる」こと**です（prod は `skip_final_snapshot` を渡しておらず常に `false`）。データが失われるのは `skip_final_snapshot = true` を明示したときだけです。それでも事前に弾くのは、失敗する時点では `-var` で直せず、起動し直してからやり直すしかないためです。
 
-**この precondition は no-op の plan でも評価されます。** つまり稼働中は、差分確認のための `terraform plan` にも毎回 `-var db_final_snapshot_identifier=...` が必要です。これは仕様として受け入れています（渡さないと通らない方が、渡し忘れたまま停止できてしまうより安全）。ただし **`$(date)` で毎回生成し直さないこと。** state に入っている値が静かに差し替わり、停止時に作られるスナップショット名が実行者の記憶と合わなくなります。サイクル中は同じ値を使い回してください。いま state に入っている値は次で確認できます。
+この precondition は no-op の plan でも評価されるため、サイクル中のあらゆる `plan` / `apply` で 2 つのスナップショット変数が必要です。だから `cycle.auto.tfvars` に固定します。
+
+**スナップショット名はサイクルごとに一意にし、復元元と別名にする。** `precondition` が弾くのは次の 2 つだけです。
+
+- 復元元と同名（`db_snapshot_identifier` と同じ値）
+- AWS の識別子規則違反（英字始まり / 連続ハイフン不可 / ハイフン終わり不可 / 255 字以内）
+
+**過去のスナップショットとの衝突は検知できません**（AWS に問い合わせないため）。これが残っている唯一の未対処リスクで、踏むと次のようになります。
+
+同名のスナップショットは 2 つ作れないので、停止 apply で ALB・ECS・A レコードが先に消えた後、RDS の削除だけが `DBSnapshotAlreadyExists` で失敗します。**アプリは消えたのに RDS だけ課金が続く**状態です。しかも destroy 時には `-var` で直せないので、次の順で復旧します。
 
 ```bash
-terraform state show 'module.rds[0].aws_db_instance.main' | grep final_snapshot_identifier
+# 1. cycle.auto.tfvars の db_final_snapshot_identifier を未使用の名前に書き換える
+#    （db_snapshot_identifier はそのまま。消さないこと）
+# 2. 起動し直して state を書き換える（ALB/ECS が作り直されるので 12〜23 分かかる）
+terraform apply -var runtime_enabled=true
+# 3. 改めて停止する
+terraform apply -var runtime_enabled=false
 ```
 
-**スナップショット名はサイクルごとに一意にし、復元元と別名にする。** 同名のスナップショットは 2 つ作れないため、前回と同じ名前のまま停止すると destroy が失敗します。さらに `db_snapshot_identifier`（復元元）と同じ名前を渡すと、ALB・ECS・A レコードが先に消えた後で RDS の削除だけが `DBSnapshotAlreadyExists` で失敗し、**アプリは消えたのに RDS だけ課金が続く**状態になります。2 つの `-var` は隣接行に並ぶのでコピペに注意してください。`precondition` がこの同名ケースと AWS の識別子規則違反（英字始まり / 連続ハイフン不可 / ハイフン終わり不可 / 255 字以内）は弾きますが、**過去のスナップショットとの衝突は検知できません**（AWS に問い合わせないため）。`timestamp()` で自動生成しないのは、毎回値が変わって plan に差分が出続け「変更なし」を確認できなくなるためです。
+**削除保護は使っていません。** 以前は `deletion_protection = true` で、停止のたびに手でコードを `false` へ書き換えて apply する必要があり、その書き換え忘れで destroy が失敗していました。データは最終スナップショットで守る方針に変え、停止を 1 変数で完結させています。あわせて `delete_automated_backups = false` を明示しています（既定の `true` だと、停止のたびに保持期間分の自動バックアップと PITR 履歴まで消え、残るデータの複製が常に 1 本だけになる）。
 
-**削除保護は使っていません。** 以前は `deletion_protection = true` で、停止のたびに手でコードを `false` へ書き換えて apply する必要があり、その書き換え忘れで destroy が失敗していました。データは最終スナップショットで守る方針に変え、停止を 1 変数で完結させています。
+代わりに **`prevent_destroy` を 2 箇所だけ置いています** — `modules/secrets` の `jwt_secret` と `modules/s3` の uploads バケットです。destroy の plan は 1 件でも `prevent_destroy` に当たれば全体が reject されるため、モジュールあたり 1 件で足ります。
 
-代わりに、**消えて困るものを `prevent_destroy` で止めています**（Secrets Manager 7 件 + S3 バケット 2 件）。素の `terraform destroy` や `-target` はこれらに当たって失敗するので、`runtime_enabled` を経由しない破壊でも投稿画像とシークレットは残ります。RDS インスタンス自体には付けられません（`runtime_enabled = false` が destroy なので、付けると停止そのものができなくなる）。RDS は最終スナップショットで守る形です。
+| 経路 | 結果 |
+|---|---|
+| 素の `terraform destroy` | **plan 時に reject。1 つも壊れない** |
+| `terraform destroy -target=module.rds`（過去の事故経路） | **reject**。`module "secrets"` が `depends_on = [module.rds]` を持つのでシークレット 7 件が destroy 集合に入る |
+| `runtime_enabled = false` | 通る（ガード対象を含まないため。これが正常系） |
+| 保護対象を含まない `-target`（`module.alb[0]`、ECR 単体 等） | **素通りする** |
+| リソースブロックを設定から削除 | **素通りする** |
 
-**`runtime_enabled` は `terraform.tfvars` にも環境変数にも入れないこと。** `true` で固定すると素の `terraform apply` が課金を開始し、`false` で固定すると稼働中の本番を落とします。既定値を持たせていないのも同じ理由です。ただし既定値を置かないガードが塞ぐのは `default` と `tfvars` の 2 経路だけで、**`TF_VAR_runtime_enabled` 環境変数は素通りします**。`export TF_VAR_runtime_enabled=false` をシェルや direnv に残すと、以降の `terraform apply` が無言で本番を落とします。
+7 件全部に付けない理由は、`lifecycle` が literal しか取れず**変数で解除できない**ためです。共有モジュールに撒くと、`envs/stg` のような使い捨て環境が `terraform destroy` できなくなり、外すにはモジュール本文を編集する（= prod のガードも同時に外れる）しかなくなります。同じ理由で `aws_s3_bucket.terraform_state` にも付けていません（`count` を持つので `create_terraform_state_bucket = false` に戻す経路が解除不能な plan エラーになり、既知の課題が掲げるブートストラップ分離を自分で塞いでしまう）。
 
-**`count` の導入で state 上のアドレスが変わりました。** `module.alb` / `module.ecs` / `module.rds` 配下の全リソースと `aws_route53_record.alb` / `.www` が `[0]` 付きになります。index 無しで保持している既存の state（停止前のローカル state、別マシンの state）にこのコードを apply すると、**全部が destroy + create として計画されます**。本番 state は現在空なので今は踏みませんが、該当する state を持っている場合は先にアドレスを移してください。
+RDS インスタンス自体には付けられません（`runtime_enabled = false` が destroy なので、付けると停止そのものができなくなる）。RDS は最終スナップショットで守る形です。
+
+**`prevent_destroy` は state に載っているリソースにしか効きません。** 現在 AWS 上に実在する ECR・S3・Secrets Manager は state に未登録なので、`terraform import` を済ませるまでこのガードは無力です。
+
+**`count` の導入で state 上のアドレスが変わりました。** `module.alb` / `module.ecs` / `module.rds` 配下の全リソースと `aws_route53_record.alb` / `.www` に `[0]` が付きます。index 無しの古い state を持っている場合は、apply する前に `terraform state mv` でアドレスを移してください（移さないと全部が destroy + create として計画されます）。本番 state は現在空なのでこのケースには該当しません。
+
+### 古いスナップショットを掃除する
+
+名前をサイクルごとに変えるため、スナップショットは停止するたびに 1 つ増えます。復元元として使う 1 つ前は残し、それより古いものは消してください。
 
 ```bash
-terraform state mv 'aws_route53_record.alb' 'aws_route53_record.alb[0]'
-terraform state mv 'aws_route53_record.www' 'aws_route53_record.www[0]'
-terraform state mv 'module.alb' 'module.alb[0]'
-terraform state mv 'module.ecs' 'module.ecs[0]'
-terraform state mv 'module.rds' 'module.rds[0]'
+aws rds describe-db-snapshots \
+  --snapshot-type manual \
+  --db-instance-identifier nokoroa-prod-postgres \
+  --query 'reverse(sort_by(DBSnapshots[?SnapshotCreateTime!=null],&SnapshotCreateTime))[].[DBSnapshotIdentifier,SnapshotCreateTime,AllocatedStorage]' \
+  --output table
+
+aws rds delete-db-snapshot --db-snapshot-identifier <古い名前>
 ```
+
+**稼働していない時期の apply にも `-var runtime_enabled=false` が必要です。** 停止中に ECR のライフサイクルや S3 の CORS だけ変えたい場合も同じで、プロンプトに `true` と答えると無言で課金が始まります。
 
 ## 既知の課題
 
 - **state が S3 に置かれていない**: `versions.tf` の S3 backend がコメントアウトされたままで、state はローカル管理です。保管先のバケットと DynamoDB ロックテーブルは `modules/s3` に定義済みですが、state を置くバケット自身を同じ設定で作る循環があるため、ブートストラップを分ける必要があります。
 - **残しているリソースが state に載っていない**: AWS 上に実在する ECR・S3・Secrets Manager が、現在の state には記録されていません。このため今のまま `terraform apply` を実行すると、ECR・S3・Secrets Manager が既存と衝突します。再構築の前に `terraform import` で state に取り込む必要があります。Secrets Manager は削除待ち中のものが混ざりうるため、`import` の前に `list-secrets --include-planned-deletion` で状態を確認してください（削除待ちのものは `import` できず、`restore-secret` か待機満了が必要です）。
-- **変数の `validation` がほぼ未設定**: 99 個の変数すべてに `description` と `type` はありますが、値域の検証が入っているのは `final_snapshot_identifier`（AWS の識別子規則）の 1 個だけです。
+- **変数の `validation` がほぼ未設定**: 101 個の変数すべてに `description` と `type` はありますが、値域の検証が入っているのは `final_snapshot_identifier`（AWS の識別子規則）の 1 個だけです。
+- **`import` 対象の一覧が無い**: 上記の 3 種に加えて、実在するなら state ロック用の DynamoDB テーブルも対象です。また `modules/s3` は 11 リソースあり、バケット本体を `import` してもバージョニング・暗号化・CORS・バケットポリシーは別途 `import` か再作成になります。アドレスと物理 ID の対応表を用意していません。

@@ -97,18 +97,27 @@ variable "final_snapshot_identifier" {
   type        = string
   default     = null
 
-  # AWS のスナップショット識別子は「英字始まり / 英数字とハイフンのみ / 連続ハイフン不可 /
-  # ハイフン終わり不可 / 255 字以内」。違反は destroy の瞬間に InvalidParameterValue で
+  # AWS の識別子規則「英字始まり / 英数字とハイフンのみ / 連続ハイフン不可 /
+  # ハイフン終わり不可 / 255 字以内」を 1 本の正規表現で表す（(-?[a-zA-Z0-9])* の形なので
+  # ハイフンは連続せず末尾にも来ない）。違反は destroy の瞬間に InvalidParameterValue で
   # 失敗するが、その時点では -var で直せない（上記の落とし穴）ので apply 前に弾く。
-  # coalesce で "x" に倒しているのは null（= skip_final_snapshot 側で扱う）を通すため。
+  # || ではなく三項を使うのは、|| が短絡せず length(null) で落ちるため。
   validation {
-    condition = (
-      can(regex("^[a-zA-Z][a-zA-Z0-9-]{0,254}$", coalesce(var.final_snapshot_identifier, "x"))) &&
-      !can(regex("--", coalesce(var.final_snapshot_identifier, "x"))) &&
-      !can(regex("-$", coalesce(var.final_snapshot_identifier, "x")))
+    condition = var.final_snapshot_identifier == null ? true : (
+      can(regex("^[a-zA-Z](-?[a-zA-Z0-9])*$", var.final_snapshot_identifier)) &&
+      length(var.final_snapshot_identifier) <= 255
     )
     error_message = "final_snapshot_identifier は英字で始まり、英数字とハイフンのみ、連続ハイフンとハイフン終わりは不可、255 文字以内にしてください。"
   }
+}
+
+# 空の DB から始めることを明示するフラグ。既定を false にしているのは、
+# snapshot_identifier の渡し忘れで空の DB が本番として立つのを防ぐため（main.tf の
+# precondition 参照）。初回構築や意図的な初期化のときだけ true にする。
+variable "start_from_empty" {
+  description = "Create an empty database instead of restoring from a snapshot. Must be set explicitly so a forgotten snapshot_identifier cannot silently produce an empty production database"
+  type        = bool
+  default     = false
 }
 
 # 既存スナップショットから復元する場合にその名前を渡す。null なら空の DB を新規作成。
