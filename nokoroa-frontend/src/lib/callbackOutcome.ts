@@ -12,7 +12,10 @@ export type CallbackOutcome =
       retryHref?: string;
     };
 
-/** 検証できなかった場合の回復先。AuthProvider が保持したトークンを再検証する */
+/**
+ * 検証できなかった場合の回復先。AuthProvider が保持したトークンを再検証する。
+ * 検証 effect の deps は空なので、SPA 遷移ではなくフルロードで渡すこと
+ */
 const RETRY_HREF = '/';
 
 /** 原因を取り違えると対処もミスリードするため、理由ごとに言い分ける */

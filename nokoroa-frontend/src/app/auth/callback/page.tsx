@@ -64,7 +64,10 @@ function AuthCallbackContent() {
       const token = searchParams.get('token') || null;
 
       // トークンと(バックエンドが付与する)メールアドレス入り user をアドレスバー・
-      // 履歴・Referer に残さない。失敗時はこの画面に留まるため特に必要
+      // 履歴・Referer に残さない。失敗時はこの画面に留まるため特に必要。
+      // Layout が isLoading 中は children を描画しないのでこの画面は AppRouter より
+      // 後の commit でマウントされ、呼ぶのは Next がパッチ済みの replaceState になる
+      // (素の replaceState だと history.state の Next 内部状態まで消える)
       window.history.replaceState({}, '', window.location.pathname);
 
       // 受け取るトークンが無いのに既にセッションがあるなら、この画面に用は無い。
