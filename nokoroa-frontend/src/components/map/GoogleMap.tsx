@@ -301,6 +301,33 @@ export const GoogleMap: React.FC<GoogleMapProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map, posts, onPostClick, userLocation, ipLocation]);
 
+  // unmount 時の後始末。
+  // 上の effect は「再実行時に前回マーカーを setMap(null) する」形なので
+  // posts 更新での累積は起きないが、unmount 時は誰も掃除しない。
+  // /map を出入りするたびに Marker・InfoWindow・click リスナと
+  // google.maps.Map インスタンスが積み上がる。
+  // markers / map を依存に入れると「生成 → 破棄」を繰り返してしまうため、
+  // ref 経由で最新値を読んで unmount 時だけ破棄する。
+  const cleanupRef = useRef<{
+    markers: google.maps.Marker[];
+    map: google.maps.Map | null;
+  }>({ markers: [], map: null });
+  cleanupRef.current = { markers, map };
+
+  useEffect(
+    () => () => {
+      const { markers: lastMarkers, map: lastMap } = cleanupRef.current;
+      lastMarkers.forEach((marker) => {
+        window.google?.maps?.event?.clearInstanceListeners(marker);
+        marker.setMap(null);
+      });
+      if (lastMap) {
+        window.google?.maps?.event?.clearInstanceListeners(lastMap);
+      }
+    },
+    [],
+  );
+
   if (!apiKey || apiKey === 'development_mode') {
     return (
       <Box

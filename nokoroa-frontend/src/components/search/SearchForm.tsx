@@ -29,7 +29,7 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { useSearchHistory } from '@/hooks/useSearchHistory';
 import { useSearchSuggestions } from '@/hooks/useSearchSuggestions';
@@ -55,6 +55,29 @@ export const SearchForm = ({ onSearch, initialFilters }: SearchFormProps) => {
     initialFilters?.mode ?? 'keyword',
   );
   const isSemantic = mode === 'semantic';
+
+  // initialFilters は useState の初期値にしかならないので、マウント後に
+  // 外から条件が差し替わっても(?tags= の変更など)フォームが追従しない。
+  // 入力中の値を踏まないよう「タグ・場所が実際に変わったとき」だけ同期する。
+  const appliedInitialRef = useRef(
+    JSON.stringify({
+      tags: initialFilters?.tags ?? [],
+      location: initialFilters?.location ?? '',
+    }),
+  );
+  useEffect(() => {
+    const next = JSON.stringify({
+      tags: initialFilters?.tags ?? [],
+      location: initialFilters?.location ?? '',
+    });
+    if (next === appliedInitialRef.current) return;
+    appliedInitialRef.current = next;
+    setTags(initialFilters?.tags ?? []);
+    setLocation(initialFilters?.location ?? '');
+    if (initialFilters?.tags?.length || initialFilters?.location) {
+      setIsAdvancedOpen(true);
+    }
+  }, [initialFilters?.tags, initialFilters?.location]);
 
   // タグ候補を取得
   const { tags: availableTags } = useTags();
