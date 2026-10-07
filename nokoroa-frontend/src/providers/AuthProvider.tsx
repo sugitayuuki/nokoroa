@@ -22,6 +22,21 @@ import {
 } from '@/lib/authSession';
 import { getToken, removeToken, setToken } from '@/utils/auth';
 
+/** 資格情報でのサインイン結果 */
+type SignInResult =
+  /** 資格情報かトークンが拒否された。入力をやり直せば解消しうる */
+  | 'rejected'
+  /** サーバの状態を確認できない。やり直しても同じ結果になる */
+  | 'unverified'
+  | 'ok';
+
+/** 登録とサインインは別に成否が決まるため、呼び出し側が区別できる形で返す */
+export type RegisterResult =
+  | 'signed-in'
+  /** アカウントは作成済みだがサインインは未完了 */
+  | 'registered'
+  | 'failed';
+
 type AuthContextType = {
   isAuthenticated: boolean;
   isLoading: boolean;
@@ -30,7 +45,11 @@ type AuthContextType = {
   user?: AuthUser;
   login: (email: string, password: string) => Promise<boolean>;
   logout: () => void;
-  register: (name: string, email: string, password: string) => Promise<boolean>;
+  register: (
+    name: string,
+    email: string,
+    password: string,
+  ) => Promise<RegisterResult>;
   /**
    * 認証状態を未ログインに戻す。logout と違い遷移も通知も行わない。
    * 検証前にトークンを差し替える画面が、失敗時に state を揃えるために使う
@@ -116,18 +135,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(undefined);
   }, []);
 
-  const login = useCallback(
-    async (
-      email: string,
-      password: string,
-      // register から呼ぶときは、登録が済んでいる事実を含めて
-      // 呼び出し側が通知するため、ここでは出さない
-      { notifyFailure = true }: { notifyFailure?: boolean } = {},
-    ): Promise<boolean> => {
-      const notify = (message: string) => {
-        if (notifyFailure) toast.error(message);
-      };
-
+  /**
+   * 資格情報でサインインし、認証状態まで確定させる。通知はしない。
+   * login と register で失敗時の案内が変わるため、理由を呼び出し側へ返す。
+   */
+  const signIn = useCallback(
+    async (email: string, password: string): Promise<SignInResult> => {
       try {
         const response = await createApiRequest(API_CONFIG.endpoints.login, {
           method: 'POST',
@@ -135,10 +148,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         });
 
         if (!response.ok) {
-          notify(
-            'ログインに失敗しました。メールアドレスとパスワードを確認してください。',
-          );
-          return false;
+          // 入力をやり直しても 5xx は解消しない
+          return response.status >= 500 ? 'unverified' : 'rejected';
         }
 
         const result = await response.json();
@@ -146,8 +157,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // access_token または token のいずれかを使用
         const token = result.access_token || result.token;
         if (!token) {
-          notify('認証トークンが取得できませんでした。');
-          return false;
+          return 'rejected';
         }
 
         // トークン失効などで logout を経ずにユーザーが切り替わる場合があるため、
@@ -162,19 +172,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const decision = decideAuthAction(await fetchAuthSession());
         if (decision.action !== 'accept') {
           // 起動時検証やコールバックと違い、ここは「今この操作が失敗した」と
-          // 明言する地点。保存したトークンを残すと、失敗と伝えたログインが
-          // 次の読み込みで無断に成立する。再試行は新しいトークンを取り直す
+          // 明言する地点。保存したトークンを残すと、失敗と伝えたサインインが
+          // 次の読み込みで無断に成立する
           removeToken();
           // setToken は済んでいるので、state も戻さないと「前のユーザーの
           // 表示のまま別のトークンで API を叩く」状態が残る
           setIsAuthenticated(false);
           setUser(undefined);
-          notify(
-            decision.action === 'discard'
-              ? 'ログインできませんでした。お手数ですがもう一度お試しください。'
-              : 'サーバーの状態を確認できないため、ログインを完了できませんでした。時間をおいてお試しください。',
-          );
-          return false;
+          return decision.action === 'discard' ? 'rejected' : 'unverified';
         }
 
         // 検証で user が取れなければログインレスポンスの user を使い、
@@ -183,15 +188,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(decision.user ?? toAuthUser(result.user));
 
         setIsAuthenticated(true);
-        toast.success('ログインしました');
-        return true;
+        return 'ok';
       } catch {
-        // ログインでエラーが発生した場合の処理
-        notify('ログインに失敗しました。ネットワーク接続を確認してください。');
-        return false;
+        return 'unverified';
       }
     },
     [],
+  );
+
+  const login = useCallback(
+    async (email: string, password: string): Promise<boolean> => {
+      const result = await signIn(email, password);
+      if (result === 'ok') {
+        toast.success('ログインしました');
+        return true;
+      }
+      toast.error(
+        result === 'rejected'
+          ? 'ログインに失敗しました。メールアドレスとパスワードを確認してください。'
+          : 'ログインを完了できませんでした。通信環境を確認のうえ、時間をおいてもう一度お試しください。',
+      );
+      return false;
+    },
+    [signIn],
   );
 
   const logout = useCallback(() => {
@@ -222,7 +241,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [pathname, navigatePush]);
 
   const register = useCallback(
-    async (name: string, email: string, password: string): Promise<boolean> => {
+    async (
+      name: string,
+      email: string,
+      password: string,
+    ): Promise<RegisterResult> => {
       try {
         const response = await createApiRequest(API_CONFIG.endpoints.signup, {
           method: 'POST',
@@ -237,34 +260,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               ? 'このメールアドレスは既に登録されています。ログイン画面からお試しください。'
               : 'アカウント作成に失敗しました。入力内容を確認してください。',
           );
-          return false;
+          return 'failed';
         }
 
-        // 登録成功後に自動ログイン。失敗通知は出させず、登録が済んでいる
-        // 事実と併せてここで伝える
-        const loginSuccess = await login(email, password, {
-          notifyFailure: false,
-        });
-        if (loginSuccess) {
+        // 登録成功後に自動サインイン。通知は登録できた事実と併せてここで出す
+        const signedIn = await signIn(email, password);
+        if (signedIn === 'ok') {
           toast.success('アカウントを作成しました！');
-          return true;
+          return 'signed-in';
         }
 
-        // アカウントは作成済み。ここで失敗を返すと登録失敗と受け取られ、
-        // 再登録でメール重複になって「既に登録されています」に行き着く。
-        // 登録は成功しているので true を返してダイアログを閉じる
+        // アカウントは作成済み。失敗として扱うと再登録に向かい、メール重複で
+        // 行き止まりになる。登録できた事実を伝えてサインインだけやり直させる。
+        // unverified はログイン画面でも同じ検証で弾かれるので、そちらへ送らない
         toast.info(
-          'アカウントを作成しました。自動ログインだけ完了できなかったため、ログイン画面からお試しください。',
+          signedIn === 'rejected'
+            ? 'アカウントを作成しました。ログインしてご利用ください。'
+            : 'アカウントを作成しました。サーバーの状態を確認できないため、時間をおいてログインしてください。',
         );
-        return true;
+        return 'registered';
       } catch {
         toast.error(
           'アカウント作成に失敗しました。ネットワーク接続を確認してください。',
         );
-        return false;
+        return 'failed';
       }
     },
-    [login],
+    [signIn],
   );
 
   // usePathname の追加で AuthProvider は全ルート遷移ごとに再レンダーされる。

@@ -67,13 +67,21 @@ export default function SignUpDialog({
 
   /* ----- フォーム送信 ----- */
   const onSubmit = async (data: FormType) => {
-    const success = await authRegister(data.name, data.email, data.password);
-    if (success) {
+    const result = await authRegister(data.name, data.email, data.password);
+
+    if (result === 'signed-in') {
       onClose();
       // トースト表示後にスムーズにホーム画面に遷移
       setTimeout(() => {
         navigation.push('/');
       }, 500);
+      return;
+    }
+
+    // 登録はできたがサインインは未完了。未ログインのままホームへ送ると
+    // 成功時と見分けが付かないので、案内どおりログイン画面へ切り替える
+    if (result === 'registered') {
+      onSwitchToLogin?.();
     }
   };
 
