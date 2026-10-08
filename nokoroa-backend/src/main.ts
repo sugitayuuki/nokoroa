@@ -1,5 +1,6 @@
 import { join } from 'path';
 import { Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { HttpAdapterHost, NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
@@ -44,8 +45,12 @@ async function bootstrap() {
   // ここに書くと E2E（アプリを自前で組む）と乖離し、本番だけ壊れる形になるため。
   app.setGlobalPrefix(API_GLOBAL_PREFIX);
   // プレフィックスを当てた直後に、Google へ登録したコールバック URL が
-  // 実際のマウント先を指しているか突き合わせる
-  assertGoogleCallbackUrlMatchesRoute(process.env.GOOGLE_CALLBACK_URL);
+  // 実際のマウント先を指しているか突き合わせる。読み元は GoogleStrategy と
+  // 揃える（process.env を直読みすると ConfigModule の設定次第で
+  // 「assert が有効なつもりで実は未設定扱い」に静かに落ちる）
+  assertGoogleCallbackUrlMatchesRoute(
+    app.get(ConfigService).get<string>('GOOGLE_CALLBACK_URL')?.trim(),
+  );
 
   const config = new DocumentBuilder()
     .setTitle('Nokoroa API')

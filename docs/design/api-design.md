@@ -9,7 +9,8 @@
   - ブラウザからの fetch は `credentials: 'include'` が必須。
   - クロスサイト（`Sec-Fetch-Site: cross-site`）からのリクエストは 403 で拒否される。
     例外は `@AllowCrossSiteNavigation()` を付けたハンドラのみ（現在は Google 認証の
-    開始とコールバックの 2 本）で、そこもトップレベル遷移に限られる。
+    開始とコールバックの 2 本）。そこもトップレベル遷移に限られるが、この絞り込みが
+    効くのは `Sec-Fetch-Mode` / `Sec-Fetch-Dest` を送るクライアントに限る。
 - フォーマット: JSON
 
 ---

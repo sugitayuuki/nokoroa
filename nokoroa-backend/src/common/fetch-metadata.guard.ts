@@ -8,7 +8,7 @@ import {
 import { Reflector } from '@nestjs/core';
 import { Request } from 'express';
 
-import { ALLOW_CROSS_SITE_KEY } from './allow-cross-site.decorator';
+import { ALLOW_CROSS_SITE_NAVIGATION_KEY } from './allow-cross-site-navigation.decorator';
 
 /** 副作用を持つメソッド。Origin の検査を強制する対象。 */
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -26,7 +26,7 @@ const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
  *    `Set-Cookie` の受理は SameSite の制御対象外。NestJS は既定で urlencoded を
  *    受けるため、被害者を「攻撃者のアカウントでログイン済み」にできる。
  *
- * 判定は 2 段。
+ * 判定は 3 段。
  *
  * - **Origin**（副作用のあるメソッドのみ）: ブラウザはクロスオリジンの POST 等に
  *   必ず `Origin` を付け、JS から取り除けない。許可オリジン以外なら拒否する。
@@ -38,11 +38,10 @@ const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
  *   閉じるのはこちらだけなので、**上記 1 は Sec-Fetch-Site を送るブラウザに限って
  *   閉じている**（README の「残っている面」に明記）。
  *
- * 唯一の例外が `@AllowCrossSiteNavigation` を付けたハンドラで、ここだけは
- * `cross-site` でも通す。ただし `Sec-Fetch-Mode` / `Sec-Fetch-Dest` が
- * トップレベル遷移を示す場合に限る（どちらも送らないクライアントは、他の検査と
- * 同じく「ブラウザ以外」として通す）。印を付けてよい条件は
- * `AllowCrossSiteNavigation` の JSDoc。
+ * - **印（`@AllowCrossSiteNavigation`）**: 付いたハンドラだけは `cross-site` でも
+ *   通す。ただし `Sec-Fetch-Mode` / `Sec-Fetch-Dest` がトップレベル遷移を示す場合に
+ *   限る（どちらも送らないクライアントは、他の検査と同じく「ブラウザ以外」として
+ *   通す）。印を付けてよい条件は `AllowCrossSiteNavigation` の JSDoc。
  *
  * どちらのヘッダも無いリクエスト（curl / Swagger / supertest / サーバー間）は通す。
  * ここを必須にすると API クライアントが全滅する。
@@ -74,13 +73,19 @@ export class FetchMetadataGuard implements CanActivate {
     // ブックマーク・外部アプリからのリンク）は自サイト扱い。
     // same-site は開発環境（フロント localhost:3000 → API localhost:4000。
     // Cookie と同じくポートはサイトの構成要素ではない）で必要。
-    if (req.header('sec-fetch-site') !== 'cross-site') {
+    //
+    // 単純一致で見ないのは、経路上の装置が同名ヘッダを足すと Express が
+    // ", " で連結し、`"cross-site, cross-site"` が一致しなくなるため
+    // （そのまま通すと全ルートがクロスサイトから到達可能になる）。
+    if (!this.isCrossSite(req.header('sec-fetch-site'))) {
       return true;
     }
 
     // 印はハンドラ単位でのみ読む（理由は AllowCrossSiteNavigation の JSDoc）。
     const handler = context.getHandler();
-    if (!this.reflector.get<boolean>(ALLOW_CROSS_SITE_KEY, handler)) {
+    if (
+      !this.reflector.get<boolean>(ALLOW_CROSS_SITE_NAVIGATION_KEY, handler)
+    ) {
       // 解決先を添える。「印が外れた」事故（今回の 403 の再発）と
       // 「正常な遮断」はこれが無いとログ上で見分けられない。
       this.reject(
@@ -104,6 +109,14 @@ export class FetchMetadataGuard implements CanActivate {
     }
 
     return true;
+  }
+
+  /** 値が重複して連結されていても取りこぼさない。 */
+  private isCrossSite(header: string | undefined): boolean {
+    return (
+      header !== undefined &&
+      header.split(',').some((value) => value.trim() === 'cross-site')
+    );
   }
 
   /** 全経路のブロッカーなので、拒否は必ず観測できるようにしておく。 */

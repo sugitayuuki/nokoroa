@@ -28,7 +28,7 @@ import {
 } from './auth-cookie';
 import { AuthService } from './auth.service';
 import { GoogleAuthFailureFilter } from './google-auth-failure.filter';
-import { AllowCrossSiteNavigation } from '../common/allow-cross-site.decorator';
+import { AllowCrossSiteNavigation } from '../common/allow-cross-site-navigation.decorator';
 import { frontendBaseUrl } from '../common/frontend-url';
 import { LoginDto } from './dto/login.dto';
 import { GoogleAuthGuard } from './guards/google-auth.guard';

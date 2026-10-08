@@ -12,7 +12,7 @@ describe('assertGoogleCallbackUrlMatchesRoute', () => {
     ).not.toThrow();
   });
 
-  it('末尾スラッシュの有無では落とさない', () => {
+  it('末尾スラッシュ 1 個は許す(Express が省略を許す範囲)', () => {
     expect(() =>
       assertGoogleCallbackUrlMatchesRoute(
         `https://nokoroa.com${GOOGLE_CALLBACK_PATH}/`,
@@ -20,9 +20,24 @@ describe('assertGoogleCallbackUrlMatchesRoute', () => {
     ).not.toThrow();
   });
 
+  it('末尾スラッシュ 2 個は止める(実際に 404 になる形)', () => {
+    expect(() =>
+      assertGoogleCallbackUrlMatchesRoute(
+        `https://nokoroa.com${GOOGLE_CALLBACK_PATH}//`,
+      ),
+    ).toThrow(/一致しません/);
+  });
+
+  it('パスの一部が違えば止める(定数の打ち間違い・階層変更)', () => {
+    expect(() =>
+      assertGoogleCallbackUrlMatchesRoute(
+        'https://nokoroa.com/api/auth/google/callbackk',
+      ),
+    ).toThrow(/一致しません/);
+  });
+
   it('グローバルプレフィックスが抜けていたら起動を止める', () => {
-    // 実際に起きた形。同意画面までは正常に進むため、止めないと
-    // ユーザーがログインに失敗するまで誰も気づけない
+    // 実際に起きた形。止めないとユーザーのログイン失敗としてしか表面化しない
     expect(() =>
       assertGoogleCallbackUrlMatchesRoute(
         'https://nokoroa.com/auth/google/callback',

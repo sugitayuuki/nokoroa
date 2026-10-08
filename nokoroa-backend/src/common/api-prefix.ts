@@ -1,10 +1,15 @@
 /**
  * 全ルートに掛かるグローバルプレフィックス。
  *
- * バックエンド内（`main.ts` と E2E）ではここを参照し、literal を書き写さないこと。
- * 書き写すと「本番は /api、テストはプレフィックス無し」という乖離が生まれ、
- * パスがずれる退行をテストが緑のまま見逃す（Google ログインが 403 になる形で
- * 実際に起きた）。
+ * **この定数が存在する理由（以降のファイルはここを参照する）**:
+ * かつてクロスサイト許可の判定をパス literal で持っており、`setGlobalPrefix` で
+ * 付くこのプレフィックスの分だけずれて、本番・ローカルとも Google ログインが
+ * 403 になった。E2E はアプリを自前で組んでプレフィックスを掛けないため、
+ * **テストだけが緑のまま**この乖離を見逃した。
+ *
+ * バックエンド内ではここを参照し、literal を書き写さないこと。
+ * 対象は `main.ts`、E2E（`test/auth.e2e-spec.ts`）、`test/env.ts` と
+ * `src/auth/strategies/google.strategy.spec.ts` の `GOOGLE_CALLBACK_URL`。
  *
  * ただしこれはバックエンド**内**の単一真実源にすぎない。同じ値は
  * `nokoroa-frontend/src/lib/apiConfig.ts` と terraform（ALB のパスルール /

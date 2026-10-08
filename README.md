@@ -113,7 +113,7 @@ Google OAuth は、パスワードを覚えてもらう前提のサービスに�
 
 判定は `FetchMetadataGuard`（`nokoroa-backend/src/common/fetch-metadata.guard.ts`）にまとめています。どちらのヘッダも無いリクエスト（curl / Swagger / サーバー間）は通します。ここを必須にすると API クライアントが使えなくなるためです。
 
-**例外（オプトアウト）**: `@AllowCrossSiteNavigation()`（`nokoroa-backend/src/common/allow-cross-site.decorator.ts`）を付けたハンドラだけは `Sec-Fetch-Site: cross-site` でも通ります。Google からのリダイレクトがこの形で届くためで、現在の対象は `GET /auth/google` と `GET /auth/google/callback` の 2 本。`Origin` 検査は外れず、通るのもトップレベル遷移に限ります。対象が増えていないことは E2E（`test/auth.e2e-spec.ts` の「クロスサイト許可ハンドラの棚卸し」）が固定しています。
+**例外（印）**: `@AllowCrossSiteNavigation()`（`nokoroa-backend/src/common/allow-cross-site-navigation.decorator.ts`）を付けたハンドラだけは `Sec-Fetch-Site: cross-site` でも通ります。Google からのリダイレクトがこの形で届くためです。印を付けても `Origin` 検査は外れず、通るのもトップレベル遷移に限ります。印を付けてよい条件はデコレータの JSDoc にあり、印が付いたハンドラの一覧は E2E が固定しています（増減すると落ちます）。
 
 **検査を 2 本立てにしている理由**: `Sec-Fetch-Site` は **Safari 16.3 以下と Firefox 89 以下では送信されません**。つまり「ブラウザはこのヘッダを省略できない」とは言えず、古いブラウザでは素通りします。一方 `Origin` はクロスオリジンの POST 等に必ず付き JS からは取り除けないので、**被害の大きいログイン CSRF は `Origin` 側で閉じています**。
 

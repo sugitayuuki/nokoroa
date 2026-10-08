@@ -7,9 +7,9 @@ import { Reflector } from '@nestjs/core';
 import { Request } from 'express';
 
 import {
-  ALLOW_CROSS_SITE_KEY,
+  ALLOW_CROSS_SITE_NAVIGATION_KEY,
   AllowCrossSiteNavigation,
-} from './allow-cross-site.decorator';
+} from './allow-cross-site-navigation.decorator';
 import { FetchMetadataGuard } from './fetch-metadata.guard';
 
 // `this` を使わないことを明示する（ハンドラを値として取り回すため）
@@ -21,7 +21,7 @@ class StubController {
 }
 
 // 印をコントローラ単位で付けても効かないことの検証用
-@SetMetadata(ALLOW_CROSS_SITE_KEY, true)
+@SetMetadata(ALLOW_CROSS_SITE_NAVIGATION_KEY, true)
 class ClassMarkedController {
   someRoute(this: void): void {}
 }
@@ -72,10 +72,9 @@ describe('FetchMetadataGuard', () => {
     guard = new FetchMetadataGuard(new Reflector());
   });
 
-  describe('クロスサイトの許可', () => {
+  describe('印による許可', () => {
     it('印を付けたハンドラはトップレベル遷移を通す', () => {
-      // パスは一切見ない。見ていた頃は setGlobalPrefix('api') で付く /api が
-      // 許可レーンから外れ、本番・ローカルとも Google ログインが 403 になった
+      // パスは一切見ない（見ていた頃に起きた事故は API_GLOBAL_PREFIX の JSDoc）
       expect(
         guard.canActivate(
           contextFor(stub.oauthRoute, {
@@ -97,6 +96,22 @@ describe('FetchMetadataGuard', () => {
       ).toThrow(ForbiddenException);
     });
 
+    it('Sec-Fetch-Site が重複して連結されていても拒否する', () => {
+      // 経路上の装置が同名ヘッダを足すと Express が ", " で連結する。
+      // 単純一致だとここで素通りし、全ルートがクロスサイトから到達可能になる
+      expect(() =>
+        guard.canActivate(
+          contextFor(stub.protectedRoute, {
+            headers: {
+              'sec-fetch-site': 'cross-site, cross-site',
+              'sec-fetch-mode': 'navigate',
+              'sec-fetch-dest': 'document',
+            },
+          }),
+        ),
+      ).toThrow(ForbiddenException);
+    });
+
     it('印をコントローラ単位で付けても効かない', () => {
       // 効かせると、後から足したルートが無言で検査の外に出る
       expect(() =>
@@ -111,7 +126,7 @@ describe('FetchMetadataGuard', () => {
     });
   });
 
-  describe('許可したハンドラでもトップレベル遷移に限る', () => {
+  describe('印が付いてもトップレベル遷移に限る', () => {
     it('埋め込み(no-cors)は拒否する', () => {
       // 画像等でコールバックを叩かせ、進行中ログインの state を壊す経路
       expect(() =>
@@ -155,8 +170,8 @@ describe('FetchMetadataGuard', () => {
   });
 
   describe('印を付けても外れない検査', () => {
-    it('許可したハンドラでも許可オリジン以外の更新系は拒否する', () => {
-      // 免除は「クロスサイトから到達してよい」であって
+    it('印が付いても許可オリジン以外の更新系は拒否する', () => {
+      // 印は「クロスサイトから到達してよい」であって
       // 「Origin を信用してよい」ではない
       expect(() =>
         guard.canActivate(
@@ -172,7 +187,7 @@ describe('FetchMetadataGuard', () => {
     });
 
     it('印を付けても同一オリジンの非 navigate は通す(Swagger の Try it out)', () => {
-      // 許可レーンはクロスサイト専用。印が付いたせいで自サイトからの
+      // 印が効くのはクロスサイトのときだけ。印のせいで自サイトからの
       // fetch が 403 になると、原因がデコレータ側にあると気づけない
       expect(
         guard.canActivate(

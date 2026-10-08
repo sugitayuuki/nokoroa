@@ -1,7 +1,11 @@
 import { Server } from 'http';
 import { INestApplication, RequestMethod } from '@nestjs/common';
 import { METHOD_METADATA } from '@nestjs/common/constants';
-import { DiscoveryModule, DiscoveryService } from '@nestjs/core';
+import {
+  DiscoveryModule,
+  DiscoveryService,
+  MetadataScanner,
+} from '@nestjs/core';
 import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
 
@@ -12,8 +16,9 @@ import {
   AUTH_COOKIE_NAME,
   SESSION_HINT_COOKIE_NAME,
 } from '../src/auth/auth-cookie';
+import { GOOGLE_CALLBACK_PATH } from '../src/auth/google-callback-path';
 import { OAUTH_STATE_COOKIE_NAME } from '../src/auth/oauth-state.store';
-import { ALLOW_CROSS_SITE_KEY } from '../src/common/allow-cross-site.decorator';
+import { ALLOW_CROSS_SITE_NAVIGATION_KEY } from '../src/common/allow-cross-site-navigation.decorator';
 import { API_GLOBAL_PREFIX } from '../src/common/api-prefix';
 
 /**
@@ -619,12 +624,11 @@ describe('Auth (e2e)', () => {
 
 /**
  * 他の E2E はプレフィックス無しでアプリを組むため、プレフィックス起因の退行を
- * 検出できない（実際に Google ログインが 403 になった）。ここだけ main.ts と
+ * 検出できない（経緯は `API_GLOBAL_PREFIX` の JSDoc）。ここだけ main.ts と
  * 同じ setGlobalPrefix を掛けて、その差を塞ぐ。
  *
  * 到達できたことを 302 まで固定するのが肝心。`not.toBe(403)` だけだと、
- * ルートの改名やマウント位置の変更で 404 になっても緑のままになり、
- * 塞いだはずの「本番だけ壊れる」退行をこのスイート自身が見逃す。
+ * ルートの改名やマウント位置の変更で 404 になっても緑のままになる。
  */
 describe('Auth (e2e, setGlobalPrefix 有り)', () => {
   let app: INestApplication;
@@ -660,7 +664,7 @@ describe('Auth (e2e, setGlobalPrefix 有り)', () => {
     // Google からのリダイレクトはこの形で届く。403 だとログインが成立しない。
     // state は一致しないので、やり直し案内へのリダイレクトになる
     const response = await request(server)
-      .get(`/${API_GLOBAL_PREFIX}/auth/google/callback?code=x&state=y`)
+      .get(`${GOOGLE_CALLBACK_PATH}?code=x&state=y`)
       .set('Sec-Fetch-Site', 'cross-site')
       .set('Sec-Fetch-Mode', 'navigate')
       .set('Sec-Fetch-Dest', 'document')
@@ -671,7 +675,7 @@ describe('Auth (e2e, setGlobalPrefix 有り)', () => {
 
   it('OAuth 経路でも埋め込みからの呼び出しは拒否する', async () => {
     await request(server)
-      .get(`/${API_GLOBAL_PREFIX}/auth/google/callback?code=x&state=y`)
+      .get(`${GOOGLE_CALLBACK_PATH}?code=x&state=y`)
       .set('Sec-Fetch-Site', 'cross-site')
       .set('Sec-Fetch-Mode', 'no-cors')
       .set('Sec-Fetch-Dest', 'image')
@@ -696,50 +700,48 @@ describe('Auth (e2e, setGlobalPrefix 有り)', () => {
      * 緩くしてはいけない** — 緩いと「ガードは免除するのに一覧には出ない」
      * 状態が作れてしまい、この棚卸し自体が fail-open になる。
      */
-    function collectAllowedHandlers(): {
+    function collectMarkedHandlers(): {
       name: string;
-      handler: () => unknown;
+      httpMethod: unknown;
     }[] {
-      const found: { name: string; handler: () => unknown }[] = [];
-      for (const wrapper of app.get(DiscoveryService).getControllers()) {
-        const controllerName = wrapper.metatype?.name ?? 'unknown';
-        // インスタンスを解決できないコントローラ(request-scoped 等)は
-        // 走査の外に落ちるため、黙って飛ばさず失敗させる
-        expect(wrapper.instance).toBeDefined();
+      const scanner = new MetadataScanner();
+      return app
+        .get(DiscoveryService)
+        .getControllers()
+        .flatMap((wrapper) => {
+          // インスタンスを解決できないコントローラ(request-scoped 等)は
+          // 走査の外に落ちるため、黙って飛ばさず失敗させる
+          expect(wrapper.instance).toBeDefined();
+          const prototype = Object.getPrototypeOf(
+            wrapper.instance as object,
+          ) as object;
 
-        const seen = new Set<string>();
-        let target = Object.getPrototypeOf(wrapper.instance as object) as
-          | object
-          | null;
-        while (target !== null && target !== Object.prototype) {
-          const members = target as Record<string, unknown>;
-          for (const member of Object.getOwnPropertyNames(members)) {
-            if (member === 'constructor' || seen.has(member)) continue;
-            seen.add(member);
-            const handler = members[member];
-            if (
-              typeof handler === 'function' &&
-              Reflect.getMetadata(ALLOW_CROSS_SITE_KEY, handler)
-            ) {
-              found.push({
-                name: `${controllerName}.${member}`,
-                handler: handler as () => unknown,
-              });
-            }
-          }
-          target = Object.getPrototypeOf(target) as object | null;
-        }
-      }
-      return found.sort((a, b) => a.name.localeCompare(b.name));
+          return scanner
+            .getAllMethodNames(prototype)
+            .map((member) => ({
+              member,
+              handler: (prototype as Record<string, object>)[member],
+            }))
+            .filter(({ handler }) =>
+              Reflect.getMetadata(ALLOW_CROSS_SITE_NAVIGATION_KEY, handler),
+            )
+            .map(({ member, handler }) => ({
+              name: `${wrapper.metatype?.name ?? 'unknown'}.${member}`,
+              httpMethod: Reflect.getMetadata(
+                METHOD_METADATA,
+                handler,
+              ) as unknown,
+            }));
+        })
+        .sort((a, b) => a.name.localeCompare(b.name));
     }
 
     it('印が付いているのは Google 認証の 2 本だけ', () => {
-      // 免除が「1 箇所の正規表現」から「各所のデコレータ」に変わったため、
       // 一覧が変わったことに気づく手段がここしかない。
       // 増えている場合: そのハンドラ自身が CSRF を防げるか確認してから一覧を更新する。
       // 減っている場合: 印が外れた退行(Google ログインが 403 になる)。
       //   期待値を減らす前にデコレータの有無を確認すること。
-      expect(collectAllowedHandlers().map((entry) => entry.name)).toEqual([
+      expect(collectMarkedHandlers().map((entry) => entry.name)).toEqual([
         'AuthController.googleAuth',
         'AuthController.googleAuthRedirect',
       ]);
@@ -749,12 +751,12 @@ describe('Auth (e2e, setGlobalPrefix 有り)', () => {
       // Origin 検査は更新系にしか掛からず、ブラウザは GET 遷移に Origin を
       // 付けない。つまり印を付けた更新系はクロスサイトから素通りになる。
       // 一覧の更新だけでは回避できないよう、ここで機械的に止める。
-      for (const { name, handler } of collectAllowedHandlers()) {
-        expect([
+      expect(collectMarkedHandlers()).toEqual(
+        collectMarkedHandlers().map(({ name }) => ({
           name,
-          Reflect.getMetadata(METHOD_METADATA, handler) as unknown,
-        ]).toEqual([name, RequestMethod.GET]);
-      }
+          httpMethod: RequestMethod.GET,
+        })),
+      );
     });
   });
 });
