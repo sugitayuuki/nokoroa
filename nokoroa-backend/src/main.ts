@@ -8,6 +8,7 @@ import helmet from 'helmet';
 
 import { AppModule } from './app.module';
 import { AUTH_COOKIE_NAME } from './auth/auth-cookie';
+import { API_GLOBAL_PREFIX } from './common/api-prefix';
 import { assertKnownEnv, isDevelopmentEnv } from './common/environment';
 import { PrismaExceptionFilter } from './common/prisma-exception.filter';
 
@@ -40,7 +41,7 @@ async function bootstrap() {
   });
   // cookie-parser / ValidationPipe / クロスサイト拒否は AppModule が登録する。
   // ここに書くと E2E（アプリを自前で組む）と乖離し、本番だけ壊れる形になるため。
-  app.setGlobalPrefix('api');
+  app.setGlobalPrefix(API_GLOBAL_PREFIX);
 
   const config = new DocumentBuilder()
     .setTitle('Nokoroa API')
@@ -70,7 +71,7 @@ async function bootstrap() {
   // 「本番以外」だと staging で露出してしまうため、開発環境を明示で判定する。
   if (isDevelopment) {
     const document = SwaggerModule.createDocument(app, config);
-    SwaggerModule.setup('api/docs', app, document);
+    SwaggerModule.setup(`${API_GLOBAL_PREFIX}/docs`, app, document);
   }
 
   const { httpAdapter } = app.get(HttpAdapterHost);

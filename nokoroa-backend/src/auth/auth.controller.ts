@@ -111,8 +111,9 @@ export class AuthController {
 
   @Get('google')
   @UseGuards(GoogleAuthGuard)
-  // 「Google でログイン」は攻撃者サイトのリンクからも踏まれうるが、認証情報を
-  // 発行するのはコールバック側で、こちらは同意画面へ送るだけ。
+  // 開始とコールバックは state クッキーで対になっているため、片方だけ通しても
+  // ログインは成立しない。踏まれた場合の影響は「進行中ログインの state が
+  // 上書きされてやり直しになる」までで、認証情報は発行されない。
   @AllowCrossSite()
   @ApiOperation({
     summary: 'Google認証開始',
@@ -126,8 +127,7 @@ export class AuthController {
   @Get('google/callback')
   @UseGuards(AuthGuard('google'))
   // Google からのリダイレクトはクロスサイトのトップレベル遷移で届く。
-  // ここを塞ぐと正規のログインが必ず失敗するため通し、CSRF は OAuth の
-  // state 検証（OAuthStateCookieStore）で閉じる。
+  // ここを塞ぐと正規のログインが必ず失敗する。
   @AllowCrossSite()
   // 認証に失敗しても API オリジン上の生 JSON で行き止まりにしない。
   // state 切れ・複数タブ・未確認メールはいずれもユーザーがやり直せる失敗なので、

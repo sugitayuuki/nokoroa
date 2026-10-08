@@ -32,14 +32,18 @@ const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
  *   必ず `Origin` を付け、JS から取り除けない。許可オリジン以外なら拒否する。
  *   Sec-Fetch-Site を送らない古いブラウザ（Safari 16.3 以下 / Firefox 89 以下）でも
  *   こちらが効くため、上記 2 のログイン CSRF はここで閉じる。
+ *   **`@AllowCrossSite` でも免除しない** — 免除は「クロスサイトから到達してよい」
+ *   という宣言であって「Origin を信用してよい」ではないため。
  * - **Sec-Fetch-Site**: `cross-site` なら拒否。GET 遷移（`Origin` が付かない）を
  *   閉じるのはこちらだけなので、**上記 1 は Sec-Fetch-Site を送るブラウザに限って
- *   閉じている**（README の「残っている面」に明記）。
+ *   閉じている**（README の「残っている面」に明記）。例外として
+ *   `@AllowCrossSite` を付けたハンドラだけはトップレベル遷移に限り通す
+ *   （何を前提にした例外かは `AllowCrossSite` の JSDoc）。
  *
  * どちらのヘッダも無いリクエスト（curl / Swagger / supertest / サーバー間）は通す。
  * ここを必須にすると API クライアントが全滅する。
  *
- * ミドルウェアではなくガードにしているのは、`setGlobalPrefix('api')` があっても
+ * ミドルウェアではなくガードにしているのは、`setGlobalPrefix` があっても
  * 全ルートに等しく掛かるため（`forRoutes('*')` のミドルウェアはプレフィックス配下に
  * 閉じてマウントされ、`GET /api` だけ素通りする）。あわせて LoggerMiddleware より
  * 後に走るので、拒否したリクエストもアクセスログに残る。
@@ -53,21 +57,6 @@ export class FetchMetadataGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
     const req = context.switchToHttp().getRequest<Request>();
 
-    // Google 認証の往復はクロスサイトで届くため、@AllowCrossSite を付けた
-    // ルートだけは通す。ただしトップレベル遷移に限る: 画像等の埋め込み
-    // （no-cors）でコールバックを叩かせて進行中ログインの state を壊す経路を塞ぐ。
-    // 印はハンドラ単位でのみ読む。コントローラ単位で効かせられると、
-    // 後から足したルートが無言で検査の外に出る。
-    if (
-      this.reflector.get<boolean>(ALLOW_CROSS_SITE_KEY, context.getHandler())
-    ) {
-      const mode = req.header('sec-fetch-mode');
-      if (!mode || mode === 'navigate') {
-        return true;
-      }
-      this.reject(req, `cross-site allowed route with sec-fetch-mode=${mode}`);
-    }
-
     const origin = req.header('origin');
     if (
       origin &&
@@ -77,13 +66,32 @@ export class FetchMetadataGuard implements CanActivate {
       this.reject(req, `disallowed origin ${origin}`);
     }
 
-    const site = req.header('sec-fetch-site');
     // ヘッダ無し = ブラウザ以外。same-origin / none（アドレスバー直打ち・
     // ブックマーク・外部アプリからのリンク）は自サイト扱い。
     // same-site は開発環境（フロント localhost:3000 → API localhost:4000。
     // Cookie と同じくポートはサイトの構成要素ではない）で必要。
-    if (site === 'cross-site') {
+    if (req.header('sec-fetch-site') !== 'cross-site') {
+      return true;
+    }
+
+    // 印はハンドラ単位でのみ読む（理由は AllowCrossSite の JSDoc）。
+    if (
+      !this.reflector.get<boolean>(ALLOW_CROSS_SITE_KEY, context.getHandler())
+    ) {
       this.reject(req, 'sec-fetch-site=cross-site');
+    }
+
+    // 印が付いていてもトップレベル遷移に限る。埋め込み（画像・iframe 等）で
+    // コールバックを叩かせて進行中ログインの state を壊す経路を塞ぐ。
+    // ヘッダが無い場合は他の検査と同じく通す（ブラウザ以外とみなす）。
+    const mode = req.header('sec-fetch-mode');
+    const dest = req.header('sec-fetch-dest');
+    if ((mode && mode !== 'navigate') || (dest && dest !== 'document')) {
+      this.reject(
+        req,
+        `cross-site allowed route needs a top-level navigation ` +
+          `(sec-fetch-mode=${mode ?? 'none'} sec-fetch-dest=${dest ?? 'none'})`,
+      );
     }
 
     return true;

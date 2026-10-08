@@ -1,5 +1,6 @@
 import { Server } from 'http';
 import { INestApplication } from '@nestjs/common';
+import { DiscoveryModule, DiscoveryService } from '@nestjs/core';
 import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
 
@@ -11,6 +12,8 @@ import {
   SESSION_HINT_COOKIE_NAME,
 } from '../src/auth/auth-cookie';
 import { OAUTH_STATE_COOKIE_NAME } from '../src/auth/oauth-state.store';
+import { ALLOW_CROSS_SITE_KEY } from '../src/common/allow-cross-site.decorator';
+import { API_GLOBAL_PREFIX } from '../src/common/api-prefix';
 
 /**
  * Set-Cookie から目的のクッキー 1 件の生文字列を取り出す。
@@ -614,9 +617,13 @@ describe('Auth (e2e)', () => {
 });
 
 /**
- * 他の E2E はプレフィックス無しでアプリを組むため、「本番だけ /api が付く」ことに
- * 起因する退行を検出できない（実際に Google ログインが 403 になった）。
- * ここだけ main.ts と同じ setGlobalPrefix を掛けて、その差を塞ぐ。
+ * 他の E2E はプレフィックス無しでアプリを組むため、プレフィックス起因の退行を
+ * 検出できない（実際に Google ログインが 403 になった）。ここだけ main.ts と
+ * 同じ setGlobalPrefix を掛けて、その差を塞ぐ。
+ *
+ * 到達できたことを 302 まで固定するのが肝心。`not.toBe(403)` だけだと、
+ * ルートの改名やマウント位置の変更で 404 になっても緑のままになり、
+ * 塞いだはずの「本番だけ壊れる」退行をこのスイート自身が見逃す。
  */
 describe('Auth (e2e, setGlobalPrefix 有り)', () => {
   let app: INestApplication;
@@ -624,11 +631,11 @@ describe('Auth (e2e, setGlobalPrefix 有り)', () => {
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [AppModule],
+      imports: [AppModule, DiscoveryModule],
     }).compile();
 
     app = moduleFixture.createNestApplication();
-    app.setGlobalPrefix('api');
+    app.setGlobalPrefix(API_GLOBAL_PREFIX);
     await app.init();
     server = app.getHttpServer() as Server;
   });
@@ -639,29 +646,72 @@ describe('Auth (e2e, setGlobalPrefix 有り)', () => {
 
   it('Google の認証開始はクロスサイトのトップレベル遷移でも通す', async () => {
     const response = await request(server)
-      .get('/api/auth/google')
+      .get(`/${API_GLOBAL_PREFIX}/auth/google`)
       .set('Sec-Fetch-Site', 'cross-site')
-      .set('Sec-Fetch-Mode', 'navigate');
+      .set('Sec-Fetch-Mode', 'navigate')
+      .set('Sec-Fetch-Dest', 'document')
+      .expect(302);
 
-    expect(response.status).not.toBe(403);
+    expect(response.headers.location).toContain('accounts.google.com');
   });
 
   it('Google のコールバックはクロスサイトのトップレベル遷移でも通す', async () => {
     // Google からのリダイレクトはこの形で届く。403 だとログインが成立しない。
-    // state は一致しないので 302(やり直し案内へのリダイレクト)になる
+    // state は一致しないので、やり直し案内へのリダイレクトになる
     const response = await request(server)
-      .get('/api/auth/google/callback?code=x&state=y')
+      .get(`/${API_GLOBAL_PREFIX}/auth/google/callback?code=x&state=y`)
       .set('Sec-Fetch-Site', 'cross-site')
-      .set('Sec-Fetch-Mode', 'navigate');
+      .set('Sec-Fetch-Mode', 'navigate')
+      .set('Sec-Fetch-Dest', 'document')
+      .expect(302);
 
-    expect(response.status).not.toBe(403);
+    expect(response.headers.location).toContain('/auth/callback');
+  });
+
+  it('OAuth 経路でも埋め込みからの呼び出しは拒否する', async () => {
+    await request(server)
+      .get(`/${API_GLOBAL_PREFIX}/auth/google/callback?code=x&state=y`)
+      .set('Sec-Fetch-Site', 'cross-site')
+      .set('Sec-Fetch-Mode', 'no-cors')
+      .set('Sec-Fetch-Dest', 'image')
+      .expect(403);
   });
 
   it('OAuth 以外のルートはプレフィックス付きでもクロスサイトを拒否する', async () => {
     await request(server)
-      .get('/api/auth/me')
+      .get(`/${API_GLOBAL_PREFIX}/auth/me`)
       .set('Sec-Fetch-Site', 'cross-site')
       .set('Sec-Fetch-Mode', 'navigate')
+      .set('Sec-Fetch-Dest', 'document')
       .expect(403);
+  });
+
+  it('クロスサイトを許可しているハンドラは Google 認証の 2 本だけ', () => {
+    // 免除が「1 箇所の正規表現」から「各所のデコレータ」に変わったため、
+    // 増えたことに気づく手段がここしかない。増やすときは意図的にこの一覧を
+    // 更新すること(そのハンドラ自身が CSRF を防げるかの確認とセットで)。
+    const controllers = app.get(DiscoveryService).getControllers();
+    const allowed = controllers.flatMap((wrapper) => {
+      const prototype: unknown = wrapper.instance
+        ? Object.getPrototypeOf(wrapper.instance)
+        : null;
+      if (prototype === null || typeof prototype !== 'object') {
+        return [];
+      }
+      const target = prototype as Record<string, unknown>;
+      return Object.getOwnPropertyNames(target)
+        .filter(
+          (name) =>
+            name !== 'constructor' &&
+            typeof target[name] === 'function' &&
+            Reflect.getMetadata(ALLOW_CROSS_SITE_KEY, target[name]) === true,
+        )
+        .map((name) => `${wrapper.metatype?.name ?? 'unknown'}.${name}`);
+    });
+
+    expect(allowed.sort()).toEqual([
+      'AuthController.googleAuth',
+      'AuthController.googleAuthRedirect',
+    ]);
   });
 });
