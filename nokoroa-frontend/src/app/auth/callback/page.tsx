@@ -25,15 +25,28 @@ export default function AuthCallbackPage() {
   /**
    * 着地処理(トースト + 遷移)を済ませたか。
    *
-   * このページは router.replace('/') の SPA 遷移が完了するまでマウントされたまま
-   * なので、その間に依存が変わると effect が再実行される。実際 user は
-   * AuthProvider がセッションを引き直すたびに新しいオブジェクトになるため、
-   * 中身が同じでも参照が変わって同じトーストが 2 個出る。
-   * 着地は 1 回きりの副作用なので、ref で明示的に一度だけに縛る。
+   * 観測された不具合: `next dev` で着地すると歓迎トーストが 2 個出る。
+   * Layout は isLoading の間 children を描画しないので、このページは
+   * 認証が確定してからマウントされる = effect の初回実行がそのまま着地になる。
+   * そこへ StrictMode(App Router は既定で有効)の setup→cleanup→setup が
+   * 重なり、development では着地が 2 回走る。
+   *
+   * ref は StrictMode の擬似 remount をまたいで保持されるため、2 回目の
+   * setup を弾ける。併せて、着地後に依存が変わる経路
+   * (/auth/me が 5xx で user 無しのまま着地し、後から名前が届く等)でも
+   * 二重に着地しない。
+   *
+   * 下の依存配列は exhaustive-deps を満たすための形式で、実行回数は
+   * このフラグが 1 回に固定する。
+   *
+   * ref はこのインスタンス限りなので、本物の remount(新しいドキュメントでの
+   * 再ログイン等)では初期化される。別の着地には別のトーストが要るのでそれでよい。
    */
   const hasLandedRef = useRef(false);
 
   useEffect(() => {
+    // isLoading 判定は現状 Layout のゲートに守られて到達しないが、
+    // このページ自身の契約として残す(ゲートの有無に依存させない)。
     if (isLoading || hasLandedRef.current) {
       return;
     }
