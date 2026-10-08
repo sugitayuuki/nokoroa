@@ -162,19 +162,27 @@ describe('FetchMetadataGuard', () => {
       ).toThrow(ForbiddenException);
     });
 
-    it('Sec-Fetch-Mode だけが埋め込みを示していても拒否する', () => {
-      // dest を送らないクライアントもあるため、mode 単独でも効く必要がある
-      expect(() =>
-        guard.canActivate(
-          contextFor(stub.oauthRoute, {
-            headers: {
-              'sec-fetch-site': 'cross-site',
-              'sec-fetch-mode': 'no-cors',
-            },
-          }),
-        ),
-      ).toThrow(ForbiddenException);
-    });
+    // dest 側だけで拒否できてしまうケースばかりだと mode 側の判定が
+    // 無保護になり、「冗長だから」と削る改変がテストで止まらない
+    it.each([
+      { desc: 'dest を送らない', dest: undefined },
+      { desc: 'dest は document', dest: 'document' },
+    ])(
+      'Sec-Fetch-Mode だけが埋め込みを示していても拒否する ($desc)',
+      ({ dest }) => {
+        expect(() =>
+          guard.canActivate(
+            contextFor(stub.oauthRoute, {
+              headers: {
+                'sec-fetch-site': 'cross-site',
+                'sec-fetch-mode': 'no-cors',
+                ...(dest === undefined ? {} : { 'sec-fetch-dest': dest }),
+              },
+            }),
+          ),
+        ).toThrow(ForbiddenException);
+      },
+    );
 
     it('Sec-Fetch-Mode / Dest が重複して連結されていても通す', () => {
       // 拒否側だけ連結耐性を入れると、正規のログインがここで 403 になる

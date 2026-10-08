@@ -135,7 +135,7 @@ localStorage ベースから httpOnly クッキーへの移行は完了してい
 | クッキーの名前・属性・発行・削除 | `nokoroa-backend/src/auth/auth-cookie.ts` |
 | JWT の取り出し（クッキー優先 → Bearer） | `nokoroa-backend/src/auth/jwt.strategy.ts` |
 | セッション確認 / ログアウト | `nokoroa-backend/src/auth/auth.controller.ts`（`GET /auth/me` / `POST /auth/logout`） |
-| クロスサイト拒否 | `nokoroa-backend/src/common/fetch-metadata.guard.ts` / `nokoroa-backend/src/common/allow-cross-site.decorator.ts` |
+| クロスサイト拒否 | `nokoroa-backend/src/common/fetch-metadata.guard.ts` / `nokoroa-backend/src/common/allow-cross-site-navigation.decorator.ts` |
 | OAuth の state 検証 | `nokoroa-backend/src/auth/oauth-state.store.ts` |
 | フロントの認証状態 | `nokoroa-frontend/src/providers/AuthProvider.tsx` |
 | 自社 API への fetch 設定 | `nokoroa-frontend/src/lib/apiConfig.ts`（`API_FETCH_OPTIONS`） |
