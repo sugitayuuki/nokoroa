@@ -1,10 +1,31 @@
+import asyncio
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.routers import chat, embeddings
+
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    # ローカル推論は初回だけモデルのロードに数十秒かかり、backend の
+    # タイムアウト(埋め込み 10 秒)に必ず掛かる。起動直後に裏で読み込ませて
+    # 「最初の 1 通だけ失敗する」のを避ける。
+    # await せず投げっぱなしにするのは、ヘルスチェックを待たせないため。
+    if settings.ai_provider == "ollama":
+        from app.deps import get_ai_service
+
+        warmup = asyncio.create_task(asyncio.to_thread(get_ai_service().warmup))
+        # 参照を保持しないとタスクが GC される可能性がある
+        app.state.warmup_task = warmup
+
+    yield
 
 
 def create_app() -> FastAPI:
@@ -22,6 +43,7 @@ def create_app() -> FastAPI:
         title="Nokoroa AI",
         description="AI-powered travel assistant for Nokoroa",
         version="0.1.0",
+        lifespan=_lifespan,
     )
 
     # backend からのサーバー間呼び出し専用サービスだが、ローカル開発でブラウザから

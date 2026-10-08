@@ -23,13 +23,16 @@ from app.services.prompt import (
 logger = logging.getLogger(__name__)
 
 # Ollama への HTTP タイムアウト(秒)。Gemini 経路と同じ考え方で、backend 側の
-# 上限に対応させる。ローカル推論は初回にモデルをメモリへ読み込むぶん遅いので、
-# 接続は即時・読み取りは長めという非対称な設定にする。
+# 上限に対応させる。
 OLLAMA_REQUEST_TIMEOUT_S = 15.0
 # backend の AI_STREAM_TIMEOUT_MS = 60s に対応。read はチャンク1つあたりの
 # 上限なので、流れ続ける限りここでは打ち切られない(全体の打ち切りは backend)。
 OLLAMA_STREAM_TIMEOUT_S = 60.0
 OLLAMA_CONNECT_TIMEOUT_S = 5.0
+# モデルをメモリへ読み込む初回だけは桁違いに遅い(実測: nomic-embed-text で
+# 約 31 秒、以降は 0.1 秒)。warmup 専用の上限を別に持つ。通常経路でこの長さを
+# 許すと、backend が諦めた後もスレッドを占有し続ける。
+OLLAMA_WARMUP_TIMEOUT_S = 180.0
 
 # nomic-embed-text は入力の用途を接頭辞で受け取る。これを付けないと
 # クエリと文書が別の空間に落ち、類似度検索の精度が目に見えて落ちる。
@@ -43,6 +46,23 @@ _NOMIC_TASK_PREFIX: dict[str, str] = {
     "CLUSTERING": "clustering: ",
 }
 
+# Gemini 経路の 2048 より小さくしている。ローカル推論は実測で毎秒 13 文字程度と
+# 遅く、backend のストリーム上限 60 秒に収める必要があるため
+# (実測: 2048 で 48 秒、1024 では上限到達で 53 秒)。
+# これは安全網であって主たる制御ではない。ここで切ると文が途中で切れるので、
+# 自然に収まるよう下の _FORMAT_REMINDER で字数も指示する。
+OLLAMA_NUM_PREDICT = 768
+
+# システムプロンプトにも同じ制約があるが、小型モデルは冒頭の指示を取りこぼし、
+# 直近の指示には従いやすい。末尾で再掲しないと ### 見出しが混ざり、
+# プレーンテキスト前提のフロントにそのまま表示される(実測で発生した)。
+_FORMAT_REMINDER = (
+    "\n\n【出力形式の厳守】マークダウンは一切使わないこと。"
+    "# や ## や ### による見出し、** による強調、``` は禁止。"
+    "見出しを付けたい場合は「■ 1日目」のように記号を使う。"
+    "回答は全体で500字以内にまとめること。"
+)
+
 
 class OllamaService:
     def __init__(
@@ -51,10 +71,15 @@ class OllamaService:
         chat_model: str,
         embedding_model: str,
         embedding_dim: int,
+        keep_alive: str = "30m",
     ) -> None:
         self.chat_model = chat_model
         self.embedding_model = embedding_model
         self.embedding_dim = embedding_dim
+        # Ollama は既定で 5 分アイドルするとモデルをメモリから降ろす。降ろされると
+        # 次のリクエストが再び約 31 秒かかり、backend の 10 秒で打ち切られて
+        # ベクトル検索が無言でキーワード検索へ退化する。常駐させて防ぐ。
+        self.keep_alive = keep_alive
         # httpx.Client はスレッドセーフ。chat_stream は threadpool から、
         # generate_suggestions は to_thread から呼ばれるため使い回してよい。
         self.client = httpx.Client(
@@ -64,6 +89,34 @@ class OllamaService:
                 connect=OLLAMA_CONNECT_TIMEOUT_S,
             ),
         )
+
+    def warmup(self) -> None:
+        """チャット用と埋め込み用のモデルをメモリへ先読みする。
+
+        初回ロードは約 31 秒かかる一方、backend は埋め込みを 10 秒・ストリームを
+        60 秒で打ち切る。先読みしないと「サービス起動後の最初の 1 通だけ必ず
+        失敗する」挙動になるため、起動時に裏で済ませておく。
+        空の入力を送るのが Ollama のモデル常駐のやり方。
+        """
+        for path, payload in (
+            ("/api/embed", {"model": self.embedding_model, "input": ""}),
+            ("/api/chat", {"model": self.chat_model, "messages": []}),
+        ):
+            try:
+                self.client.post(
+                    path,
+                    json={**payload, "keep_alive": self.keep_alive},
+                    timeout=httpx.Timeout(
+                        OLLAMA_WARMUP_TIMEOUT_S,
+                        connect=OLLAMA_CONNECT_TIMEOUT_S,
+                    ),
+                )
+            except Exception:
+                # 先読みは最適化でしかない。失敗しても通常経路は動くので
+                # 起動自体は続行する(Ollama 未起動でも API は上がる)。
+                logger.warning("ollama warmup failed for %s", payload["model"], exc_info=True)
+            else:
+                logger.info("ollama warmup done: %s", payload["model"])
 
     def _embedding_input(self, text: str, task_type: TaskType) -> str:
         if not self.embedding_model.startswith("nomic-embed-text"):
@@ -76,6 +129,7 @@ class OllamaService:
             json={
                 "model": self.embedding_model,
                 "input": self._embedding_input(text, task_type),
+                "keep_alive": self.keep_alive,
             },
         )
         response.raise_for_status()
@@ -106,10 +160,11 @@ class OllamaService:
                 "model": self.chat_model,
                 "messages": messages,
                 "stream": True,
+                "keep_alive": self.keep_alive,
                 "options": {
                     "temperature": 0.7,
                     "top_p": 0.95,
-                    "num_predict": 2048,
+                    "num_predict": OLLAMA_NUM_PREDICT,
                 },
             },
             # 生成が終わるまで接続を保つため、他経路より長い上限を使う
@@ -163,6 +218,7 @@ class OllamaService:
                     "model": self.chat_model,
                     "messages": [{"role": "user", "content": prompt}],
                     "stream": False,
+                    "keep_alive": self.keep_alive,
                     "options": {"temperature": temperature, "num_predict": num_predict},
                 },
             )
@@ -188,7 +244,14 @@ class OllamaService:
                 role = "assistant" if msg.role == "model" else "user"
                 messages.append({"role": role, "content": msg.content})
 
-        messages.append({"role": "user", "content": build_user_text(message, context_posts)})
+        # 形式の再掲はユーザー入力より後ろに置く。前に置くと投稿や質問の本文に
+        # 押し流されて効かない(末尾に置くからこそ効く)。
+        messages.append(
+            {
+                "role": "user",
+                "content": build_user_text(message, context_posts) + _FORMAT_REMINDER,
+            }
+        )
         return messages
 
 
@@ -198,4 +261,5 @@ def create_ollama_service() -> OllamaService:
         chat_model=settings.ollama_chat_model,
         embedding_model=settings.ollama_embedding_model,
         embedding_dim=settings.embedding_dim,
+        keep_alive=settings.ollama_keep_alive,
     )

@@ -175,3 +175,40 @@ def test_generate_suggestions_splits_on_pipe():
 
     service = _service(handler)
     assert asyncio.run(service.generate_suggestions("q", "a")) == ["A", "B", "C"]
+
+
+def test_format_reminder_is_appended_after_user_input():
+    """小型モデルは直近の指示に従いやすい。前に置くと本文に押し流される。"""
+    captured = {}
+
+    def handler(request):
+        captured.update(json.loads(request.content))
+        return _ndjson({"message": {"content": "ok"}, "done": True})
+
+    list(_service(handler).chat_stream(message="京都 2泊3日"))
+    user_content = captured["messages"][-1]["content"]
+    assert user_content.index("京都 2泊3日") < user_content.index("出力形式の厳守")
+
+
+def test_generation_is_bounded_to_fit_backend_stream_budget():
+    """backend は 60 秒でストリームを打ち切る。上限を Gemini と同じ 2048 にすると超える。"""
+    captured = {}
+
+    def handler(request):
+        captured.update(json.loads(request.content))
+        return _ndjson({"message": {"content": "ok"}, "done": True})
+
+    list(_service(handler).chat_stream(message="x"))
+    assert captured["options"]["num_predict"] == 768
+
+
+def test_requests_keep_the_model_resident():
+    """keep_alive を送らないと 5 分で降ろされ、次の 1 通が再ロードで打ち切られる。"""
+    captured = {}
+
+    def handler(request):
+        captured.update(json.loads(request.content))
+        return httpx.Response(200, json={"embeddings": [[0.1] * 768]})
+
+    _service(handler).embed("x")
+    assert captured["keep_alive"] == "30m"

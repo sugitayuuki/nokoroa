@@ -129,6 +129,11 @@ import os  # noqa: E402
 # 実 GEMINI_API_KEY / INTERNAL_AI_TOKEN が export されている環境では
 # テストが実キーを読み込んでしまい、pytest の失敗トレースバックや CI ログに
 # 実キーが出力される(実測で発生した)。テストは常にダミー値で走らせる。
+#
+# AI_PROVIDER も同じ理由で固定する。Settings は .env を読むため、ローカルで
+# AI_PROVIDER=ollama にしている開発者の環境では、この共通フィクスチャが
+# OllamaService を掴んでしまい Gemini 前提のテストが総崩れする(実測で発生した)。
+os.environ["AI_PROVIDER"] = "gemini"
 os.environ["GEMINI_API_KEY"] = "test-key"
 os.environ["INTERNAL_AI_TOKEN"] = INTERNAL_TOKEN
 os.environ["CORS_ORIGINS"] = "http://localhost:3000"

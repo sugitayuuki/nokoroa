@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     # nomic-embed-text の出力は 768 次元で、embedding_dim とそのまま一致する。
     # 別モデルへ変えると次元が変わり、embeddings ルーターの検証で弾かれる。
     ollama_embedding_model: str = "nomic-embed-text"
+    # Ollama がモデルをメモリに保持する時間。既定の 5 分だと、少し放置した後の
+    # 1 通目が再ロード(実測 約31秒)で backend のタイムアウトに掛かる。
+    ollama_keep_alive: str = "30m"
 
     @model_validator(mode="after")
     def _require_gemini_key(self) -> "Settings":
