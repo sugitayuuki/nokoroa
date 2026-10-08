@@ -198,6 +198,8 @@ module "secrets" {
   google_client_id     = var.google_client_id
   google_client_secret = var.google_client_secret
   gemini_api_key       = var.gemini_api_key
+  anthropic_api_key    = var.anthropic_api_key
+  openai_api_key       = var.openai_api_key
 
   depends_on = [module.rds]
 }
@@ -263,9 +265,17 @@ module "ecs" {
   jwt_secret_arn              = module.secrets.jwt_secret_arn
   google_client_id_secret_arn = module.secrets.google_client_id_arn
   google_client_secret_arn    = module.secrets.google_client_secret_arn
-  gemini_api_key_secret_arn   = module.secrets.gemini_api_key_arn
-  internal_api_key_secret_arn = module.secrets.internal_api_key_arn
-  secrets_read_policy_arn     = module.secrets.secrets_read_policy_arn
+  # 作成しなかった鍵の output は null。null のまま渡すと「既定値を使う」という
+  # 暗黙の解決に頼ることになるので、ここで空文字へ倒して意図を明示する。
+  gemini_api_key_secret_arn    = coalesce(module.secrets.gemini_api_key_arn, "")
+  anthropic_api_key_secret_arn = coalesce(module.secrets.anthropic_api_key_arn, "")
+  openai_api_key_secret_arn    = coalesce(module.secrets.openai_api_key_arn, "")
+  internal_api_key_secret_arn  = module.secrets.internal_api_key_arn
+
+  # AI プロバイダの選択
+  chat_provider           = var.chat_provider
+  embedding_provider      = var.embedding_provider
+  secrets_read_policy_arn = module.secrets.secrets_read_policy_arn
 
   # ALB
   backend_target_group_arn  = module.alb.backend_target_group_arn

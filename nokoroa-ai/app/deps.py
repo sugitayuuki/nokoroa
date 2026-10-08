@@ -20,9 +20,9 @@ def verify_internal_token(
 ) -> None:
     """backendからの内部呼び出しであることを検証する。
 
-    ollama 運用では外部課金は発生しないが、プロンプトを自由に流し込める
-    内部APIであることは変わらないため、プロバイダによらず必須にする
-    (片方だけ保護すると、保護していない側から悪用できる)。
+    このサービスは外部AIへの従量課金リクエストを発行するため、
+    chat / embeddings の両ルーターで必須にする
+    (片方だけ保護すると、保護していない側から課金を増幅できる)。
     """
     expected = settings.internal_ai_token
     if not expected:
@@ -52,11 +52,6 @@ def get_chat_service() -> ChatProvider:
 
     ルーターごとに生成すると HTTP 接続プールが分裂する。
     """
-    if settings.chat_provider == "ollama":
-        from app.services.ollama_service import create_ollama_service
-
-        return create_ollama_service()
-
     if settings.chat_provider == "claude":
         from app.services.claude_service import create_claude_service
 
@@ -77,11 +72,6 @@ def get_embedding_service() -> EmbeddingProvider:
         service = get_chat_service()
         if isinstance(service, EmbeddingProvider):
             return service
-
-    if settings.embedding_provider == "ollama":
-        from app.services.ollama_service import create_ollama_service
-
-        return create_ollama_service()
 
     if settings.embedding_provider == "openai":
         from app.services.openai_embedding_service import create_openai_embedding_service

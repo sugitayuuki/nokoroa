@@ -3,8 +3,8 @@ from typing import Literal
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-ChatProviderName = Literal["gemini", "ollama", "claude"]
-EmbeddingProviderName = Literal["gemini", "ollama", "openai"]
+ChatProviderName = Literal["gemini", "claude"]
+EmbeddingProviderName = Literal["gemini", "openai"]
 
 
 class Settings(BaseSettings):
@@ -13,8 +13,7 @@ class Settings(BaseSettings):
     # チャットと埋め込みを別々に選ぶ。Claude には embeddings API が無く、
     # 1 つの設定では「チャットは Claude・検索は別」という構成を表せないため。
     #   gemini … Google検索グラウンディングが使える唯一の経路
-    #   ollama … ローカル推論で課金ゼロ。検索グラウンディングは使えない
-    #   claude … 外部APIへ従量課金。チャットのみ
+    #   claude … 検索グラウンディングは使えないが、指示追従と日本語の質で優る
     chat_provider: ChatProviderName = "gemini"
     #   openai … text-embedding-3-small。dimensions で 768 に合わせられる
     embedding_provider: EmbeddingProviderName = "gemini"
@@ -42,17 +41,6 @@ class Settings(BaseSettings):
     # dimensions 指定に対応したモデルであること。未対応のモデルだと
     # 1536 次元が返り、embeddings ルーターの次元チェックで弾かれる。
     openai_embedding_model: str = "text-embedding-3-small"
-
-    ollama_base_url: str = "http://localhost:11434"
-    # 既定を 7B にしているのは速度のため。backend は 60 秒でストリームを打ち切るので、
-    # 大きいモデルほど初回ロードと生成で上限に触れやすい。
-    ollama_chat_model: str = "qwen2.5:7b"
-    # nomic-embed-text の出力は 768 次元で、embedding_dim とそのまま一致する。
-    # 別モデルへ変えると次元が変わり、embeddings ルーターの検証で弾かれる。
-    ollama_embedding_model: str = "nomic-embed-text"
-    # Ollama がモデルをメモリに保持する時間。既定の 5 分だと、少し放置した後の
-    # 1 通目が再ロード(実測 約31秒)で backend のタイムアウトに掛かる。
-    ollama_keep_alive: str = "30m"
 
     @model_validator(mode="after")
     def _require_keys_for_selected_providers(self) -> "Settings":

@@ -95,8 +95,9 @@ resource "aws_secretsmanager_secret_version" "google_client_secret" {
   secret_string = var.google_client_secret
 }
 
-# Gemini API Key
+# AI プロバイダの鍵。使うものだけ作る (variables.tf の注意書きを参照)。
 resource "aws_secretsmanager_secret" "gemini_api_key" {
+  count       = var.gemini_api_key != "" ? 1 : 0
   name        = "${var.project_name}-${var.environment}-gemini-api-key"
   description = "Google Gemini API key used by AI sidecar"
 
@@ -106,8 +107,41 @@ resource "aws_secretsmanager_secret" "gemini_api_key" {
 }
 
 resource "aws_secretsmanager_secret_version" "gemini_api_key" {
-  secret_id     = aws_secretsmanager_secret.gemini_api_key.id
+  count         = var.gemini_api_key != "" ? 1 : 0
+  secret_id     = aws_secretsmanager_secret.gemini_api_key[0].id
   secret_string = var.gemini_api_key
+}
+
+resource "aws_secretsmanager_secret" "anthropic_api_key" {
+  count       = var.anthropic_api_key != "" ? 1 : 0
+  name        = "${var.project_name}-${var.environment}-anthropic-api-key"
+  description = "Anthropic API key used by AI sidecar"
+
+  tags = {
+    Name = "${var.project_name}-${var.environment}-anthropic-api-key"
+  }
+}
+
+resource "aws_secretsmanager_secret_version" "anthropic_api_key" {
+  count         = var.anthropic_api_key != "" ? 1 : 0
+  secret_id     = aws_secretsmanager_secret.anthropic_api_key[0].id
+  secret_string = var.anthropic_api_key
+}
+
+resource "aws_secretsmanager_secret" "openai_api_key" {
+  count       = var.openai_api_key != "" ? 1 : 0
+  name        = "${var.project_name}-${var.environment}-openai-api-key"
+  description = "OpenAI API key used by AI sidecar for embeddings"
+
+  tags = {
+    Name = "${var.project_name}-${var.environment}-openai-api-key"
+  }
+}
+
+resource "aws_secretsmanager_secret_version" "openai_api_key" {
+  count         = var.openai_api_key != "" ? 1 : 0
+  secret_id     = aws_secretsmanager_secret.openai_api_key[0].id
+  secret_string = var.openai_api_key
 }
 
 # Internal API Key (Backend <-> AI sidecar shared secret)
@@ -141,15 +175,23 @@ resource "aws_iam_policy" "secrets_read" {
         Action = [
           "secretsmanager:GetSecretValue"
         ]
-        Resource = [
-          aws_secretsmanager_secret.db_password.arn,
-          aws_secretsmanager_secret.jwt_secret.arn,
-          aws_secretsmanager_secret.database_url.arn,
-          aws_secretsmanager_secret.google_client_id.arn,
-          aws_secretsmanager_secret.google_client_secret.arn,
-          aws_secretsmanager_secret.gemini_api_key.arn,
-          aws_secretsmanager_secret.internal_api_key.arn
-        ]
+        Resource = concat(
+          [
+            aws_secretsmanager_secret.db_password.arn,
+            aws_secretsmanager_secret.jwt_secret.arn,
+            aws_secretsmanager_secret.database_url.arn,
+            aws_secretsmanager_secret.google_client_id.arn,
+            aws_secretsmanager_secret.google_client_secret.arn,
+            aws_secretsmanager_secret.internal_api_key.arn,
+          ],
+          # 作成しなかった鍵は ARN が無いので compact で落とす。
+          # null を混ぜたままにすると IAM ポリシーの作成自体が失敗する。
+          compact([
+            one(aws_secretsmanager_secret.gemini_api_key[*].arn),
+            one(aws_secretsmanager_secret.anthropic_api_key[*].arn),
+            one(aws_secretsmanager_secret.openai_api_key[*].arn),
+          ])
+        )
       }
     ]
   })

@@ -1,6 +1,6 @@
 """プロバイダ非依存のプロンプト資産。
 
-Gemini / Ollama の双方がここを参照する。特に `sanitize_context` と
+Gemini / Claude の双方がここを参照する。特に `sanitize_context` と
 `build_user_text` はプロンプト注入に対する唯一の防壁なので、プロバイダごとに
 複製しない。複製すると片方だけ修正が漏れ、その経路から境界を破られる。
 """

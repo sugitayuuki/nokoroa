@@ -4,8 +4,8 @@
 別プロバイダ (settings.embedding_provider) が担当する。
 Google 検索グラウンディングも使えないため、システムプロンプトは検索なし版。
 
-SDK ではなく httpx を直接使うのは、Ollama 実装と経路を揃えるためと、
-依存を 1 つ増やさずに済むため。Messages API のストリーム形式は安定している。
+SDK ではなく httpx を直接使うのは、依存を 1 つ増やさずに済むため。
+Messages API のストリーム形式は安定している。
 """
 
 import asyncio
@@ -37,9 +37,7 @@ CLAUDE_CONNECT_TIMEOUT_S = 5.0
 CLAUDE_MAX_TOKENS = 2048
 
 
-def _normalize_messages(
-    history: list[Message] | None, user_text: str
-) -> list[dict[str, str]]:
+def _normalize_messages(history: list[Message] | None, user_text: str) -> list[dict[str, str]]:
     """Messages API が受け付ける形へ整える。
 
     API は「user で始まり、user と assistant が交互」であることを要求する。

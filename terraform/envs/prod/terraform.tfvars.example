@@ -12,4 +12,18 @@ google_client_id     = "YOUR_GOOGLE_CLIENT_ID"
 google_client_secret = "YOUR_GOOGLE_CLIENT_SECRET"
 
 # Gemini API key (https://aistudio.google.com/apikey)
-gemini_api_key = "YOUR_GEMINI_API_KEY"
+# --- AI プロバイダ ---
+# chat_provider:      gemini | claude
+# embedding_provider: gemini | openai
+# 使うプロバイダの鍵だけ設定する。未使用の鍵は空のままでよい。
+#
+# ★ embedding_provider を変えたら、デプロイ後に必ず全投稿の再埋め込みが必要。
+#   プロバイダごとにベクトル空間が異なり、新旧が混在すると類似度検索が
+#   意味を成さなくなる:
+#     cd nokoroa-backend && npm run backfill:embeddings -- --all
+chat_provider      = "claude"
+embedding_provider = "openai"
+
+gemini_api_key    = ""
+anthropic_api_key = "YOUR_ANTHROPIC_API_KEY"
+openai_api_key    = "YOUR_OPENAI_API_KEY"

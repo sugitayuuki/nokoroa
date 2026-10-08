@@ -38,7 +38,9 @@ Instagram に上げた写真は日常の投稿に埋もれてしまい、カメ�
 
 「あの時の、海がきれいだったところ」——タグにも本文にも書いていない曖昧な言葉でも探せるように、RAG を実装しました。
 
-投稿本文を Gemini で埋め込みベクトルに変換して pgvector に保存します。質問に近い投稿をベクトル検索で取り出し、文脈として Gemini に渡す構成です。返答は SSE でストリーミングされるため、待ち時間が「無言の数秒」になりません。
+投稿本文を埋め込みベクトルに変換して pgvector に保存します。質問に近い投稿をベクトル検索で取り出し、文脈として LLM に渡す構成です。返答は SSE でストリーミングされるため、待ち時間が「無言の数秒」になりません。
+
+チャットと埋め込みはプロバイダを個別に選べます（`CHAT_PROVIDER` / `EMBEDDING_PROVIDER`）。Claude には埋め込み API が無いため、1 つの設定にまとめず分けています。Google 検索グラウンディングで最新情報を補えるのは Gemini 経路だけで、Claude 経路は学習時点の情報になります。
 
 ![Image](https://github.com/user-attachments/assets/caa08bd7-da73-4388-b8d2-4e2108cda0a7)
 
@@ -107,7 +109,9 @@ Fargate はサーバーの面倒を見なくてよい分、アプリケーショ
 
 - Docker / Docker Compose
 - Node.js 22 以上（フロントエンドをホストで動かす場合）
-- Gemini API キー — **AIチャットを使う場合のみ**。無くても投稿・地図・検索はふつうに動きます
+- LLM の API キー — **AIチャットを使う場合のみ**。無くても投稿・地図・検索はふつうに動きます
+  - `CHAT_PROVIDER=gemini` なら `GEMINI_API_KEY`、`claude` なら `ANTHROPIC_API_KEY`
+  - `EMBEDDING_PROVIDER=gemini` なら `GEMINI_API_KEY`、`openai` なら `OPENAI_API_KEY`
 
 ### 手順
 
@@ -122,7 +126,12 @@ cd nokoroa-backend
 cp .env.example .env
 export JWT_SECRET=$(openssl rand -base64 32)   # 32文字未満だと起動しません
 export INTERNAL_AI_TOKEN=$(openssl rand -hex 16)
-export GEMINI_API_KEY=your-gemini-api-key      # AIチャットを使う場合
+# AIチャットを使う場合。選んだプロバイダの鍵だけでよい
+export CHAT_PROVIDER=gemini                    # gemini | claude
+export EMBEDDING_PROVIDER=gemini               # gemini | openai
+export GEMINI_API_KEY=your-gemini-api-key
+# export ANTHROPIC_API_KEY=...                 # CHAT_PROVIDER=claude のとき
+# export OPENAI_API_KEY=...                    # EMBEDDING_PROVIDER=openai のとき
 
 # 2. 起動（PostgreSQL は pgvector 同梱イメージを使います）
 docker compose up -d
@@ -158,11 +167,12 @@ npm run dev
 
 実際に自分が踏んだ・踏みかけたものです。同じ思いをする人が出ないように残しておきます！
 
-**1. 埋め込みモデルを変えたら、必ず全件やり直す**
+**1. 埋め込みモデル / プロバイダを変えたら、必ず全件やり直す**
 
 > [!WARNING]
 > モデルが違うとベクトル空間そのものが違うので、新旧が混ざると**検索結果が静かに壊れます**。
 > エラーは出ません。ただ「なんか検索がバカになった」という形で表に出ます。
+> `EMBEDDING_PROVIDER` の切り替え（Gemini ⇄ OpenAI）も同じです。
 
 ```bash
 cd nokoroa-backend && npm run backfill:embeddings -- --all
@@ -192,7 +202,7 @@ npm run purge:private-embeddings
 | **バックエンド** | Node.js 22 / NestJS 11 / TypeScript 5 / Prisma 6 / PostgreSQL |
 | **フロントエンド** | TypeScript 5 / React 19 / Next.js 15 (App Router) / Material-UI v7 |
 | **主要パッケージ** | SWR / React Hook Form / Zod / react-toastify / date-fns / Framer Motion |
-| **AI / RAG** | Python 3.12 / FastAPI / Google Gemini（チャット + 埋め込み）/ pgvector (HNSW) |
+| **AI / RAG** | Python 3.12 / FastAPI / Gemini・Claude（チャット）/ Gemini・OpenAI（埋め込み）/ pgvector (HNSW) |
 | **インフラ** | AWS（Route53 / ACM / ALB / VPC / ECR / ECS Fargate / RDS PostgreSQL / S3 / CloudWatch） |
 | **IaC / 環境構築** | Terraform / Docker / Docker Compose |
 | **CI / CD** | GitHub Actions |
@@ -329,10 +339,10 @@ nokoroa/
 │   ├── Dockerfile
 │   └── docker-compose.yml
 │
-├── nokoroa-ai/                  # AIサービス (FastAPI + Gemini)
+├── nokoroa-ai/                  # AIサービス (FastAPI / プロバイダ切替)
 │   ├── app/
 │   │   ├── routers/             # chat / embeddings エンドポイント
-│   │   ├── services/            # Gemini クライアント
+│   │   ├── services/            # 各プロバイダのクライアント
 │   │   ├── security.py          # 内部呼び出しのトークン検証
 │   │   └── config.py            # モデルID等の設定
 │   └── Dockerfile
