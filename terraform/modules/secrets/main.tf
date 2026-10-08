@@ -36,6 +36,18 @@ resource "aws_secretsmanager_secret" "jwt_secret" {
   tags = {
     Name = "${var.project_name}-${var.environment}-jwt-secret"
   }
+
+  # このモジュールで prevent_destroy を付けるのはこの 1 件だけ。plan は 1 件でも当たれば
+  # 全体が reject されるので、モジュール内に 1 件あれば destroy は止まる。この 1 件を
+  # 選んだのは、値が random_password 由来で state にしか存在しないため。
+  # 7 件すべてに付けない理由と、作り直しを前提とする環境での扱いは
+  # terraform/README.md「運用上の落とし穴」を参照（lifecycle は変数で解除できないため、
+  # ここを編集すると他の環境のガードも同時に外れる）。
+  #
+  # recovery_window_in_days = 0 は採らない（即時完全削除になり誤 destroy から復旧できない）。
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_secretsmanager_secret_version" "jwt_secret" {

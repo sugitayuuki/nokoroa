@@ -6,6 +6,16 @@ resource "aws_s3_bucket" "uploads" {
     Name        = "${var.project_name}-${var.environment}-uploads"
     Environment = var.environment
   }
+
+  # 投稿画像の実データが入っており、消すと復旧できない。plan は 1 件でも当たれば全体が
+  # reject されるので、ここ 1 件でこのモジュールごとの destroy が止まる。
+  # 作り直しを前提とする環境での扱いは terraform/README.md「運用上の落とし穴」を参照。
+  #
+  # terraform_state バケットには付けない。count を持つため、count が 1 → 0 になる
+  # （= create_terraform_state_bucket を false に倒す）経路が解除不能な plan エラーになる。
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 # S3 Bucket Versioning
