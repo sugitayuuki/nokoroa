@@ -5,14 +5,10 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import { Request } from 'express';
 
-/**
- * クロスサイトから到達してよい唯一の経路。
- * Google の認証画面からのリダイレクトはクロスサイトのトップレベル遷移で届くため、
- * ここだけは通す必要がある（代わりに state で CSRF を検証している）。
- */
-const CROSS_SITE_ALLOWED_PATH_PATTERN = /^\/auth\/google(?:\/callback)?$/;
+import { ALLOW_CROSS_SITE_KEY } from './allow-cross-site.decorator';
 
 /** 副作用を持つメソッド。Origin の検査を強制する対象。 */
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -52,19 +48,24 @@ const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 export class FetchMetadataGuard implements CanActivate {
   private readonly logger = new Logger(FetchMetadataGuard.name);
 
+  constructor(private readonly reflector: Reflector) {}
+
   canActivate(context: ExecutionContext): boolean {
     const req = context.switchToHttp().getRequest<Request>();
-    const path = req.path;
 
-    // Google 認証の往復はクロスサイトで届くため、ここだけは通す。
-    // ただしトップレベル遷移に限る: 画像等の埋め込み（no-cors）で
-    // コールバックを叩かせて進行中ログインの state を壊す経路を塞ぐ。
-    if (CROSS_SITE_ALLOWED_PATH_PATTERN.test(path)) {
+    // Google 認証の往復はクロスサイトで届くため、@AllowCrossSite を付けた
+    // ルートだけは通す。ただしトップレベル遷移に限る: 画像等の埋め込み
+    // （no-cors）でコールバックを叩かせて進行中ログインの state を壊す経路を塞ぐ。
+    // 印はハンドラ単位でのみ読む。コントローラ単位で効かせられると、
+    // 後から足したルートが無言で検査の外に出る。
+    if (
+      this.reflector.get<boolean>(ALLOW_CROSS_SITE_KEY, context.getHandler())
+    ) {
       const mode = req.header('sec-fetch-mode');
       if (!mode || mode === 'navigate') {
         return true;
       }
-      this.reject(req, `oauth path with sec-fetch-mode=${mode}`);
+      this.reject(req, `cross-site allowed route with sec-fetch-mode=${mode}`);
     }
 
     const origin = req.header('origin');

@@ -612,3 +612,56 @@ describe('Auth (e2e)', () => {
     });
   });
 });
+
+/**
+ * 他の E2E はプレフィックス無しでアプリを組むため、「本番だけ /api が付く」ことに
+ * 起因する退行を検出できない（実際に Google ログインが 403 になった）。
+ * ここだけ main.ts と同じ setGlobalPrefix を掛けて、その差を塞ぐ。
+ */
+describe('Auth (e2e, setGlobalPrefix 有り)', () => {
+  let app: INestApplication;
+  let server: Server;
+
+  beforeAll(async () => {
+    const moduleFixture: TestingModule = await Test.createTestingModule({
+      imports: [AppModule],
+    }).compile();
+
+    app = moduleFixture.createNestApplication();
+    app.setGlobalPrefix('api');
+    await app.init();
+    server = app.getHttpServer() as Server;
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  it('Google の認証開始はクロスサイトのトップレベル遷移でも通す', async () => {
+    const response = await request(server)
+      .get('/api/auth/google')
+      .set('Sec-Fetch-Site', 'cross-site')
+      .set('Sec-Fetch-Mode', 'navigate');
+
+    expect(response.status).not.toBe(403);
+  });
+
+  it('Google のコールバックはクロスサイトのトップレベル遷移でも通す', async () => {
+    // Google からのリダイレクトはこの形で届く。403 だとログインが成立しない。
+    // state は一致しないので 302(やり直し案内へのリダイレクト)になる
+    const response = await request(server)
+      .get('/api/auth/google/callback?code=x&state=y')
+      .set('Sec-Fetch-Site', 'cross-site')
+      .set('Sec-Fetch-Mode', 'navigate');
+
+    expect(response.status).not.toBe(403);
+  });
+
+  it('OAuth 以外のルートはプレフィックス付きでもクロスサイトを拒否する', async () => {
+    await request(server)
+      .get('/api/auth/me')
+      .set('Sec-Fetch-Site', 'cross-site')
+      .set('Sec-Fetch-Mode', 'navigate')
+      .expect(403);
+  });
+});

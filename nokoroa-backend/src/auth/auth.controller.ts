@@ -28,6 +28,7 @@ import {
 } from './auth-cookie';
 import { AuthService } from './auth.service';
 import { GoogleAuthFailureFilter } from './google-auth-failure.filter';
+import { AllowCrossSite } from '../common/allow-cross-site.decorator';
 import { frontendBaseUrl } from '../common/frontend-url';
 import { LoginDto } from './dto/login.dto';
 import { GoogleAuthGuard } from './guards/google-auth.guard';
@@ -110,6 +111,9 @@ export class AuthController {
 
   @Get('google')
   @UseGuards(GoogleAuthGuard)
+  // 「Google でログイン」は攻撃者サイトのリンクからも踏まれうるが、認証情報を
+  // 発行するのはコールバック側で、こちらは同意画面へ送るだけ。
+  @AllowCrossSite()
   @ApiOperation({
     summary: 'Google認証開始',
     description: 'Googleの認証ページにリダイレクトします',
@@ -121,6 +125,10 @@ export class AuthController {
 
   @Get('google/callback')
   @UseGuards(AuthGuard('google'))
+  // Google からのリダイレクトはクロスサイトのトップレベル遷移で届く。
+  // ここを塞ぐと正規のログインが必ず失敗するため通し、CSRF は OAuth の
+  // state 検証（OAuthStateCookieStore）で閉じる。
+  @AllowCrossSite()
   // 認証に失敗しても API オリジン上の生 JSON で行き止まりにしない。
   // state 切れ・複数タブ・未確認メールはいずれもユーザーがやり直せる失敗なので、
   // フロントへ戻して案内させる（詳細は GoogleAuthFailureFilter）。
