@@ -51,15 +51,16 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('AuthCallbackPage', () => {
-  it('セッション復元中は何もしない', () => {
+  // Layout が isLoading 中は children を描画しないため実経路では到達しない。
+  // ページ自身の契約として固定し、ゲートの有無に依存させない。
+  it('セッション復元中は何もしない(防御的・実経路では到達しない)', () => {
     render(<AuthCallbackPage />);
 
     expect(toastCalls).toEqual([]);
     expect(replace).not.toHaveBeenCalled();
   });
 
-  // 実際に観測された不具合。App Router は StrictMode が既定で有効なので、
-  // dev では mount effect が setup→cleanup→setup で 2 回走る。
+  // 実際に観測された不具合。
   it('StrictMode で effect が二重に走っても歓迎トーストは 1 回だけ出す', () => {
     authState = {
       isLoading: false,
@@ -92,16 +93,23 @@ describe('AuthCallbackPage', () => {
     expect(replace).toHaveBeenCalledWith('/');
   });
 
-  // /auth/me が 5xx のときは isAuthenticated だけ立って user は入らない。
-  // 着地後に名前が届いても、着地をやり直さない(= トーストを積み増さない)。
-  it('着地後に user が届いても着地は 1 回で確定する', () => {
+  // もう一つの発生源。StrictMode は AuthProvider の復元 effect も二重に
+  // 走らせるので /auth/me が 2 本飛び、後から解決した方が setUser に別の
+  // オブジェクトを渡す。着地後に user が変わっても着地はやり直さない。
+  it('着地後に user が差し替わっても着地は 1 回で確定する', () => {
     authState = { isLoading: false, isAuthenticated: true };
     const { rerender } = render(<AuthCallbackPage />);
 
+    // undefined → 名前付き
+    const profile = { id: 1, name: '裕貴 杉田', email: 'me@example.com' };
+    authState = { isLoading: false, isAuthenticated: true, user: profile };
+    rerender(<AuthCallbackPage />);
+
+    // 中身は同じで参照だけ新しい(2 本目の /auth/me が返した別オブジェクト)
     authState = {
       isLoading: false,
       isAuthenticated: true,
-      user: { id: 1, name: '裕貴 杉田', email: 'me@example.com' },
+      user: { ...profile },
     };
     rerender(<AuthCallbackPage />);
 

@@ -26,18 +26,19 @@ export default function AuthCallbackPage() {
    * 着地処理(トースト + 遷移)を済ませたか。
    *
    * 観測された不具合: `next dev` で着地すると歓迎トーストが 2 個出る。
-   * Layout は isLoading の間 children を描画しないので、このページは
-   * 認証が確定してからマウントされる = effect の初回実行がそのまま着地になる。
-   * そこへ StrictMode(App Router は既定で有効)の setup→cleanup→setup が
-   * 重なり、development では着地が 2 回走る。
+   * dev は StrictMode が既定で有効(App Router)なので mount effect が
+   * setup→cleanup→setup で 2 回走る。Layout は isLoading の間 children を
+   * 描画せず、このページは認証確定後にマウントされるため、その 2 回が
+   * そのまま 2 回の着地になる。
    *
-   * ref は StrictMode の擬似 remount をまたいで保持されるため、2 回目の
-   * setup を弾ける。併せて、着地後に依存が変わる経路
-   * (/auth/me が 5xx で user 無しのまま着地し、後から名前が届く等)でも
-   * 二重に着地しない。
+   * 発生源はもう一つある。StrictMode は AuthProvider の復元 effect も
+   * 二重に走らせるので `/auth/me` が 2 本飛び、後から解決した方が setUser に
+   * 新しいオブジェクトを渡す。これで下の user 依存が変わり、着地がもう一度
+   * 走る(ガード無しだと実測で計 3 回)。
    *
-   * 下の依存配列は exhaustive-deps を満たすための形式で、実行回数は
-   * このフラグが 1 回に固定する。
+   * ref は StrictMode の擬似 remount をまたいで保持されるので両方を塞げる。
+   * 依存配列は exhaustive-deps を満たすための形で、実行回数はこのフラグが
+   * 1 回に固定する。
    *
    * ref はこのインスタンス限りなので、本物の remount(新しいドキュメントでの
    * 再ログイン等)では初期化される。別の着地には別のトーストが要るのでそれでよい。
