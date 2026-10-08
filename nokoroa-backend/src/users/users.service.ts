@@ -7,6 +7,10 @@ import {
 import { Prisma } from '@prisma/client';
 import { hash, compare } from 'bcrypt';
 
+import {
+  formatPostWithFavoritesCount,
+  postWithFavoritesCountInclude,
+} from '../posts/post-format';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -44,6 +48,13 @@ export class UsersService {
         posts: {
           // 非公開投稿は本人にのみ返す
           ...(isOwner ? {} : { where: { isPublic: true } }),
+          // include を付けないと生の Post 行が返る。Post には tags スカラも
+          // location 文字列も存在しない(postTags リレーションと locationId のみ)
+          // ため、フロントの UserPost 型が必須宣言している tags / location /
+          // favoritesCount が常に欠落し、プロフィールと /my-posts のカードから
+          // タグ・場所が消えブックマーク数が 0 固定になる。
+          // 同じ投稿がホーム feed では formatPost 経由で正しく出るので画面間で矛盾する。
+          include: postWithFavoritesCountInclude,
           orderBy: { createdAt: 'desc' },
           take: 10,
         },
@@ -51,7 +62,11 @@ export class UsersService {
           select: {
             followers: true,
             following: true,
-            posts: true,
+            // posts と同じ可視性条件を必ず付ける。where を付けないと
+            // 一覧には出ない非公開投稿まで数に含まれ、
+            // 「posts は 2 件なのに postsCount は 7」から
+            // 非公開投稿の件数が第三者に割り出せてしまう(UI 上も不整合)。
+            posts: isOwner ? true : { where: { isPublic: true } },
           },
         },
       },
@@ -83,7 +98,8 @@ export class UsersService {
       avatar: user.avatar,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
-      posts: user.posts,
+      // 一覧系と同じ整形を通す(tags / location / favoritesCount を含む形)
+      posts: user.posts.map(formatPostWithFavoritesCount),
       _count: user._count,
       // メールアドレスは本人にのみ返す
       ...(isOwner ? { email: user.email } : {}),

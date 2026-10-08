@@ -15,6 +15,7 @@ import {
 import Link from 'next/link';
 import { useState } from 'react';
 
+import { PageSpinner } from '@/components/common/PageSpinner';
 import { useChangePassword } from '@/hooks/useChangePassword';
 import { useRequireAuth } from '@/hooks/useRequireAuth';
 
@@ -31,18 +32,7 @@ export default function ChangePasswordPage() {
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
   if (!isReady) {
-    return isAuthLoading ? (
-      <Box
-        sx={{
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          minHeight: '50vh',
-        }}
-      >
-        <CircularProgress />
-      </Box>
-    ) : null;
+    return isAuthLoading ? <PageSpinner /> : null;
   }
 
   const validateForm = () => {

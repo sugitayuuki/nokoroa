@@ -17,24 +17,18 @@ export const API_CONFIG = {
     postTags: '/posts/tags',
 
     // ユーザー関連
-    users: '/users',
     userById: (id: string) => `/users/${id}`,
     userProfile: '/users/profile',
     changePassword: '/users/change-password',
     uploadAvatar: '/users/upload-avatar',
-    follow: (userId: string) => `/users/${userId}/follow`,
-    unfollow: (userId: string) => `/users/${userId}/unfollow`,
-    followers: (userId: string) => `/users/${userId}/followers`,
-    following: (userId: string) => `/users/${userId}/following`,
-
-    // ブックマーク関連
-    bookmarks: '/bookmarks',
-    bookmarkPost: (postId: string) => `/bookmarks/${postId}`,
 
     // 検索関連
     search: '/posts/search',
     semanticSearch: '/posts/search/semantic',
     searchByLocation: '/posts/search-by-location',
+    // この 2 つはバックエンドに未実装。useSearchSuggestions が 404 を受けて
+    // ローカル生成へフォールバックする前提で呼んでいる(意図的な挙動)。
+    // 実装するまで入力ごとに 404 が 1 往復する点は認識しておくこと。
     keywordSuggestions: '/posts/suggestions/keywords',
     locationSuggestions: '/posts/suggestions/locations',
 
@@ -42,15 +36,13 @@ export const API_CONFIG = {
     chatStream: '/chat/stream',
     chatSuggestions: '/chat/suggestions',
 
-    // いいね関連
-    favoritePost: (postId: string) => `/posts/${postId}/favorite`,
+    // ブックマーク関連 (バックエンドのルートは /favorites)
     favorites: '/favorites',
     favoriteById: (postId: string) => `/favorites/${postId}`,
     checkFavorite: (postId: string) => `/favorites/check/${postId}`,
     favoriteStats: (postId: string) => `/favorites/stats/${postId}`,
 
     // フォロー関連
-    follows: '/follows',
     followUser: (userId: string) => `/follows/${userId}`,
     checkFollow: (userId: string) => `/follows/check/${userId}`,
     userFollowers: (userId: string) => `/follows/${userId}/followers`,

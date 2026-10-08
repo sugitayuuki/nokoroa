@@ -2,8 +2,9 @@
 
 import SearchIcon from '@mui/icons-material/Search';
 import { Box, CircularProgress, Container, Typography } from '@mui/material';
+import type { ReadonlyURLSearchParams } from 'next/navigation';
 import { useSearchParams } from 'next/navigation';
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 
 import { usePaginatedPosts } from '@/hooks/usePaginatedPosts';
 
@@ -15,24 +16,28 @@ import { SearchFilters } from '../../types/search';
 /** 1 ページあたりの取得件数 */
 const PAGE_SIZE = 10;
 
+/**
+ * URL のクエリから初期検索条件を組む。
+ * マウント後の useEffect で入れると SearchForm が空 filters を初期値として
+ * 確定させてしまい、結果だけ絞られてフォームにタグが出ない状態になるため、
+ * 初期化時点で決める。
+ */
+function initialFiltersFromParams(
+  params: URLSearchParams | ReadonlyURLSearchParams,
+): SearchFilters {
+  const tagParam = params.get('tags');
+  if (!tagParam) return {};
+  return { tags: [tagParam], mode: 'keyword', limit: PAGE_SIZE, offset: 0 };
+}
+
 function SearchPageContent() {
   const searchParams = useSearchParams();
-  const [filters, setFilters] = useState<SearchFilters>({});
-  const [hasSearched, setHasSearched] = useState(false);
-
-  useEffect(() => {
-    const tagParam = searchParams.get('tags');
-    if (tagParam) {
-      const initialFilters: SearchFilters = {
-        tags: [tagParam],
-        mode: 'keyword',
-        limit: PAGE_SIZE,
-        offset: 0,
-      };
-      setFilters(initialFilters);
-      setHasSearched(true);
-    }
-  }, [searchParams]);
+  const [filters, setFilters] = useState<SearchFilters>(() =>
+    initialFiltersFromParams(searchParams),
+  );
+  const [hasSearched, setHasSearched] = useState(
+    () => !!searchParams.get('tags'),
+  );
 
   const { data, isLoading, error } = useSearchPosts(filters, hasSearched);
 
@@ -57,15 +62,52 @@ function SearchPageContent() {
       })),
   });
 
+  // 件数などのメタ情報は data から直接読むとページ送り中に消えるため、
+  // 直前のレスポンスの値を保持しておく(一覧は allPosts が正)。
+  const [resultMeta, setResultMeta] = useState<{
+    total: number;
+    aiAvailable?: boolean;
+  }>();
+  // 同条件の再検索では SWR キーが変わらず data の参照も変わらないため、
+  // [data] だけを依存にすると setResultMeta(undefined) を取り消せない。
+  // usePaginatedPosts の generation と同じ役割。
+  const [metaGeneration, setMetaGeneration] = useState(0);
+
+  useEffect(() => {
+    if (data) {
+      setResultMeta({ total: data.total, aiAvailable: data.aiAvailable });
+    }
+  }, [data, metaGeneration]);
+
+  /** 新しい検索条件を適用する。累積とメタ情報を両方捨てて組み直す。 */
+  const startNewSearch = useCallback(
+    (next: SearchFilters) => {
+      setFilters(next);
+      setHasSearched(true);
+      setResultMeta(undefined);
+      setMetaGeneration((prev) => prev + 1);
+      reset();
+    },
+    [reset],
+  );
+
+  // 同じページに留まったまま ?tags= が変わる経路(タグチップの連続クリック等)に追従する。
+  // 初期値は useState 側で入れているので、ここは変化したときだけを担う。
+  // 適用済みタグを永久保持すると「?tags=A → フォーム検索 → 再び ?tags=A」で
+  // 再適用されなくなるため、handleSearch 側で null に戻している。
+  const appliedTagParamRef = useRef(searchParams.get('tags'));
+  useEffect(() => {
+    const tagParam = searchParams.get('tags');
+    if (tagParam && tagParam !== appliedTagParamRef.current) {
+      appliedTagParamRef.current = tagParam;
+      startNewSearch(initialFiltersFromParams(searchParams));
+    }
+  }, [searchParams, startNewSearch]);
+
   const handleSearch = (newFilters: SearchFilters) => {
-    const searchFilters = {
-      ...newFilters,
-      limit: PAGE_SIZE,
-      offset: 0,
-    };
-    setFilters(searchFilters);
-    setHasSearched(true);
-    reset();
+    // URL のタグ条件から離れるので、適用済みマークを捨てる
+    appliedTagParamRef.current = null;
+    startNewSearch({ ...newFilters, limit: PAGE_SIZE, offset: 0 });
   };
 
   return (
@@ -84,7 +126,12 @@ function SearchPageContent() {
       </Box>
 
       <SearchResults
-        data={data ? { ...data, posts: allPosts } : undefined}
+        // 一覧は累積を持つ usePaginatedPosts から直接渡す。
+        // SWR の data はページごとにキーが変わって undefined になるため、
+        // これを経由すると 2 ページ目の取得中に結果が全部消える。
+        posts={allPosts}
+        total={resultMeta?.total}
+        aiAvailable={resultMeta?.aiAvailable}
         isLoading={isLoading}
         error={error}
         hasSearched={hasSearched}

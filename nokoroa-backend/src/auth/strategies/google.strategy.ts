@@ -29,7 +29,10 @@ function requireGoogleEnv(configService: ConfigService, key: string): string {
 }
 
 /**
- * Google 認証を通ったユーザー。
+ * Google 認証後に req.user へ載る値。
+ * auth.service.googleLogin が実際に読む 4 つだけを持つ。
+ * OAuth のアクセストークンは使わないので保持しない
+ * (使わない資格情報をリクエストに載せて引き回さない)。
  *
  * email は「Google 側で確認済み」であることが前提。AuthService.googleLogin は
  * この email で既存アカウントを探して googleId を紐付けるため、未確認の
@@ -39,12 +42,9 @@ function requireGoogleEnv(configService: ConfigService, key: string): string {
  */
 export interface GoogleUser {
   email: string;
-  firstName: string;
-  lastName: string;
   name: string;
   picture: string;
   googleId: string;
-  accessToken: string;
 }
 
 @Injectable()
@@ -68,7 +68,7 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
   }
 
   validate(
-    accessToken: string,
+    _accessToken: string,
     _refreshToken: string,
     profile: Profile,
     done: VerifyCallback,
@@ -100,13 +100,12 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
     }
 
     const user: GoogleUser = {
+      // 上の検証を通った値をそのまま使う。emails?.[0]?.value を読み直すと
+      // 「確認済みであることを検証した値」との対応が切れる。
       email: primaryEmail.value,
-      firstName: name?.givenName ?? '',
-      lastName: name?.familyName ?? '',
       name: (name?.givenName ?? '') + ' ' + (name?.familyName ?? ''),
       picture: photos?.[0]?.value ?? '',
       googleId: profile.id,
-      accessToken,
     };
     done(null, user);
   }

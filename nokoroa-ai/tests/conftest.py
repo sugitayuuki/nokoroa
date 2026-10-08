@@ -43,6 +43,8 @@ class FakeModels:
         self.embed_error: Exception | None = None
         self.prompts: list[str] = []
         self.threads: set[str] = set()
+        # 経路ごとのタイムアウト指定を検証できるよう、渡された config を残す
+        self.embed_config: Any = None
 
     def _record(self, contents: Any) -> None:
         self.threads.add(threading.current_thread().name)
@@ -65,6 +67,7 @@ class FakeModels:
 
     def embed_content(self, *, model: str, contents: Any, config: Any) -> FakeEmbedResponse:
         self.threads.add(threading.current_thread().name)
+        self.embed_config = config
         if self.embed_error:
             raise self.embed_error
         return FakeEmbedResponse(self.embed_values)
@@ -73,8 +76,10 @@ class FakeModels:
 class FakeClient:
     last_instance: "FakeClient | None" = None
 
-    def __init__(self, api_key: str | None = None):
+    def __init__(self, api_key: str | None = None, http_options: Any | None = None):
         self.api_key = api_key
+        # GeminiService が渡すタイムアウト設定を検証できるよう保持する
+        self.http_options = http_options
         self.models = FakeModels()
         FakeClient.last_instance = self
 
@@ -104,6 +109,9 @@ def _install_fake_genai() -> None:
         ("EmbedContentConfig", _Config),
         ("Content", _Content),
         ("Part", _Part),
+        # GeminiService が Gemini 呼び出しのタイムアウトを渡すのに使う。
+        # 実 SDK の types.HttpOptions(timeout=<ミリ秒>) に対応する。
+        ("HttpOptions", _Config),
     ]:
         setattr(gtypes, name, value)
     genai.Client = FakeClient  # type: ignore[attr-defined]
@@ -117,9 +125,13 @@ _install_fake_genai()
 # Settings は必須項目があるため、app のインポート前に環境変数を用意する
 import os  # noqa: E402
 
-os.environ.setdefault("GEMINI_API_KEY", "test-key")
-os.environ.setdefault("INTERNAL_AI_TOKEN", INTERNAL_TOKEN)
-os.environ.setdefault("CORS_ORIGINS", "http://localhost:3000")
+# setdefault ではなく必ず上書きする。setdefault だと、開発者のシェルに
+# 実 GEMINI_API_KEY / INTERNAL_AI_TOKEN が export されている環境では
+# テストが実キーを読み込んでしまい、pytest の失敗トレースバックや CI ログに
+# 実キーが出力される(実測で発生した)。テストは常にダミー値で走らせる。
+os.environ["GEMINI_API_KEY"] = "test-key"
+os.environ["INTERNAL_AI_TOKEN"] = INTERNAL_TOKEN
+os.environ["CORS_ORIGINS"] = "http://localhost:3000"
 
 
 @pytest.fixture

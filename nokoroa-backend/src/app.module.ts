@@ -6,7 +6,6 @@ import cookieParser from 'cookie-parser';
 import { NextFunction, Request, Response } from 'express';
 
 import { AppController } from './app.controller';
-import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
 import { ChatModule } from './chat/chat.module';
 import { CommonModule } from './common/common.module';
@@ -66,7 +65,6 @@ type MiddlewareFunction = (
   // 本番側の配線を消してもテストが全緑のままになる。
   // モジュールグラフに置けば、AppModule を読み込む全経路が自動的に同じ設定になる。
   providers: [
-    AppService,
     // 素の ValidationPipe だと transform が効かないため共通設定を使う
     { provide: APP_PIPE, useFactory: createValidationPipe },
     // クロスサイト拒否は認証より先に評価されるよう、先に登録する

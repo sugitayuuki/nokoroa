@@ -277,6 +277,12 @@ export const PostForm = ({
 
     setUploadError(null);
 
+    // アップロードが失敗したときに戻せるよう、差し替え前のプレビューを控える。
+    // プレビューだけ新画像に変わって formData.imageUrl が旧 URL のまま残ると、
+    // 「画面に見えている画像」と「保存される画像」が食い違い、
+    // そのまま更新すると旧画像で保存されたうえ成功トーストが出る。
+    const previousPreviewUrl = previewUrl;
+
     // プレビュー用URL生成
     const reader = new FileReader();
     reader.onloadend = () => {
@@ -285,10 +291,10 @@ export const PostForm = ({
     reader.readAsDataURL(file);
 
     // 自動アップロード
-    await handleUploadImage(file);
+    await handleUploadImage(file, previousPreviewUrl);
   };
 
-  const handleUploadImage = async (file: File) => {
+  const handleUploadImage = async (file: File, previousPreviewUrl = '') => {
     if (!file) return;
 
     setUploadingImage(true);
@@ -310,6 +316,9 @@ export const PostForm = ({
           : '画像のアップロードに失敗しました';
       setUploadError(errorMessage);
       toast.error(errorMessage);
+      // 失敗したら表示も元に戻す。新画像のプレビューを残すと
+      // formData.imageUrl(旧 URL)との食い違いに気付けない。
+      setPreviewUrl(previousPreviewUrl);
     } finally {
       setUploadingImage(false);
     }

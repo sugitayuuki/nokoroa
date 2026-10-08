@@ -98,7 +98,10 @@ export class FollowsService {
                 select: {
                   followers: true,
                   following: true,
-                  posts: true,
+                  // 一覧に出るのは他人のプロフィール要約なので公開投稿のみ数える。
+                  // where を付けないと非公開投稿の件数が無認証で割り出せる
+                  // (このエンドポイントは JwtAuthGuard を付けていない)。
+                  posts: { where: { isPublic: true } },
                 },
               },
             },
@@ -147,7 +150,10 @@ export class FollowsService {
                 select: {
                   followers: true,
                   following: true,
-                  posts: true,
+                  // 一覧に出るのは他人のプロフィール要約なので公開投稿のみ数える。
+                  // where を付けないと非公開投稿の件数が無認証で割り出せる
+                  // (このエンドポイントは JwtAuthGuard を付けていない)。
+                  posts: { where: { isPublic: true } },
                 },
               },
             },

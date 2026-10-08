@@ -54,8 +54,15 @@ resource "aws_secretsmanager_secret" "database_url" {
 }
 
 resource "aws_secretsmanager_secret_version" "database_url" {
-  secret_id     = aws_secretsmanager_secret.database_url.id
-  secret_string = "postgresql://${var.db_username}:${var.db_password}@${var.db_host}:${var.db_port}/${var.db_name}"
+  secret_id = aws_secretsmanager_secret.database_url.id
+  # ユーザー名とパスワードは必ず urlencode を通す。
+  # db_password は envs/prod の random_password が override_special に
+  # "#" と "?" を含むプールで生成するため、生のまま埋めると URL の
+  # フラグメント / クエリ区切りとして解釈されてパスワードが切り詰められ、
+  # backend が DB へ接続できず起動しない。16 文字生成では 3 割強の確率で踏み、
+  # ログ上は「認証失敗」に見えるため原因の特定が難しい非決定的障害になる。
+  # (生成文字に空白は含まれないため、urlencode の空白→"+" 変換は影響しない)
+  secret_string = "postgresql://${urlencode(var.db_username)}:${urlencode(var.db_password)}@${var.db_host}:${var.db_port}/${var.db_name}"
 }
 
 # Google OAuth Client ID

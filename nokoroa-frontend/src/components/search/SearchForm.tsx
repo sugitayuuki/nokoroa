@@ -29,7 +29,7 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { useSearchHistory } from '@/hooks/useSearchHistory';
 import { useSearchSuggestions } from '@/hooks/useSearchSuggestions';
@@ -43,6 +43,15 @@ interface SearchFormProps {
   initialFilters?: SearchFilters;
 }
 
+/**
+ * 詳細検索条件(タグ・場所)を比較用の文字列にする。
+ * tags は配列なので参照比較では「中身は同じだが別インスタンス」を区別できない。
+ */
+const advancedFilterKey = (
+  tags: string[] | undefined,
+  location: string | undefined,
+): string => JSON.stringify({ tags: tags ?? [], location: location ?? '' });
+
 export const SearchForm = ({ onSearch, initialFilters }: SearchFormProps) => {
   const [query, setQuery] = useState(initialFilters?.q || '');
   const [tags, setTags] = useState<string[]>(initialFilters?.tags || []);
@@ -55,6 +64,33 @@ export const SearchForm = ({ onSearch, initialFilters }: SearchFormProps) => {
     initialFilters?.mode ?? 'keyword',
   );
   const isSemantic = mode === 'semantic';
+
+  // initialFilters は useState の初期値にしかならないので、マウント後に
+  // 外から条件が差し替わっても(?tags= の変更など)フォームが追従しない。
+  // 入力中の値を踏まないよう「タグ・場所が実際に変わったとき」だけ同期する。
+  const appliedFilterKey = useRef(
+    advancedFilterKey(initialFilters?.tags, initialFilters?.location),
+  );
+  useEffect(() => {
+    const incomingKey = advancedFilterKey(
+      initialFilters?.tags,
+      initialFilters?.location,
+    );
+    // tags / location を依存に入れているので打鍵ごとにここへ来る。
+    // 外から渡る条件が変わっていなければ入力中の値に触らない。
+    if (incomingKey === appliedFilterKey.current) return;
+    appliedFilterKey.current = incomingKey;
+
+    // 自分が送信した値が親から返ってきただけなら触らない。
+    // 触ると、手で閉じた詳細パネルをタグ付き検索のたびに開き直してしまう。
+    if (incomingKey === advancedFilterKey(tags, location)) return;
+
+    setTags(initialFilters?.tags ?? []);
+    setLocation(initialFilters?.location ?? '');
+    if (initialFilters?.tags?.length || initialFilters?.location) {
+      setIsAdvancedOpen(true);
+    }
+  }, [initialFilters?.tags, initialFilters?.location, tags, location]);
 
   // タグ候補を取得
   const { tags: availableTags } = useTags();
@@ -95,7 +131,7 @@ export const SearchForm = ({ onSearch, initialFilters }: SearchFormProps) => {
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [query]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [query, getKeywordSuggestions]);
 
   // 場所入力時のサジェスト取得
   useEffect(() => {
@@ -106,7 +142,7 @@ export const SearchForm = ({ onSearch, initialFilters }: SearchFormProps) => {
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [location]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [location, getLocationSuggestions]);
 
   // キーワード候補リストを生成（重複を除去）
   const keywordOptions = [

@@ -31,6 +31,13 @@ import { useBodyScrollLock } from '../../hooks/useBodyScrollLock';
 import { useAuth } from '../../providers/AuthProvider';
 import { PostData } from '../../types/post';
 
+/**
+ * IP 位置情報 (ipapi.co) の待ち時間上限。
+ * 地図の初期化はこの応答を await してから進むため、上限が無いと
+ * 外部サービスの不調だけで地図が永久ローディングになる。
+ */
+const IP_LOCATION_TIMEOUT_MS = 3000;
+
 export default function MapPage() {
   const { isAuthenticated, isLoading: authLoading } = useAuth();
   const [posts, setPosts] = useState<PostData[]>([]);
@@ -86,8 +93,14 @@ export default function MapPage() {
   // IP-based位置情報を取得（ユーザー許可不要）
   const getIpLocation = async () => {
     try {
-      // 無料のIP位置情報サービスを使用
-      const response = await fetch('https://ipapi.co/json/');
+      // 無料のIP位置情報サービスを使用。
+      // タイムアウトが無いと、この await が初期化シーケンスの先頭にあるため
+      // (setLoading(false) は全てこの後ろ)、ipapi.co が応答を返さない場合に
+      // loading が true で固着して地図が永久にマウントされない。
+      // 位置情報は「あれば中心を寄せる」程度の補助なので、短めに切って先へ進む。
+      const response = await fetch('https://ipapi.co/json/', {
+        signal: AbortSignal.timeout(IP_LOCATION_TIMEOUT_MS),
+      });
 
       if (!response.ok) {
         throw new Error('IP位置情報の取得に失敗');

@@ -158,10 +158,7 @@ describe('AuthService', () => {
       googleId: 'google-123',
       email: 'google@example.com',
       name: 'Google User',
-      firstName: 'Google',
-      lastName: 'User',
       picture: 'https://example.com/avatar.jpg',
-      accessToken: 'mock-access-token',
     };
 
     it('既存のGoogleユーザーでログインできる', async () => {

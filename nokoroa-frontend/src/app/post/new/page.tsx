@@ -1,9 +1,10 @@
 'use client';
 
-import { Box, CircularProgress, Container, Typography } from '@mui/material';
+import { Box, Container, Typography } from '@mui/material';
 import { useRouter } from 'next/navigation';
 import { toast } from 'react-toastify';
 
+import { PageSpinner } from '@/components/common/PageSpinner';
 import { useRequireAuth } from '@/hooks/useRequireAuth';
 import { API_CONFIG, createApiRequest } from '@/lib/apiConfig';
 
@@ -41,18 +42,7 @@ export default function NewPostPage() {
   };
 
   if (!isReady) {
-    return isAuthLoading ? (
-      <Box
-        sx={{
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          minHeight: '50vh',
-        }}
-      >
-        <CircularProgress />
-      </Box>
-    ) : null;
+    return isAuthLoading ? <PageSpinner /> : null;
   }
 
   return (

@@ -62,6 +62,8 @@ export const useSearchPosts = (
   const url =
     shouldFetch && !isSemanticWithoutQuery ? buildSearchUrl(filters) : null;
 
+  // keepPreviousData を使わない理由は usePosts.ts のコメントを参照
+  // (前ページの data を現ページとして取り込みページが飛ぶ)。
   return useSWR<SearchResponse>(url, fetcher, {
     revalidateOnFocus: false,
     dedupingInterval: 5000,

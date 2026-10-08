@@ -102,7 +102,7 @@ describe('AuthController', () => {
       // id と userId を別値にして「どちらを使うか」を区別できるようにする
       const req = {
         user: { id: 7, userId: 42, email: 'test@example.com' },
-      } as AuthenticatedRequest;
+      } as unknown as AuthenticatedRequest;
 
       await controller.me(req, createHeaderResponse().res);
 
@@ -114,7 +114,9 @@ describe('AuthController', () => {
       const { res, setHeader } = createHeaderResponse();
 
       await controller.me(
-        { user: { id: 7, userId: 7, email: 'a@b.c' } } as AuthenticatedRequest,
+        {
+          user: { id: 7, userId: 7, email: 'a@b.c' },
+        } as unknown as AuthenticatedRequest,
         res,
       );
 
@@ -125,12 +127,9 @@ describe('AuthController', () => {
   describe('googleAuthRedirect', () => {
     const googleUser: GoogleUser = {
       email: 'google@example.com',
-      firstName: 'Google',
-      lastName: 'User',
       name: 'Google User',
       picture: 'https://example.com/avatar.jpg',
       googleId: 'google-123',
-      accessToken: 'google-access-token',
     };
 
     beforeEach(() => {
