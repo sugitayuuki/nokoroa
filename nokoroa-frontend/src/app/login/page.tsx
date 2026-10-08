@@ -14,6 +14,13 @@ export default function LoginPage() {
               window.location.href = '/';
             }
           }}
+          // コールバックの失敗画面からはフルロードでこのページに着地するため、
+          // ここを渡さないとフッタの「新規登録」が無反応になる
+          onSwitchToSignup={() => {
+            if (typeof window !== 'undefined') {
+              window.location.href = '/signup';
+            }
+          }}
         />
       </Box>
     </Container>
