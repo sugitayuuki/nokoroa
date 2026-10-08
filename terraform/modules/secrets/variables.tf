@@ -47,8 +47,29 @@ variable "google_client_secret" {
   sensitive   = true
 }
 
+# AI プロバイダの鍵は「使うものだけ」渡す。空文字を渡した鍵は Secrets Manager に
+# 作られない (AWS は空の secret_string を受け付けないため)。
+#
+# ★ 既に作成済みの鍵を空文字へ変えると、その Secret は削除がスケジュールされる。
+#   Secrets Manager は復旧期間(既定7日)が明けるまで同名での再作成を拒むため、
+#   使わないプロバイダの鍵でも、しばらくは値を残しておく方が安全。
 variable "gemini_api_key" {
-  description = "Gemini API key for AI service"
+  description = "Gemini API key for AI service (empty to skip creating the secret)"
   type        = string
   sensitive   = true
+  default     = ""
+}
+
+variable "anthropic_api_key" {
+  description = "Anthropic API key for AI service (empty to skip creating the secret)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "openai_api_key" {
+  description = "OpenAI API key for embeddings (empty to skip creating the secret)"
+  type        = string
+  sensitive   = true
+  default     = ""
 }

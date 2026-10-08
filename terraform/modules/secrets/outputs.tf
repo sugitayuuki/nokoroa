@@ -24,9 +24,20 @@ output "google_client_secret_arn" {
   value       = aws_secretsmanager_secret.google_client_secret.arn
 }
 
+# 作成しなかった鍵は "" を返す。ECS 側はこれを見て secrets 定義から外す。
 output "gemini_api_key_arn" {
-  description = "ARN of the Gemini API key secret"
-  value       = aws_secretsmanager_secret.gemini_api_key.arn
+  description = "ARN of the Gemini API key secret (empty when not created)"
+  value       = one(aws_secretsmanager_secret.gemini_api_key[*].arn)
+}
+
+output "anthropic_api_key_arn" {
+  description = "ARN of the Anthropic API key secret (empty when not created)"
+  value       = one(aws_secretsmanager_secret.anthropic_api_key[*].arn)
+}
+
+output "openai_api_key_arn" {
+  description = "ARN of the OpenAI API key secret (empty when not created)"
+  value       = one(aws_secretsmanager_secret.openai_api_key[*].arn)
 }
 
 output "internal_api_key_arn" {

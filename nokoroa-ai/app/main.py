@@ -1,10 +1,32 @@
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.routers import chat, embeddings
+
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    from app.deps import get_chat_service, get_embedding_service
+
+    # チャットと埋め込みが同じプロバイダなら同一インスタンスが返るため、
+    # 二重に close しないよう id で畳む。
+    services = {id(s): s for s in (get_chat_service(), get_embedding_service())}.values()
+
+    try:
+        yield
+    finally:
+        # HTTP 接続を張りっぱなしにしない。GeminiService は SDK が管理するため
+        # close を持たない。
+        for service in services:
+            if hasattr(service, "close"):
+                service.close()
 
 
 def create_app() -> FastAPI:
@@ -22,6 +44,7 @@ def create_app() -> FastAPI:
         title="Nokoroa AI",
         description="AI-powered travel assistant for Nokoroa",
         version="0.1.0",
+        lifespan=_lifespan,
     )
 
     # backend からのサーバー間呼び出し専用サービスだが、ローカル開発でブラウザから

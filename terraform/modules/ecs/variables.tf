@@ -168,9 +168,46 @@ variable "ai_memory" {
   default     = 512
 }
 
+# 使わないプロバイダの鍵は secrets モジュールが作らないため、ARN が空文字で届く。
+# 空のものは下でコンテナ定義から外す (空 ARN を渡すとタスク起動時に失敗する)。
 variable "gemini_api_key_secret_arn" {
-  description = "ARN of the Gemini API key secret"
+  description = "ARN of the Gemini API key secret (empty when unused)"
   type        = string
+  default     = ""
+}
+
+variable "anthropic_api_key_secret_arn" {
+  description = "ARN of the Anthropic API key secret (empty when unused)"
+  type        = string
+  default     = ""
+}
+
+variable "openai_api_key_secret_arn" {
+  description = "ARN of the OpenAI API key secret (empty when unused)"
+  type        = string
+  default     = ""
+}
+
+variable "chat_provider" {
+  description = "Chat provider used by the AI sidecar (gemini or claude)"
+  type        = string
+  default     = "gemini"
+
+  validation {
+    condition     = contains(["gemini", "claude"], var.chat_provider)
+    error_message = "chat_provider must be one of: gemini, claude."
+  }
+}
+
+variable "embedding_provider" {
+  description = "Embedding provider used by the AI sidecar (gemini or openai)"
+  type        = string
+  default     = "gemini"
+
+  validation {
+    condition     = contains(["gemini", "openai"], var.embedding_provider)
+    error_message = "embedding_provider must be one of: gemini, openai."
+  }
 }
 
 variable "internal_api_key_secret_arn" {

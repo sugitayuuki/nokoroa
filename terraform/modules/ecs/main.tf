@@ -244,19 +244,41 @@ resource "aws_ecs_task_definition" "backend" {
         {
           name  = "CORS_ORIGINS"
           value = "http://localhost:${var.backend_port}"
+        },
+        # チャットと埋め込みは別々に選ぶ。Claude には埋め込み API が無く、
+        # 1 つの設定では「チャットは Claude・検索は OpenAI」を表せないため。
+        {
+          name  = "CHAT_PROVIDER"
+          value = var.chat_provider
+        },
+        {
+          name  = "EMBEDDING_PROVIDER"
+          value = var.embedding_provider
         }
       ]
 
-      secrets = [
-        {
+      # 使う鍵だけ渡す。ARN が空のものを secrets に残すと、ECS が
+      # Secrets Manager の参照解決に失敗してタスクが起動しない。
+      secrets = concat(
+        [
+          {
+            name      = "INTERNAL_AI_TOKEN"
+            valueFrom = var.internal_api_key_secret_arn
+          }
+        ],
+        var.gemini_api_key_secret_arn != "" ? [{
           name      = "GEMINI_API_KEY"
           valueFrom = var.gemini_api_key_secret_arn
-        },
-        {
-          name      = "INTERNAL_AI_TOKEN"
-          valueFrom = var.internal_api_key_secret_arn
-        }
-      ]
+        }] : [],
+        var.anthropic_api_key_secret_arn != "" ? [{
+          name      = "ANTHROPIC_API_KEY"
+          valueFrom = var.anthropic_api_key_secret_arn
+        }] : [],
+        var.openai_api_key_secret_arn != "" ? [{
+          name      = "OPENAI_API_KEY"
+          valueFrom = var.openai_api_key_secret_arn
+        }] : []
+      )
 
       logConfiguration = {
         logDriver = "awslogs"

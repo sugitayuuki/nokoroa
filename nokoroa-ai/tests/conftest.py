@@ -129,6 +129,12 @@ import os  # noqa: E402
 # 実 GEMINI_API_KEY / INTERNAL_AI_TOKEN が export されている環境では
 # テストが実キーを読み込んでしまい、pytest の失敗トレースバックや CI ログに
 # 実キーが出力される(実測で発生した)。テストは常にダミー値で走らせる。
+#
+# プロバイダ指定も同じ理由で固定する。Settings は .env を読むため、ローカルで
+# 別プロバイダにしている開発者の環境では、この共通フィクスチャが別実装を
+# 掴んでしまい Gemini 前提のテストが総崩れする(実測で発生した)。
+os.environ["CHAT_PROVIDER"] = "gemini"
+os.environ["EMBEDDING_PROVIDER"] = "gemini"
 os.environ["GEMINI_API_KEY"] = "test-key"
 os.environ["INTERNAL_AI_TOKEN"] = INTERNAL_TOKEN
 os.environ["CORS_ORIGINS"] = "http://localhost:3000"
@@ -137,10 +143,11 @@ os.environ["CORS_ORIGINS"] = "http://localhost:3000"
 @pytest.fixture
 def models() -> FakeModels:
     """アプリが使う GeminiService のフェイク models を返す。"""
-    from app.deps import get_gemini_service
+    from app.deps import get_chat_service, get_embedding_service
 
-    get_gemini_service.cache_clear()
-    service = get_gemini_service()
+    get_chat_service.cache_clear()
+    get_embedding_service.cache_clear()
+    service = get_chat_service()
     return service.client.models
 
 

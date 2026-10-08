@@ -4,7 +4,7 @@ from collections.abc import Iterator
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
-from app.deps import GeminiDep, verify_internal_token
+from app.deps import ChatServiceDep, verify_internal_token
 from app.schemas import (
     ChatRequest,
     FollowUpRequest,
@@ -13,7 +13,7 @@ from app.schemas import (
 
 logger = logging.getLogger(__name__)
 
-# Gemini APIへの課金リクエストを発行するため、全エンドポイントで内部認証を必須にする
+# プロンプトを自由に流し込める内部APIのため、全エンドポイントで内部認証を必須にする
 router = APIRouter(dependencies=[Depends(verify_internal_token)])
 
 # frontend が data 行の文字列一致で解釈する番兵
@@ -36,11 +36,11 @@ def _sse_event(payload: str) -> str:
 @router.post("/stream")
 async def chat_stream(
     request: ChatRequest,
-    gemini: GeminiDep,
+    ai: ChatServiceDep,
 ) -> StreamingResponse:
     def generate() -> Iterator[str]:
         try:
-            for chunk in gemini.chat_stream(
+            for chunk in ai.chat_stream(
                 message=request.message,
                 history=request.history,
                 context_posts=request.context_posts,
@@ -67,10 +67,10 @@ async def chat_stream(
 @router.post("/suggestions", response_model=SuggestionsResponse)
 async def get_suggestions(
     request: FollowUpRequest,
-    gemini: GeminiDep,
+    ai: ChatServiceDep,
 ) -> SuggestionsResponse:
     # サジェストは補助機能であり、失敗してもチャット本体は成立するため空配列に倒す
-    suggestions = await gemini.generate_suggestions(
+    suggestions = await ai.generate_suggestions(
         user_message=request.message,
         ai_response=request.ai_response,
     )
