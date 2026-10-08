@@ -14,6 +14,17 @@ import { ALLOW_CROSS_SITE_NAVIGATION_KEY } from './allow-cross-site-navigation.d
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 /**
+ * `Sec-Fetch-Site` のうち自サイト扱いしてよい値。
+ *
+ * `cross-site` を拒否リストで弾くのではなく、こちらを許可リストにしている。
+ * 拒否リストだと、経路上の装置が値の大文字小文字を変える・パラメータを足す・
+ * 空値で上書きする、あるいは将来値が増えるだけで判定が静かに外れ、
+ * **拒否されないので警告ログすら出ない**まま全ルートがクロスサイトから
+ * 到達可能になる。許可リストなら同じ事象が fail-closed に倒れる。
+ */
+const SELF_SITE_VALUES = new Set(['same-origin', 'same-site', 'none']);
+
+/**
  * Fetch Metadata + Origin によるクロスサイトリクエストの拒否。
  *
  * JWT を Cookie に移したことで、ブラウザがリクエストに認証情報を自動で付けるように
@@ -72,7 +83,8 @@ export class FetchMetadataGuard implements CanActivate {
     // ブックマーク・外部アプリからのリンク）は自サイト扱い。
     // same-site は開発環境（フロント localhost:3000 → API localhost:4000。
     // Cookie と同じくポートはサイトの構成要素ではない）で必要。
-    if (!this.isCrossSite(req.header('sec-fetch-site'))) {
+    const site = req.header('sec-fetch-site');
+    if (this.isSelfSite(site)) {
       return true;
     }
 
@@ -85,7 +97,7 @@ export class FetchMetadataGuard implements CanActivate {
       // 「正常な遮断」はこれが無いとログ上で見分けられない。
       this.reject(
         req,
-        `sec-fetch-site=cross-site and ${context.getClass().name}.${handler.name} ` +
+        `sec-fetch-site=${site ?? 'none'} and ${context.getClass().name}.${handler.name} ` +
           'has no @AllowCrossSiteNavigation',
       );
     }
@@ -112,28 +124,37 @@ export class FetchMetadataGuard implements CanActivate {
   /**
    * ヘッダ値を「重複して連結されうるリスト」として読む。
    *
-   * 経路上の装置が同名ヘッダを足すと Express は `", "` で連結する。ここを
-   * 単純一致で見ると、拒否側（`cross-site`）は素通りし、許可側（`navigate` /
-   * `document`）は正規のログインを 403 にする。どちらに転んでも悪いので、
-   * 両方ともリストとして扱う。
+   * 経路上の装置が同名ヘッダを足すと Express は `", "` で連結する。単一の値
+   * として見ると、連結された途端に判定が外れる（許可側なら正規のログインが
+   * 403 になり、許可リストに載らない側なら素通りする）。
+   * 大文字小文字も装置によって変わりうるので、ここで揃えておく。
    */
   private values(header: string | undefined): string[] {
     const trimmed = header?.trim();
     if (!trimmed) {
       return [];
     }
-    return trimmed.split(',').map((value) => value.trim());
+    return trimmed.split(',').map((value) => value.trim().toLowerCase());
   }
 
-  /** 連結されていても拒否対象を取りこぼさない（fail-closed 側）。 */
-  private isCrossSite(header: string | undefined): boolean {
-    return this.values(header).includes('cross-site');
+  /** 自サイト扱いしてよい値だけで構成されているか（既知の値以外は通さない）。 */
+  private isSelfSite(header: string | undefined): boolean {
+    return this.everyValueSatisfies(header, (value) =>
+      SELF_SITE_VALUES.has(value),
+    );
   }
 
-  /** ヘッダ無しは「ブラウザ以外」として通す。値があれば全て一致を要求する。 */
+  /** ヘッダ無しは「ブラウザ以外」として通す。値があれば全要素が条件を満たすこと。 */
   private everyValueIs(header: string | undefined, expected: string): boolean {
+    return this.everyValueSatisfies(header, (value) => value === expected);
+  }
+
+  private everyValueSatisfies(
+    header: string | undefined,
+    predicate: (value: string) => boolean,
+  ): boolean {
     const values = this.values(header);
-    return values.length === 0 || values.every((value) => value === expected);
+    return values.length === 0 || values.every(predicate);
   }
 
   /** 全経路のブロッカーなので、拒否は必ず観測できるようにしておく。 */

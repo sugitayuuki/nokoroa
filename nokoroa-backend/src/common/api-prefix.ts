@@ -7,9 +7,8 @@
  * 403 になった。E2E はアプリを自前で組んでプレフィックスを掛けないため、
  * **テストだけが緑のまま**この乖離を見逃した。
  *
- * バックエンド内ではここを参照し、literal を書き写さないこと。
- * 対象は `main.ts`、E2E（`test/auth.e2e-spec.ts`）、`test/env.ts` と
- * `src/auth/strategies/google.strategy.spec.ts` の `GOOGLE_CALLBACK_URL`。
+ * バックエンド内ではここを参照し、literal を書き写さないこと
+ * （`GOOGLE_CALLBACK_URL` を組む箇所は `GOOGLE_CALLBACK_PATH` 経由で参照する）。
  *
  * ただしこれはバックエンド**内**の単一真実源にすぎない。同じ値は
  * `nokoroa-frontend/src/lib/apiConfig.ts` と terraform（ALB のパスルール /

@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Profile } from 'passport-google-oauth20';
 
 import { GoogleStrategy } from './google.strategy';
+import { GOOGLE_CALLBACK_PATH } from '../google-callback-path';
 
 describe('GoogleStrategy', () => {
   const configService = {
@@ -10,7 +11,7 @@ describe('GoogleStrategy', () => {
       ({
         GOOGLE_CLIENT_ID: 'client-id',
         GOOGLE_CLIENT_SECRET: 'client-secret',
-        GOOGLE_CALLBACK_URL: 'http://localhost:4000/api/auth/google/callback',
+        GOOGLE_CALLBACK_URL: `http://localhost:4000${GOOGLE_CALLBACK_PATH}`,
       })[key],
   } as unknown as ConfigService;
 

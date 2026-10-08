@@ -101,7 +101,10 @@ describe('FetchMetadataGuard', () => {
       'cross-site, cross-site',
       'cross-site,cross-site',
       'same-origin, cross-site',
-    ])('Sec-Fetch-Site が連結されていても拒否する (%s)', (site) => {
+      'Cross-Site',
+      'cross-site;x=1',
+      'unknown-future-value',
+    ])('自サイト扱いできない Sec-Fetch-Site は拒否する (%s)', (site) => {
       // 経路上の装置が同名ヘッダを足すと Express が連結する。単純一致だと
       // ここで素通りし、全ルートがクロスサイトから到達可能になる
       expect(() =>
