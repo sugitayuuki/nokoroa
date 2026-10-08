@@ -155,6 +155,59 @@ describe('AuthProvider のセッション復元', () => {
     expect(screen.getByTestId('authed').textContent).toBe('true');
   });
 
+  it('/auth/me が応答しないまま期限切れになっても固着させない', async () => {
+    // 期限を切らないと fetch が永遠に解決せず、isLoading が true のままで
+    // Layout が children を描画しない = スピナーのまま操作不能になる。
+    // 可否は不明なだけなので、ログイン状態は 5xx と同じく維持する。
+    //
+    // 実時間で 10 秒待てないため、期限は即 abort する signal に差し替えて
+    // 「期限が切れたときの扱い」だけを見る。10 秒という値は次のテストで押さえる
+    setSessionHint(true);
+    vi.spyOn(AbortSignal, 'timeout').mockReturnValue(AbortSignal.abort());
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (_url: string, init?: RequestInit) =>
+          // 本物の fetch と同じく、abort 済みの signal を渡されたら reject する
+          new Promise<Response>((_resolve, reject) => {
+            const fail = () =>
+              reject(
+                new DOMException('The operation timed out.', 'TimeoutError'),
+              );
+            if (init?.signal?.aborted) {
+              fail();
+              return;
+            }
+            init?.signal?.addEventListener('abort', fail);
+          }),
+      ),
+    );
+
+    renderProvider();
+
+    await waitFor(() =>
+      expect(screen.getByTestId('loading').textContent).toBe('false'),
+    );
+    expect(screen.getByTestId('authed').textContent).toBe('true');
+  });
+
+  it('セッション確認の期限は 10 秒', async () => {
+    // 期限を渡し忘れる / 極端に伸ばすと上の固着が黙って戻るため値を押さえる
+    setSessionHint(true);
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(jsonResponse(200, ME_USER)),
+    );
+
+    renderProvider();
+
+    await waitFor(() =>
+      expect(screen.getByTestId('loading').textContent).toBe('false'),
+    );
+    expect(timeout).toHaveBeenCalledWith(10_000);
+  });
+
   it('起動時に旧 localStorage の jwt を消す', async () => {
     localStorage.setItem('jwt', 'legacy-token');
     vi.stubGlobal('fetch', vi.fn());

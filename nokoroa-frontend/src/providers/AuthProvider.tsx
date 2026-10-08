@@ -79,6 +79,16 @@ type FetchAuthUserResult =
   | { status: 'unknown' };
 
 /**
+ * セッション復元の待ち時間の上限。
+ *
+ * この呼び出しが解決するまで isLoading は true のままで、Layout は children を
+ * 描画しない。サーバーが接続を掴んだまま応答しないと fetch は永遠に解決せず、
+ * 画面がスピナーのまま固着して操作不能になる(エラーすら出ない)。
+ * 期限切れは下の catch が「可否不明」に倒すので、ログイン状態は維持される。
+ */
+const SESSION_RESTORE_TIMEOUT_MS = 10_000;
+
+/**
  * セッション API からログイン中のユーザーを取得する。
  * 「認証が無効(非 2xx / 通信失敗)」と「200 だが形が想定外」を区別して返す。
  * 後者を未認証扱いにすると、API 側の一時的な応答形不良だけで
@@ -89,7 +99,9 @@ type FetchAuthUserResult =
  */
 const fetchAuthUser = async (): Promise<FetchAuthUserResult> => {
   try {
-    const response = await createApiRequest(API_CONFIG.endpoints.me);
+    const response = await createApiRequest(API_CONFIG.endpoints.me, {
+      signal: AbortSignal.timeout(SESSION_RESTORE_TIMEOUT_MS),
+    });
     if (response.status === 401 || response.status === 403) {
       return { status: 'unauthenticated' };
     }
