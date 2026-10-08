@@ -11,8 +11,7 @@ import AuthCallbackPage from '@/app/auth/callback/page';
 // router は**毎回同じオブジェクト**を返す。本物の useRouter() は
 // AppRouterContext 経由のモジュール単一インスタンスで参照が変わらないため。
 // 毎回新しく作ると effect の依存が常に無効化され、「依存が変わっても 1 回」を
-// 検証しているつもりで、ただの参照不安定を測ることになる
-// (そのスタブでは依存を絞っただけの別実装まで落ちてしまう)。
+// 検証しているつもりで、ただの参照不安定を測ることになる。
 const replace = vi.fn();
 const router = { replace };
 vi.mock('next/navigation', () => ({
