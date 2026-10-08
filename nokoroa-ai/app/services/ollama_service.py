@@ -118,6 +118,10 @@ class OllamaService:
             else:
                 logger.info("ollama warmup done: %s", payload["model"])
 
+    def close(self) -> None:
+        """保持している HTTP 接続を解放する。アプリ終了時に呼ばれる。"""
+        self.client.close()
+
     def _embedding_input(self, text: str, task_type: TaskType) -> str:
         if not self.embedding_model.startswith("nomic-embed-text"):
             return text

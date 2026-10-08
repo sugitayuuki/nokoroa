@@ -18,14 +18,24 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # タイムアウト(埋め込み 10 秒)に必ず掛かる。起動直後に裏で読み込ませて
     # 「最初の 1 通だけ失敗する」のを避ける。
     # await せず投げっぱなしにするのは、ヘルスチェックを待たせないため。
-    if settings.ai_provider == "ollama":
-        from app.deps import get_ai_service
+    if settings.ai_provider != "ollama":
+        yield
+        return
 
-        warmup = asyncio.create_task(asyncio.to_thread(get_ai_service().warmup))
-        # 参照を保持しないとタスクが GC される可能性がある
-        app.state.warmup_task = warmup
+    from app.deps import get_ai_service
 
-    yield
+    service = get_ai_service()
+    # 参照を保持しないとタスクが GC される可能性がある
+    app.state.warmup_task = asyncio.create_task(asyncio.to_thread(service.warmup))
+
+    try:
+        yield
+    finally:
+        # 先読みが走っている最中の終了では、スレッドを待たずに接続だけ畳む。
+        # to_thread のスレッドはキャンセルできないため、待つと終了が最大
+        # OLLAMA_WARMUP_TIMEOUT_S ぶん伸びる。
+        app.state.warmup_task.cancel()
+        service.close()
 
 
 def create_app() -> FastAPI:
