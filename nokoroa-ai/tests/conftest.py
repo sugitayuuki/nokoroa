@@ -137,10 +137,10 @@ os.environ["CORS_ORIGINS"] = "http://localhost:3000"
 @pytest.fixture
 def models() -> FakeModels:
     """アプリが使う GeminiService のフェイク models を返す。"""
-    from app.deps import get_gemini_service
+    from app.deps import get_ai_service
 
-    get_gemini_service.cache_clear()
-    service = get_gemini_service()
+    get_ai_service.cache_clear()
+    service = get_ai_service()
     return service.client.models
 
 

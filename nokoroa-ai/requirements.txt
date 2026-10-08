@@ -14,3 +14,8 @@ pydantic-settings==2.5.2
 # 内部で to_thread しているだけなので利得が無いが、2.x は httpx による
 # 真の非同期になり、スレッドを消費せずキャンセルも効くようになる。
 google-genai==1.2.0
+
+# Ollama プロバイダが /api/chat / /api/embed を直接叩くのに使う。
+# google-genai の推移的依存としても入るが、直接 import するため明示する
+# (google-genai を外した途端に壊れるのを防ぐ)。
+httpx==0.27.2

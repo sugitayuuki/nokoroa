@@ -1,7 +1,7 @@
 """FastAPI の依存関係。
 
-認証と GeminiService の提供をここへ集約する。GeminiService をモジュール
-レベルで生成するとインポート時に API キーが必須になりテストが書けないため、
+認証と AIService の提供をここへ集約する。サービスをモジュールレベルで
+生成するとインポート時に API キーが必須になりテストが書けないため、
 必ずこの provider 経由で取得する。
 """
 
@@ -12,7 +12,7 @@ from typing import Annotated
 from fastapi import Depends, Header, HTTPException
 
 from app.config import settings
-from app.services.gemini_service import GeminiService
+from app.services.base import AIService
 
 
 def verify_internal_token(
@@ -20,9 +20,9 @@ def verify_internal_token(
 ) -> None:
     """backendからの内部呼び出しであることを検証する。
 
-    このサービスはGemini APIへの従量課金リクエストを発行するため、
-    chat / embeddings の両ルーターで必須にする
-    (片方だけ保護すると、保護していない側から課金を増幅できる)。
+    ollama 運用では外部課金は発生しないが、プロンプトを自由に流し込める
+    内部APIであることは変わらないため、プロバイダによらず必須にする
+    (片方だけ保護すると、保護していない側から悪用できる)。
     """
     expected = settings.internal_ai_token
     if not expected:
@@ -43,15 +43,24 @@ def verify_internal_token(
 
 
 @lru_cache
-def get_gemini_service() -> GeminiService:
-    """GeminiService を 1 インスタンスだけ生成して使い回す。
+def get_ai_service() -> AIService:
+    """設定されたプロバイダのサービスを 1 インスタンスだけ生成して使い回す。
 
     ルーターごとに生成すると HTTP 接続プールが分裂するため、
     chat / embeddings の双方がこの provider を使う。
     """
+    # import をここに置くのは、選ばれていない側のプロバイダの依存
+    # (google-genai / httpx) をインポート時に要求しないため。
+    if settings.ai_provider == "ollama":
+        from app.services.ollama_service import create_ollama_service
+
+        return create_ollama_service()
+
+    from app.services.gemini_service import GeminiService
+
     return GeminiService(api_key=settings.gemini_api_key)
 
 
 # ルーター側は引数デフォルトに Depends を書かず、この別名を型注釈として使う
 # (FastAPI が推奨する形式。可変デフォルト引数の警告も避けられる)。
-GeminiDep = Annotated[GeminiService, Depends(get_gemini_service)]
+AIServiceDep = Annotated[AIService, Depends(get_ai_service)]

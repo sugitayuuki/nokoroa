@@ -49,7 +49,12 @@ services:
     ports:
       - '8000:8000'
     environment:
+      # gemini(既定) は外部APIへ従量課金、ollama はローカル推論で課金ゼロ。
+      - AI_PROVIDER=${AI_PROVIDER:-gemini}
+      # AI_PROVIDER=gemini のときのみ必須。未設定だと起動時に失敗する。
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      # Ollama はコンテナではなくホスト上で動くため、localhost では届かない。
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       # backend と同じ値にする。未設定だと全リクエストが503になる。
       - INTERNAL_AI_TOKEN=${INTERNAL_AI_TOKEN:?INTERNAL_AI_TOKEN is required}
 
