@@ -19,7 +19,7 @@ export class FavoritesService {
     });
 
     if (!post) {
-      throw new NotFoundException(`Post with ID ${postId} not found`);
+      throw new NotFoundException(`ID ${postId} の投稿が見つかりません`);
     }
 
     const existingFavorite = await this.prisma.bookmark.findUnique({
@@ -32,7 +32,7 @@ export class FavoritesService {
     });
 
     if (existingFavorite) {
-      throw new ConflictException('Post is already in favorites');
+      throw new ConflictException('すでにブックマークしています');
     }
 
     const bookmark = await this.prisma.bookmark.create({
@@ -65,7 +65,7 @@ export class FavoritesService {
     });
 
     if (!favorite) {
-      throw new NotFoundException('Favorite not found');
+      throw new NotFoundException('ブックマークが見つかりません');
     }
 
     await this.prisma.bookmark.delete({

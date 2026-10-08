@@ -13,6 +13,13 @@ interface UsePaginatedPostsOptions<T> {
   /**
    * 現在ページのレスポンス。未取得 (undefined) の間は前ページまでの
    * 累積を保持する。
+   *
+   * 重要: 取得フックに SWR の `keepPreviousData` を付けてはいけない。
+   * 付けると未取得ページでも「前ページの data」が同一参照で返り、
+   * 下の取り込み effect が page だけ進んだ時点でそれを現ページとして扱う。
+   * lastLoadedPageRef が進み isLoadingMore が解除されるため、
+   * observer が即再発火して 1 ページ分が黙って欠落する。
+   * 「未取得なら undefined」という契約がこのフックの前提。
    */
   data?: PaginatedResponse<T>;
   /** data が何ページ目か (0 始まり)。0 のときは累積を置き換える */

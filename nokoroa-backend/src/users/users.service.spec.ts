@@ -154,6 +154,78 @@ describe('UsersService', () => {
       expect(args.include.posts.where).toBeUndefined();
     });
 
+    it('_count.posts にも posts と同じ可視性条件を付ける', async () => {
+      // posts だけ絞って _count を絞らないと、一覧には出ない非公開投稿まで
+      // 件数に含まれ、「posts は 2 件なのに postsCount は 7」の差から
+      // 非公開投稿の件数を第三者が割り出せてしまう。
+      mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
+
+      await service.findById(1, 999);
+      await service.findById(1, 1);
+
+      const calls = (
+        mockPrismaService.user.findUnique as jest.Mock<
+          unknown,
+          [
+            {
+              include: {
+                _count: {
+                  select: { posts: true | { where: { isPublic: boolean } } };
+                };
+              };
+            },
+          ]
+        >
+      ).mock.calls;
+
+      // 他人・未認証: 公開投稿のみ数える
+      expect(calls[0][0].include._count.select.posts).toEqual({
+        where: { isPublic: true },
+      });
+      // 本人: 非公開も数える
+      expect(calls[1][0].include._count.select.posts).toBe(true);
+    });
+
+    it('posts を一覧と同じ形(tags / location / favoritesCount)に整形して返す', async () => {
+      // include を付けないと生の Post 行が返り、Post には tags スカラも
+      // location 文字列も無いため、プロフィールと /my-posts のカードから
+      // タグ・場所が消えブックマーク数が 0 固定になる。
+      mockPrismaService.user.findUnique.mockResolvedValue({
+        ...mockUser,
+        posts: [
+          {
+            id: 7,
+            title: 'T',
+            content: 'C',
+            imageUrl: null,
+            isPublic: true,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            authorId: 1,
+            locationId: 2,
+            author: { id: 1, name: 'Test User', avatar: null },
+            location: {
+              id: 2,
+              name: '京都',
+              prefecture: '京都府',
+              latitude: 35.0,
+              longitude: 135.7,
+            },
+            postTags: [{ tag: { id: 1, name: '紅葉', slug: 'momiji' } }],
+            _count: { bookmarks: 4 },
+          },
+        ],
+      });
+
+      const result = await service.findById(1, 1);
+
+      expect(result.posts[0].tags).toEqual(['紅葉']);
+      expect(result.posts[0].location).toBe('京都');
+      expect(result.posts[0].prefecture).toBe('京都府');
+      expect(result.posts[0].favoritesCount).toBe(4);
+      expect(result.posts[0]).not.toHaveProperty('_count');
+    });
+
     it('存在しないユーザーIDでNotFoundExceptionを投げる', async () => {
       mockPrismaService.user.findUnique.mockResolvedValue(null);
 

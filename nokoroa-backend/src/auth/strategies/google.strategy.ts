@@ -21,14 +21,17 @@ function requireGoogleEnv(configService: ConfigService, key: string): string {
   return value;
 }
 
+/**
+ * Google 認証後に req.user へ載る値。
+ * auth.service.googleLogin が実際に読む 4 つだけを持つ。
+ * OAuth のアクセストークンは使わないので保持しない
+ * (使わない資格情報をリクエストに載せて引き回さない)。
+ */
 export interface GoogleUser {
   email: string;
-  firstName: string;
-  lastName: string;
   name: string;
   picture: string;
   googleId: string;
-  accessToken: string;
 }
 
 @Injectable()
@@ -43,7 +46,7 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
   }
 
   validate(
-    accessToken: string,
+    _accessToken: string,
     _refreshToken: string,
     profile: Profile,
     done: VerifyCallback,
@@ -51,12 +54,9 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
     const { name, emails, photos } = profile;
     const user: GoogleUser = {
       email: emails?.[0]?.value ?? '',
-      firstName: name?.givenName ?? '',
-      lastName: name?.familyName ?? '',
       name: (name?.givenName ?? '') + ' ' + (name?.familyName ?? ''),
       picture: photos?.[0]?.value ?? '',
       googleId: profile.id,
-      accessToken,
     };
     done(null, user);
   }

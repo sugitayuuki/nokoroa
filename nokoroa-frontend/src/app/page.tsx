@@ -1,5 +1,6 @@
 'use client';
 
+import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
@@ -10,6 +11,8 @@ import Typography from '@mui/material/Typography';
 import Link from 'next/link';
 import { useState } from 'react';
 
+import { EmptyState } from '@/components/common/EmptyState';
+import { PageSpinner } from '@/components/common/PageSpinner';
 import PostCard from '@/components/post/PostCard';
 import { GRID_LAYOUT } from '@/constants/theme';
 import { usePaginatedPosts } from '@/hooks/usePaginatedPosts';
@@ -35,18 +38,7 @@ export default function TopPage() {
   } = usePaginatedPosts({ data: posts, page, onPageChange: setPage, error });
 
   if (isLoading) {
-    return (
-      <Box
-        sx={{
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          minHeight: '50vh',
-        }}
-      >
-        <CircularProgress />
-      </Box>
-    );
+    return <PageSpinner />;
   }
 
   if (isAuthenticated) {
@@ -60,7 +52,14 @@ export default function TopPage() {
           mx: 'auto',
         }}
       >
-        {postsLoading && (
+        {/*
+          全面スピナー・エラー・空表示は「まだ 1 件も積めていない初回」に限る。
+          SWR の isLoading / error はキー単位なので、2 ページ目の取得中や失敗で
+          これらを出すと usePaginatedPosts が保持している累積まで画面から消え、
+          ページ送りごとに一覧が点滅してスクロール位置が飛ぶ。
+          2 ページ目以降の進捗は末尾の isLoadingMore スピナーが担当する。
+        */}
+        {postsLoading && allPosts.length === 0 && (
           <Box
             sx={{
               display: 'flex',
@@ -72,7 +71,7 @@ export default function TopPage() {
             <CircularProgress />
           </Box>
         )}
-        {!postsLoading && error && (
+        {!postsLoading && error && allPosts.length === 0 && (
           <Box sx={{ p: 4, textAlign: 'center', gridColumn: '1 / -1' }}>
             <Typography variant="h6" color="error">
               投稿の読み込みに失敗しました
@@ -83,21 +82,19 @@ export default function TopPage() {
           </Box>
         )}
         {!postsLoading && !error && allPosts.length === 0 && (
-          <Box sx={{ p: 4, textAlign: 'center', gridColumn: '1 / -1' }}>
-            <Typography variant="h6" color="text.secondary">
-              投稿がありません
-            </Typography>
-          </Box>
+          <EmptyState
+            message="投稿がありません"
+            sx={{ gridColumn: '1 / -1' }}
+          />
         )}
-        {!postsLoading &&
-          allPosts.map((post, index) => (
-            <Box
-              key={post.id}
-              ref={index === allPosts.length - 1 ? lastElementRef : null}
-            >
-              <PostCard post={post} />
-            </Box>
-          ))}
+        {allPosts.map((post, index) => (
+          <Box
+            key={post.id}
+            ref={index === allPosts.length - 1 ? lastElementRef : null}
+          >
+            <PostCard post={post} />
+          </Box>
+        ))}
 
         {isLoadingMore && (
           <Box
@@ -111,6 +108,18 @@ export default function TopPage() {
           >
             <CircularProgress />
           </Box>
+        )}
+
+        {/*
+          累積がある状態での失敗は一覧を残したまま末尾で知らせる。
+          usePaginatedPosts は error 中に isLoadingMore を解除し observer も
+          止めるため、ここで伝えないと「最後まで見た」のと区別がつかない。
+          (SearchResults と同じ扱いに揃える)
+        */}
+        {error && allPosts.length > 0 && (
+          <Alert severity="error" sx={{ mt: 4, gridColumn: '1 / -1' }}>
+            続きの読み込みに失敗しました。もう一度お試しください。
+          </Alert>
         )}
       </Box>
     );

@@ -12,10 +12,8 @@ export interface SearchFilters {
   mode?: SearchMode;
 }
 
-export type Post = PostData;
-
 export interface SearchResponse {
-  posts: Post[];
+  posts: PostData[];
   total: number;
   hasMore: boolean;
   aiAvailable?: boolean;

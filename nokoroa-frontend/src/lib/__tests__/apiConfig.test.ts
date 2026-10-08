@@ -115,15 +115,34 @@ describe('API_CONFIG.endpoints', () => {
     expect(endpoints.userFollowers('3')).toBe('/follows/3/followers');
     expect(endpoints.checkFavorite('12')).toBe('/favorites/check/12');
     expect(endpoints.favoriteStats('12')).toBe('/favorites/stats/12');
-    expect(endpoints.bookmarkPost('12')).toBe('/bookmarks/12');
   });
 
-  it('/users 配下の follow と /follows 配下の follow を混同しない', () => {
-    // 2 系統のフォロー API が併存しているため、取り違えると 404 になる
-    expect(endpoints.follow('3')).toBe('/users/3/follow');
-    expect(endpoints.followUser('3')).not.toBe(endpoints.follow('3'));
-    expect(endpoints.followers('3')).toBe('/users/3/followers');
-    expect(endpoints.userFollowers('3')).not.toBe(endpoints.followers('3'));
+  it('バックエンドに存在しない旧エンドポイントを再追加しない', () => {
+    // フォローの実体は /follows/* のみ、ブックマークの実体は /favorites/* のみ。
+    // /users/:id/follow 系と /bookmarks/* 系、/posts/:id/favorite は
+    // 一度も実装されたことがない。削除前のテストはこれらを「正しいもの」として
+    // assert しており、実在しないパスを選んでしまう事故の温床になっていた。
+    for (const name of [
+      'users',
+      'follow',
+      'unfollow',
+      'followers',
+      'following',
+      'bookmarks',
+      'bookmarkPost',
+      'favoritePost',
+      'follows',
+    ]) {
+      expect(
+        endpoints,
+        `${name} は実在しないルートなので定義しない`,
+      ).not.toHaveProperty(name);
+    }
+  });
+
+  it('アップロード系はバックエンドの実ルートを指す', () => {
+    expect(endpoints.uploadPostImage).toBe('/posts/upload-image');
+    expect(endpoints.uploadAvatar).toBe('/users/upload-avatar');
   });
 
   it('空の ID では不正なパスになる(呼び出し側で弾く必要がある既知の性質)', () => {

@@ -1,95 +1,90 @@
 'use client';
 
 import BookmarkIcon from '@mui/icons-material/Bookmark';
-import { Box, CircularProgress, Typography } from '@mui/material';
-import { useEffect, useState } from 'react';
+import { Alert, Box, Typography } from '@mui/material';
+import { useCallback, useEffect, useState } from 'react';
 
+import { EmptyState } from '@/components/common/EmptyState';
+import { PageSpinner } from '@/components/common/PageSpinner';
+import { RetryableError } from '@/components/common/RetryableError';
 import PostCard from '@/components/post/PostCard';
 import { GRID_LAYOUT } from '@/constants/theme';
+import { usePaginatedPosts } from '@/hooks/usePaginatedPosts';
 import { useRequireAuth } from '@/hooks/useRequireAuth';
 import { getFavorites } from '@/lib/favorites';
 import { FavoriteData } from '@/types/post';
 
+/** 1 ページあたりの取得件数 */
+const PAGE_SIZE = 20;
+
 export default function BookmarksPage() {
   const { isAuthLoading, isAuthenticated, isReady } = useRequireAuth();
-  const [favorites, setFavorites] = useState<FavoriteData[]>([]);
-  const [favoritesLoading, setFavoritesLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
+  // usePaginatedPosts は「未取得なら undefined」という契約なので、
+  // ページ取得中は undefined に戻す必要がある。
+  const [pageData, setPageData] = useState<{
+    posts: FavoriteData[];
+    hasMore: boolean;
+  }>();
+  const [total, setTotal] = useState<number>();
+  const [error, setError] = useState<Error>();
+
+  const loadPage = useCallback(async (nextPage: number) => {
+    setError(undefined);
+    setPageData(undefined);
+    try {
+      const response = await getFavorites(PAGE_SIZE, nextPage * PAGE_SIZE);
+      setPageData({ posts: response.favorites, hasMore: response.hasMore });
+      setTotal(response.total);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err
+          : new Error('ブックマーク一覧の取得に失敗しました'),
+      );
+    }
+  }, []);
 
   useEffect(() => {
     if (isAuthenticated) {
-      loadFavorites();
+      void loadPage(page);
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, page, loadPage]);
 
-  const loadFavorites = async () => {
-    try {
-      setError(null);
-      setFavoritesLoading(true);
-      const response = await getFavorites(20, 0);
-      setFavorites(response.favorites);
-    } catch (error) {
-      setError(
-        error instanceof Error
-          ? error.message
-          : 'ブックマーク一覧の取得に失敗しました',
-      );
-    } finally {
-      setFavoritesLoading(false);
-    }
-  };
+  const {
+    posts: bookmarks,
+    isLoadingMore,
+    lastElementRef,
+  } = usePaginatedPosts({
+    data: pageData,
+    page,
+    error,
+    onPageChange: setPage,
+  });
 
   if (!isReady) {
-    return isAuthLoading ? (
-      <Box
-        sx={{
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          minHeight: '50vh',
-        }}
-      >
-        <CircularProgress />
-      </Box>
-    ) : null;
+    return isAuthLoading ? <PageSpinner /> : null;
   }
 
-  if (favoritesLoading) {
+  // 全面表示は「まだ 1 件も無い」ときだけ。2 ページ目以降の進捗と失敗は
+  // 末尾の isLoadingMore / Alert が担当する (一覧ページ共通の扱い)。
+  const hasBookmarks = bookmarks.length > 0;
+
+  if (!pageData && !error && !hasBookmarks) {
+    return <PageSpinner />;
+  }
+
+  if (error && !hasBookmarks) {
     return (
-      <Box
-        sx={{
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          minHeight: '50vh',
-        }}
-      >
-        <CircularProgress />
-      </Box>
+      <RetryableError
+        message="ブックマークの読み込みに失敗しました"
+        onRetry={() => void loadPage(page)}
+      />
     );
   }
 
-  if (error) {
-    return (
-      <Box sx={{ p: 4, textAlign: 'center' }}>
-        <Typography variant="h6" color="error">
-          ブックマークの読み込みに失敗しました
-        </Typography>
-        <Typography variant="body2" color="text.secondary">
-          {error}
-        </Typography>
-      </Box>
-    );
-  }
-
-  if (favorites.length === 0) {
-    return (
-      <Box sx={{ p: 4, textAlign: 'center' }}>
-        <Typography variant="h6" color="text.secondary">
-          ブックマークした投稿がありません
-        </Typography>
-      </Box>
-    );
+  if (!hasBookmarks) {
+    return <EmptyState message="ブックマークした投稿がありません" />;
   }
 
   return (
@@ -97,7 +92,7 @@ export default function BookmarksPage() {
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 4 }}>
         <BookmarkIcon sx={{ color: '#1976d2', fontSize: '2rem' }} />
         <Typography variant="h4" sx={{ fontWeight: 600 }}>
-          ブックマーク ({favorites.length}件)
+          ブックマーク ({total ?? bookmarks.length}件)
         </Typography>
       </Box>
 
@@ -110,14 +105,27 @@ export default function BookmarksPage() {
           mx: 'auto',
         }}
       >
-        {favorites.map((favorite) => (
-          <Box key={favorite.id}>
+        {bookmarks.map((favorite, index) => (
+          <Box
+            key={favorite.id}
+            ref={index === bookmarks.length - 1 ? lastElementRef : null}
+          >
             {/* ブックマーク一覧なので全件がブックマーク済み。
                 カード毎の状態問い合わせを省く */}
             <PostCard post={favorite.post} isBookmarked />
           </Box>
         ))}
       </Box>
+
+      {isLoadingMore && <PageSpinner variant="inline" />}
+
+      {/* 累積がある状態での失敗は一覧を残したまま末尾で知らせる
+          (page.tsx / SearchResults と同じ扱い) */}
+      {error && hasBookmarks && (
+        <Alert severity="error" sx={{ mt: 4 }}>
+          続きの読み込みに失敗しました。もう一度お試しください。
+        </Alert>
+      )}
     </Box>
   );
 }

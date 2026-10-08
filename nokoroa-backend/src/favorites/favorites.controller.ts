@@ -18,6 +18,7 @@ import {
 } from '@nestjs/swagger';
 import { FavoritesService } from './favorites.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { AuthenticatedRequest } from '../common/authenticated-request';
 import { OffsetPaginationDto } from '../common/pagination.dto';
 
 @ApiTags('favorites')
@@ -38,7 +39,7 @@ export class FavoritesController {
   @ApiResponse({ status: 404, description: '投稿が見つかりません' })
   async addFavorite(
     @Param('postId', ParseIntPipe) postId: number,
-    @Request() req: { user: { userId: number } },
+    @Request() req: AuthenticatedRequest,
   ) {
     return this.favoritesService.addFavorite(req.user.userId, postId);
   }
@@ -55,7 +56,7 @@ export class FavoritesController {
   @ApiResponse({ status: 401, description: '認証エラー' })
   async removeFavorite(
     @Param('postId', ParseIntPipe) postId: number,
-    @Request() req: { user: { userId: number } },
+    @Request() req: AuthenticatedRequest,
   ) {
     return this.favoritesService.removeFavorite(req.user.userId, postId);
   }
@@ -71,7 +72,7 @@ export class FavoritesController {
   @ApiResponse({ status: 400, description: 'ページネーション指定が不正です' })
   @ApiResponse({ status: 401, description: '認証エラー' })
   async getUserFavorites(
-    @Request() req: { user: { userId: number } },
+    @Request() req: AuthenticatedRequest,
     @Query() pagination: OffsetPaginationDto,
   ) {
     return this.favoritesService.getUserFavorites(
@@ -93,7 +94,7 @@ export class FavoritesController {
   @ApiResponse({ status: 401, description: '認証エラー' })
   async checkFavoriteStatus(
     @Param('postId', ParseIntPipe) postId: number,
-    @Request() req: { user: { userId: number } },
+    @Request() req: AuthenticatedRequest,
   ) {
     return this.favoritesService.checkFavoriteStatus(req.user.userId, postId);
   }

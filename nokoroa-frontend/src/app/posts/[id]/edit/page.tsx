@@ -5,7 +5,6 @@ import {
   Alert,
   Box,
   Button,
-  CircularProgress,
   Container,
   IconButton,
   Typography,
@@ -14,9 +13,11 @@ import { useParams, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 
+import { PageSpinner } from '@/components/common/PageSpinner';
 import { PostForm } from '@/components/post/PostForm';
 import { useRequireAuth } from '@/hooks/useRequireAuth';
 import { API_CONFIG, createApiRequest } from '@/lib/apiConfig';
+import { useAuth } from '@/providers/AuthProvider';
 import { CreatePostData, PostData } from '@/types/post';
 import { geocodeLocation } from '@/utils/geocoding';
 
@@ -24,6 +25,7 @@ export default function EditPostPage() {
   const { id } = useParams();
   const router = useRouter();
   const { isAuthenticated, isAuthLoading, isReady } = useRequireAuth();
+  const { user } = useAuth();
 
   const [post, setPost] = useState<PostData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -188,18 +190,7 @@ export default function EditPostPage() {
   }
 
   if (isAuthLoading || loading) {
-    return (
-      <Box
-        sx={{
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          minHeight: '50vh',
-        }}
-      >
-        <CircularProgress />
-      </Box>
-    );
+    return <PageSpinner />;
   }
 
   if (error) {
@@ -221,6 +212,26 @@ export default function EditPostPage() {
     return (
       <Container maxWidth="md" sx={{ py: 4 }}>
         <Alert severity="error">投稿が見つかりません</Alert>
+        <Button
+          startIcon={<ArrowBackIcon />}
+          onClick={() => router.back()}
+          sx={{ mt: 2 }}
+        >
+          戻る
+        </Button>
+      </Container>
+    );
+  }
+
+  // 所有者以外にフォームを見せない。認可の正は backend 側
+  // (posts.service の ForbiddenException) で、これは入力が無駄になるのを防ぐ UI ガード。
+  //
+  // `user` が無い場合も弾く(fail-closed)。AuthProvider は user が取れなくても
+  // 認証状態を維持するため、isAuthenticated かつ user === undefined が起こりうる。
+  if (!user || user.id !== post.author.id) {
+    return (
+      <Container maxWidth="md" sx={{ py: 4 }}>
+        <Alert severity="error">自分の投稿のみ編集できます</Alert>
         <Button
           startIcon={<ArrowBackIcon />}
           onClick={() => router.back()}

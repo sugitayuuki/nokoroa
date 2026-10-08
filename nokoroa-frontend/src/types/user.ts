@@ -38,7 +38,8 @@ export interface UserPost {
 export interface UserFollowData {
   id: number;
   name: string;
-  email: string;
+  // email は含めない。follows.service の select は
+  // {id, name, avatar, bio, _count} だけを返す。
   avatar?: string | null;
   bio?: string | null;
   followedAt?: string;

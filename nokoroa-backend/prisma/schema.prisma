@@ -56,6 +56,10 @@ model Post {
   // プロフィールとマイ投稿は author 単位 + createdAt 降順 (users.service.ts)。
   // PostgreSQL は外部キーに自動でインデックスを張らないため明示する。
   @@index([authorId, createdAt])
+  // locationId も外部キーかつ絞り込み・集計キー。これが無いと
+  // getLocations() の _count.posts と search({ location }) が post の
+  // Seq Scan になり、location 削除時の ON DELETE SET NULL も全件走査になる。
+  @@index([locationId])
   @@map("post")
 }
 
@@ -71,6 +75,15 @@ model Post {
 /// そのため `prisma migrate dev` / `migrate diff` は必ずこの索引の DROP INDEX を
 /// 生成する。生成されたマイグレーションからその行を削除すること。
 /// 消すとベクトル類似検索が全件走査になり、無言で劣化する。
+///
+/// pg_trgm の GIN 索引 4 本 (post_title_trgm_idx / post_content_trgm_idx /
+/// user_name_trgm_idx / location_name_trgm_idx) も gin_trgm_ops を @@index で
+/// 表現できないため同じ drift になる。消すとキーワード検索が全表走査に戻る。
+/// 効くのは posts.service.search() と chat のフォールバックのみで、
+/// /map の searchByLocation は条件が `$n IS NULL OR ...` の形のため効かない。
+///
+/// 適用済みマイグレーションの SQL は _prisma_migrations のチェックサム検証対象。
+/// コメントだけでも編集すると migrate deploy が失敗するので、補足はこちらへ書く。
 model PostEmbedding {
   id          Int                        @id @default(autoincrement())
   postId      Int                        @unique

@@ -31,7 +31,11 @@ export default function RootLayout({
   dialog,
 }: Readonly<{
   children: React.ReactNode;
-  dialog?: React.ReactNode;
+  // @dialog は並列ルートのスロット。default.tsx があるため Next は常に
+  // この slot を渡すので optional にしない。optional だと Next が生成する
+  // LayoutProps (dialog は必須) と食い違い、.next/types を含めた
+  // typecheck が TS2344 で落ちる。
+  dialog: React.ReactNode;
 }>) {
   return (
     <html lang="ja">

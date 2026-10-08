@@ -3,7 +3,7 @@ import { ThrottlerGuard } from '@nestjs/throttler';
 import { Request } from 'express';
 
 interface RequestWithUser extends Request {
-  user?: { id?: number; userId?: number };
+  user?: { userId?: number };
 }
 
 /** レート制限をユーザー単位で数える throttler の名前 */
@@ -11,7 +11,7 @@ export const USER_THROTTLER = 'user';
 
 export function trackedUserId(context: ExecutionContext): number | undefined {
   const req = context.switchToHttp().getRequest<RequestWithUser>();
-  return req.user?.id ?? req.user?.userId;
+  return req.user?.userId;
 }
 
 /**
@@ -41,7 +41,7 @@ export function trackedUserId(context: ExecutionContext): number | undefined {
 @Injectable()
 export class UserThrottlerGuard extends ThrottlerGuard {
   protected getTracker(req: RequestWithUser): Promise<string> {
-    const userId = req.user?.id ?? req.user?.userId;
+    const userId = req.user?.userId;
     return Promise.resolve(userId ? `user-${userId}` : `ip-${req.ip}`);
   }
 }

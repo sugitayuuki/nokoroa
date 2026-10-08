@@ -15,20 +15,12 @@ import { SearchPostsByLocationDto } from './dto/search-posts-by-location.dto';
 import { SearchPostsSemanticDto } from './dto/search-posts-semantic.dto';
 import { SearchPostsDto } from './dto/search-posts.dto';
 import { UpdatePostDto } from './dto/update-post.dto';
-import { formatPost, postInclude } from './post-format';
-
-const MAX_PAGE_SIZE = 50;
-
-/** 数値でない値・範囲外の値を安全な既定値に丸める */
-function clampInt(
-  value: number,
-  min: number,
-  max: number,
-  fallback: number,
-): number {
-  if (!Number.isFinite(value)) return fallback;
-  return Math.min(Math.max(Math.trunc(value), min), max);
-}
+import {
+  formatPost,
+  formatPostWithFavoritesCount,
+  postInclude,
+  postWithFavoritesCountInclude,
+} from './post-format';
 
 function slugify(text: string): string {
   return text
@@ -121,18 +113,24 @@ export class PostsService {
   private async getOrCreateTags(tagNames: string[]) {
     const tags = await Promise.all(
       tagNames.map(async (name) => {
-        const existing = await this.prisma.tag.findUnique({ where: { name } });
+        // slugify は記号と区切りを正規化するため異なる name が同じ slug に落ちる
+        // ("Kyoto" と "# Kyoto" はどちらも "kyoto")。name だけで引くと衝突を
+        // 検出できず tag_slug_key の P2002 で投稿作成ごと 409 になるので、
+        // slug 一致でも既存タグを再利用する。orderBy は結果を決定的にするため。
+        const slug = slugify(name) || name.toLowerCase();
+        const findExisting = () =>
+          this.prisma.tag.findFirst({
+            where: { OR: [{ name }, { slug }] },
+            orderBy: { id: 'asc' },
+          });
+
+        const existing = await findExisting();
         if (existing) return existing;
 
         try {
-          return await this.prisma.tag.create({
-            data: {
-              name,
-              slug: slugify(name) || name.toLowerCase(),
-            },
-          });
+          return await this.prisma.tag.create({ data: { name, slug } });
         } catch (err) {
-          // findUnique と create の間に別リクエストが同じタグを作ると
+          // 検索と create の間に別リクエストが同じタグを作ると
           // tag.name / tag.slug の unique 制約で P2002 になる。
           // competing insert は成功しているので取り直せばよい
           // (getOrCreateLocation と同じ方針)。
@@ -140,14 +138,18 @@ export class PostsService {
             err instanceof Prisma.PrismaClientKnownRequestError &&
             err.code === 'P2002'
           ) {
-            const retry = await this.prisma.tag.findUnique({ where: { name } });
+            const retry = await findExisting();
             if (retry) return retry;
           }
           throw err;
         }
       }),
     );
-    return tags;
+    // slug 一致で再利用する結果、1 リクエスト内の複数の name が同一 Tag 行に
+    // 解決されうる。重複を残すと postTag.createMany が同じ (postId, tagId) を
+    // 2 件作って @@unique の P2002 で 409 になる。
+    const uniqueById = new Map(tags.map((tag) => [tag.id, tag]));
+    return [...uniqueById.values()];
   }
 
   async create(createPostDto: CreatePostDto & { authorId: number }) {
@@ -193,15 +195,19 @@ export class PostsService {
     return formatPost(post);
   }
 
+  /** limit / offset の検証は OffsetPaginationDto が担う (範囲外は 400)。 */
   async findAll(limit: number = 10, offset: number = 0) {
-    // コントローラから渡る値は生の parseInt なので、NaN や過大値をここで正規化する
-    const take = clampInt(limit, 1, MAX_PAGE_SIZE, 10);
-    const skip = clampInt(offset, 0, Number.MAX_SAFE_INTEGER, 0);
+    const take = limit;
+    const skip = offset;
 
     const [posts, total] = await Promise.all([
       this.prisma.post.findMany({
         where: { isPublic: true },
-        include: postInclude,
+        // favoritesCount を含めないと、カードの BookmarkButton が
+        // initialBookmarkCount をそのまま表示するため件数が 0 固定になり、
+        // findOne が正しい数を返す詳細画面と食い違う。
+        // 集計は bookmark(postId) の索引で引ける。
+        include: postWithFavoritesCountInclude,
         orderBy: { createdAt: 'desc' },
         skip,
         take,
@@ -210,7 +216,7 @@ export class PostsService {
     ]);
 
     return {
-      posts: posts.map(formatPost),
+      posts: posts.map(formatPostWithFavoritesCount),
       total,
       hasMore: skip + take < total,
     };
@@ -258,7 +264,8 @@ export class PostsService {
     const [posts, total] = await Promise.all([
       this.prisma.post.findMany({
         where,
-        include: postInclude,
+        // 一覧と同じ理由で favoritesCount を含める (findAll のコメント参照)
+        include: postWithFavoritesCountInclude,
         orderBy: { createdAt: 'desc' },
         skip: offset,
         take: limit,
@@ -267,7 +274,7 @@ export class PostsService {
     ]);
 
     return {
-      posts: posts.map(formatPost),
+      posts: posts.map(formatPostWithFavoritesCount),
       total,
       hasMore: offset + limit < total,
     };
@@ -277,9 +284,12 @@ export class PostsService {
     if (ids.length === 0) return [];
     const posts = await this.prisma.post.findMany({
       where: { id: { in: ids }, isPublic: true },
-      include: postInclude,
+      // 意味検索 (searchSemantic) がここから結果を引く。findAll / search と
+      // 同じく favoritesCount を含めないと、同じ /search 画面で
+      // キーワード検索は正しい件数・意味検索は 0 固定という食い違いになる。
+      include: postWithFavoritesCountInclude,
     });
-    return posts.map(formatPost);
+    return posts.map(formatPostWithFavoritesCount);
   }
 
   async searchSemantic(dto: SearchPostsSemanticDto) {
@@ -330,13 +340,13 @@ export class PostsService {
     ]);
 
     if (!post) {
-      throw new NotFoundException(`Post with ID ${id} not found`);
+      throw new NotFoundException(`ID ${id} の投稿が見つかりません`);
     }
 
     // 非公開投稿は投稿者本人のみ閲覧できる。
     // 存在自体を隠すため403ではなく404を返す。
     if (!post.isPublic && post.authorId !== requesterId) {
-      throw new NotFoundException(`Post with ID ${id} not found`);
+      throw new NotFoundException(`ID ${id} の投稿が見つかりません`);
     }
 
     return {
@@ -352,11 +362,11 @@ export class PostsService {
     });
 
     if (!post) {
-      throw new NotFoundException(`Post with ID ${id} not found`);
+      throw new NotFoundException(`ID ${id} の投稿が見つかりません`);
     }
 
     if (post.authorId !== userId) {
-      throw new ForbiddenException('You can only update your own posts');
+      throw new ForbiddenException('自分の投稿のみ編集できます');
     }
 
     const {
@@ -433,11 +443,11 @@ export class PostsService {
     });
 
     if (!post) {
-      throw new NotFoundException(`Post with ID ${id} not found`);
+      throw new NotFoundException(`ID ${id} の投稿が見つかりません`);
     }
 
     if (post.authorId !== userId) {
-      throw new ForbiddenException('You can only delete your own posts');
+      throw new ForbiddenException('自分の投稿のみ削除できます');
     }
 
     await this.prisma.post.delete({
@@ -477,6 +487,7 @@ export class PostsService {
       distance: number | null;
       tags: string[] | null;
       total_count: bigint;
+      favorites_count: bigint;
     }
 
     // 距離式は SELECT と WHERE の両方に現れる。クエリを丸ごと二重に持つと
@@ -518,7 +529,11 @@ export class PostsService {
            JOIN tag t ON pt."tagId" = t.id
            WHERE pt."postId" = p.id),
           ARRAY[]::text[]
-        ) as tags
+        ) as tags,
+        -- 一覧系と同じく favoritesCount を返す。含めないと /map のカードだけ
+        -- 件数が 0 固定になり、詳細画面と食い違う。
+        -- 集計は bookmark(postId) の索引で引ける。
+        (SELECT COUNT(*) FROM bookmark b WHERE b."postId" = p.id) AS favorites_count
       FROM post p
       JOIN "user" u ON p."authorId" = u.id
       LEFT JOIN location l ON p."locationId" = l.id
@@ -554,6 +569,8 @@ export class PostsService {
       latitude: row.latitude,
       longitude: row.longitude,
       tags: row.tags ?? [],
+      // bigint で返るため Number へ寄せる (total_count と同じ扱い)
+      favoritesCount: Number(row.favorites_count),
       author: {
         id: row.author_id,
         name: row.author_name,

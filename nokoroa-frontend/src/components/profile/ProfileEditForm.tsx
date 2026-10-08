@@ -53,16 +53,24 @@ export default function ProfileEditForm() {
     resolver: zodResolver(schema),
   });
 
-  // ユーザー情報をフォームに設定
+  // 名前と自己紹介を埋めるのは最初に user が届いたときだけ。毎回 setValue すると、
+  // アバター保存のたびに変わる avatar URL が user の参照を更新し、
+  // 未保存の入力をサーバ値で巻き戻してしまう。
+  // プレビューはサーバ値に追従させたいので別 effect にする。
+  const hasInitializedFields = useRef(false);
   useEffect(() => {
-    if (user) {
+    if (user && !hasInitializedFields.current) {
+      hasInitializedFields.current = true;
       setValue('name', user.name);
       setValue('bio', user.bio || '');
-      if (user.avatar) {
-        setAvatarPreview(user.avatar);
-      }
     }
   }, [user, setValue]);
+
+  useEffect(() => {
+    if (user?.avatar) {
+      setAvatarPreview(user.avatar);
+    }
+  }, [user?.avatar]);
 
   const handleAvatarChange = async (
     event: React.ChangeEvent<HTMLInputElement>,

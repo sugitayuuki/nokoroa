@@ -17,7 +17,7 @@ describe('UserThrottlerGuard', () => {
     ).getTracker(req);
 
   it('認証済みリクエストはユーザー単位で数える', async () => {
-    await expect(track({ user: { id: 7 }, ip: '1.2.3.4' })).resolves.toBe(
+    await expect(track({ user: { userId: 7 }, ip: '1.2.3.4' })).resolves.toBe(
       'user-7',
     );
   });
@@ -33,8 +33,8 @@ describe('UserThrottlerGuard', () => {
   });
 
   it('同一IPでもユーザーが違えば別の枠になる', async () => {
-    const a = await track({ user: { id: 1 }, ip: '1.2.3.4' });
-    const b = await track({ user: { id: 2 }, ip: '1.2.3.4' });
+    const a = await track({ user: { userId: 1 }, ip: '1.2.3.4' });
+    const b = await track({ user: { userId: 2 }, ip: '1.2.3.4' });
 
     expect(a).not.toBe(b);
   });

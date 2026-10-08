@@ -301,6 +301,32 @@ export const GoogleMap: React.FC<GoogleMapProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map, posts, onPostClick, userLocation, ipLocation]);
 
+  // unmount 時のマーカー破棄。markers を依存に入れると「生成 → 破棄」を
+  // 繰り返すため、ref 経由で最新値を読む。
+  //
+  // map インスタンスには clearInstanceListeners を呼んではいけない。
+  // Maps API 内部のリスナー(パン/ズーム等)まで消えて地図が操作不能になり、
+  // StrictMode の effect 二重実行では initializeMap の `!map` ガードにより
+  // 再生成されないため復帰しない。Maps JS に destroy API は無いので、
+  // Map 自体の解放は GC に委ねる。
+  const markersRef = useRef<google.maps.Marker[]>([]);
+  useEffect(() => {
+    markersRef.current = markers;
+  }, [markers]);
+
+  useEffect(
+    () => () => {
+      markersRef.current.forEach((marker) => {
+        // 先に地図から外す。clearInstanceListeners は Maps API 内部の
+        // リスナー(map_changed 等)まで消すので、先に呼ぶと setMap(null) の
+        // 反映が保証されない。
+        marker.setMap(null);
+        window.google?.maps?.event?.clearInstanceListeners(marker);
+      });
+    },
+    [],
+  );
+
   if (!apiKey || apiKey === 'development_mode') {
     return (
       <Box

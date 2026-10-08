@@ -9,7 +9,6 @@ import { Request } from 'express';
  * 型から消える。ここでは express の Request を明示的に import している。
  */
 export interface AuthUser {
-  id: number;
   userId: number;
   email: string;
 }
