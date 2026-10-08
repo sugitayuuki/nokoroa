@@ -748,15 +748,15 @@ describe('Auth (e2e, setGlobalPrefix 有り)', () => {
     });
 
     it('印が付いたハンドラはすべて GET', () => {
-      // Origin 検査は更新系にしか掛からず、ブラウザは GET 遷移に Origin を
-      // 付けない。つまり印を付けた更新系はクロスサイトから素通りになる。
-      // 一覧の更新だけでは回避できないよう、ここで機械的に止める。
-      expect(collectMarkedHandlers()).toEqual(
-        collectMarkedHandlers().map(({ name }) => ({
-          name,
-          httpMethod: RequestMethod.GET,
-        })),
-      );
+      // 印は「クロスサイトのトップレベル遷移」を受けるためのもので、それは
+      // 定義上 GET。更新系に付いた時点で設計外の使われ方をしており、残る防御も
+      // Origin 検査 1 枚だけになる。一覧の更新だけでは回避できないよう、
+      // ここで機械的に止める。
+      const marked = collectMarkedHandlers();
+      expect(marked.length).toBeGreaterThan(0);
+      expect(
+        marked.filter((entry) => entry.httpMethod !== RequestMethod.GET),
+      ).toEqual([]);
     });
   });
 });

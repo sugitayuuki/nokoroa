@@ -37,7 +37,6 @@ const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
  * - **Sec-Fetch-Site**: `cross-site` なら拒否。GET 遷移（`Origin` が付かない）を
  *   閉じるのはこちらだけなので、**上記 1 は Sec-Fetch-Site を送るブラウザに限って
  *   閉じている**（README の「残っている面」に明記）。
- *
  * - **印（`@AllowCrossSiteNavigation`）**: 付いたハンドラだけは `cross-site` でも
  *   通す。ただし `Sec-Fetch-Mode` / `Sec-Fetch-Dest` がトップレベル遷移を示す場合に
  *   限る（どちらも送らないクライアントは、他の検査と同じく「ブラウザ以外」として
@@ -73,10 +72,6 @@ export class FetchMetadataGuard implements CanActivate {
     // ブックマーク・外部アプリからのリンク）は自サイト扱い。
     // same-site は開発環境（フロント localhost:3000 → API localhost:4000。
     // Cookie と同じくポートはサイトの構成要素ではない）で必要。
-    //
-    // 単純一致で見ないのは、経路上の装置が同名ヘッダを足すと Express が
-    // ", " で連結し、`"cross-site, cross-site"` が一致しなくなるため
-    // （そのまま通すと全ルートがクロスサイトから到達可能になる）。
     if (!this.isCrossSite(req.header('sec-fetch-site'))) {
       return true;
     }
@@ -100,7 +95,10 @@ export class FetchMetadataGuard implements CanActivate {
     // ヘッダが無い場合は他の検査と同じく通す（ブラウザ以外とみなす）。
     const mode = req.header('sec-fetch-mode');
     const dest = req.header('sec-fetch-dest');
-    if ((mode && mode !== 'navigate') || (dest && dest !== 'document')) {
+    if (
+      !this.everyValueIs(mode, 'navigate') ||
+      !this.everyValueIs(dest, 'document')
+    ) {
       this.reject(
         req,
         'cross-site allowed route needs a top-level navigation ' +
@@ -111,12 +109,31 @@ export class FetchMetadataGuard implements CanActivate {
     return true;
   }
 
-  /** 値が重複して連結されていても取りこぼさない。 */
+  /**
+   * ヘッダ値を「重複して連結されうるリスト」として読む。
+   *
+   * 経路上の装置が同名ヘッダを足すと Express は `", "` で連結する。ここを
+   * 単純一致で見ると、拒否側（`cross-site`）は素通りし、許可側（`navigate` /
+   * `document`）は正規のログインを 403 にする。どちらに転んでも悪いので、
+   * 両方ともリストとして扱う。
+   */
+  private values(header: string | undefined): string[] {
+    const trimmed = header?.trim();
+    if (!trimmed) {
+      return [];
+    }
+    return trimmed.split(',').map((value) => value.trim());
+  }
+
+  /** 連結されていても拒否対象を取りこぼさない（fail-closed 側）。 */
   private isCrossSite(header: string | undefined): boolean {
-    return (
-      header !== undefined &&
-      header.split(',').some((value) => value.trim() === 'cross-site')
-    );
+    return this.values(header).includes('cross-site');
+  }
+
+  /** ヘッダ無しは「ブラウザ以外」として通す。値があれば全て一致を要求する。 */
+  private everyValueIs(header: string | undefined, expected: string): boolean {
+    const values = this.values(header);
+    return values.length === 0 || values.every((value) => value === expected);
   }
 
   /** 全経路のブロッカーなので、拒否は必ず観測できるようにしておく。 */

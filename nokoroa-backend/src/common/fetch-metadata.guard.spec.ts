@@ -1,6 +1,7 @@
 import {
   ExecutionContext,
   ForbiddenException,
+  Logger,
   SetMetadata,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
@@ -96,14 +97,18 @@ describe('FetchMetadataGuard', () => {
       ).toThrow(ForbiddenException);
     });
 
-    it('Sec-Fetch-Site が重複して連結されていても拒否する', () => {
-      // 経路上の装置が同名ヘッダを足すと Express が ", " で連結する。
-      // 単純一致だとここで素通りし、全ルートがクロスサイトから到達可能になる
+    it.each([
+      'cross-site, cross-site',
+      'cross-site,cross-site',
+      'same-origin, cross-site',
+    ])('Sec-Fetch-Site が連結されていても拒否する (%s)', (site) => {
+      // 経路上の装置が同名ヘッダを足すと Express が連結する。単純一致だと
+      // ここで素通りし、全ルートがクロスサイトから到達可能になる
       expect(() =>
         guard.canActivate(
           contextFor(stub.protectedRoute, {
             headers: {
-              'sec-fetch-site': 'cross-site, cross-site',
+              'sec-fetch-site': site,
               'sec-fetch-mode': 'navigate',
               'sec-fetch-dest': 'document',
             },
@@ -157,6 +162,35 @@ describe('FetchMetadataGuard', () => {
       ).toThrow(ForbiddenException);
     });
 
+    it('Sec-Fetch-Mode だけが埋め込みを示していても拒否する', () => {
+      // dest を送らないクライアントもあるため、mode 単独でも効く必要がある
+      expect(() =>
+        guard.canActivate(
+          contextFor(stub.oauthRoute, {
+            headers: {
+              'sec-fetch-site': 'cross-site',
+              'sec-fetch-mode': 'no-cors',
+            },
+          }),
+        ),
+      ).toThrow(ForbiddenException);
+    });
+
+    it('Sec-Fetch-Mode / Dest が重複して連結されていても通す', () => {
+      // 拒否側だけ連結耐性を入れると、正規のログインがここで 403 になる
+      expect(
+        guard.canActivate(
+          contextFor(stub.oauthRoute, {
+            headers: {
+              'sec-fetch-site': 'cross-site, cross-site',
+              'sec-fetch-mode': 'navigate, navigate',
+              'sec-fetch-dest': 'document, document',
+            },
+          }),
+        ),
+      ).toBe(true);
+    });
+
     it('Sec-Fetch-Mode / Dest を送らないクライアントは通す', () => {
       // 他の検査と同じく「ヘッダ無し = ブラウザ以外」として扱う
       expect(
@@ -200,6 +234,50 @@ describe('FetchMetadataGuard', () => {
           }),
         ),
       ).toBe(true);
+    });
+  });
+
+  describe('拒否ログ', () => {
+    // 「印が外れた事故」と「正常な遮断」をログで見分けるための文言。
+    // ここが崩れると、運用上はログを見ても原因が分からなくなる。
+    let warn: jest.SpyInstance;
+
+    beforeEach(() => {
+      warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      warn.mockRestore();
+    });
+
+    it('印が無い拒否には解決先のハンドラを添える', () => {
+      expect(() =>
+        guard.canActivate(
+          contextFor(stub.protectedRoute, { headers: CROSS_SITE_NAVIGATION }),
+        ),
+      ).toThrow(ForbiddenException);
+
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('StubController.protectedRoute'),
+      );
+    });
+
+    it('埋め込みからの拒否には mode / dest を添える', () => {
+      expect(() =>
+        guard.canActivate(
+          contextFor(stub.oauthRoute, {
+            headers: {
+              'sec-fetch-site': 'cross-site',
+              'sec-fetch-mode': 'no-cors',
+              'sec-fetch-dest': 'image',
+            },
+          }),
+        ),
+      ).toThrow(ForbiddenException);
+
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('sec-fetch-mode=no-cors sec-fetch-dest=image'),
+      );
     });
   });
 
