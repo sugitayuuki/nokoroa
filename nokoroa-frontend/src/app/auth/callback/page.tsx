@@ -1,49 +1,45 @@
 'use client';
 
 import { CircularProgress, Container, Typography } from '@mui/material';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { Suspense, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { useEffect } from 'react';
 import { toast } from 'react-toastify';
 
-import { setToken } from '@/utils/auth';
+import { useAuth } from '@/providers/AuthProvider';
 
-function AuthCallbackContent() {
+/**
+ * Google 認証後の着地ページ。
+ *
+ * トークンは URL ではなく httpOnly クッキーで渡ってくるため、ここでは
+ * クエリを一切読まない。
+ *
+ * ログイン状態の確認もこのページでは行わない: このページは OAuth の
+ * リダイレクトによる**新規ドキュメント**として読み込まれるので、
+ * AuthProvider のマウント時のセッション復元が（クッキー付きで）既に走っている。
+ * ここで `/auth/me` を呼ぶと同じ問い合わせが二重になる。
+ */
+export default function AuthCallbackPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
+  const { isLoading, isAuthenticated, user } = useAuth();
 
   useEffect(() => {
-    const handleCallback = async () => {
-      const token = searchParams.get('token');
-      const userString = searchParams.get('user');
+    if (isLoading) {
+      return;
+    }
 
-      if (token && userString) {
-        try {
-          // トークンを保存(キー名は utils/auth に集約)
-          setToken(token);
+    if (!isAuthenticated) {
+      toast.error('認証に失敗しました');
+    } else {
+      toast.success(
+        user?.name ? `ようこそ、${user.name}さん！` : 'ログインしました',
+      );
+    }
 
-          // ユーザー情報をパース
-          const user = JSON.parse(decodeURIComponent(userString));
-
-          // 成功メッセージ
-          toast.success(`ようこそ、${user.name}さん！`);
-
-          // ホームページにリダイレクト
-          setTimeout(() => {
-            window.location.href = '/';
-          }, 1000);
-        } catch {
-          // ユーザーデータの解析でエラーが発生した場合の処理
-          toast.error('認証エラーが発生しました');
-          router.push('/');
-        }
-      } else {
-        toast.error('認証に失敗しました');
-        router.push('/');
-      }
-    };
-
-    handleCallback();
-  }, [searchParams, router]);
+    // SPA 遷移にする。フルリロードにすると react-toastify のキューごと
+    // 破棄され、上のトーストが一瞬も表示されない。
+    // replace にして、戻るボタンでこのページへ帰ってこないようにする。
+    router.replace('/');
+  }, [isLoading, isAuthenticated, user, router]);
 
   return (
     <Container
@@ -62,28 +58,5 @@ function AuthCallbackContent() {
         まもなくリダイレクトされます
       </Typography>
     </Container>
-  );
-}
-
-export default function AuthCallbackPage() {
-  return (
-    <Suspense
-      fallback={
-        <Container
-          maxWidth="sm"
-          sx={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            minHeight: '100vh',
-          }}
-        >
-          <CircularProgress size={60} />
-        </Container>
-      }
-    >
-      <AuthCallbackContent />
-    </Suspense>
   );
 }

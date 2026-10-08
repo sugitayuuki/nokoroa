@@ -1,5 +1,3 @@
-import { getToken } from '@/utils/auth';
-
 export const API_CONFIG = {
   BASE_URL:
     (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000') + '/api',
@@ -7,6 +5,8 @@ export const API_CONFIG = {
   endpoints: {
     // 認証関連
     login: '/auth/login',
+    logout: '/auth/logout',
+    me: '/auth/me',
     signup: '/users/signup',
     googleAuth: '/auth/google',
 
@@ -50,39 +50,41 @@ export const API_CONFIG = {
     followStats: (userId: string) => `/follows/${userId}/stats`,
   },
 
-  getAuthHeaders: () => {
-    const token = getToken();
-    return {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    };
-  },
-
-  getFormDataAuthHeaders: () => {
-    const token = getToken();
-    return {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    };
-  },
-
   buildUrl: (endpoint: string): string => {
     return `${API_CONFIG.BASE_URL}${endpoint}`;
   },
 };
+
+/**
+ * 自社 API へのリクエストに必ず付ける設定。
+ *
+ * 認証は httpOnly クッキー(nokoroa_token)で行うため、credentials: 'include' が
+ * 無いと**未ログイン扱いになる**。フロントからはクッキーを読めないので、
+ * 付け忘れは「認証ヘッダが無い」のような分かりやすい形では現れず、
+ * 401 や「公開データしか返らない」として出る。
+ *
+ * 自社 API を叩く fetch は、createApiRequest を通すか、この値を展開すること。
+ */
+export const API_FETCH_OPTIONS = {
+  credentials: 'include',
+} as const satisfies RequestInit;
 
 export const createApiRequest = async (
   endpoint: string,
   options: RequestInit = {},
 ): Promise<Response> => {
   const url = API_CONFIG.buildUrl(endpoint);
-  const defaultHeaders = API_CONFIG.getAuthHeaders();
 
   return fetch(url, {
     ...options,
     headers: {
-      ...defaultHeaders,
+      'Content-Type': 'application/json',
       ...options.headers,
     },
+    // options より後に置く。先に置くと呼び出し側が credentials を上書き・削除でき、
+    // そのリクエストだけ無認証で飛んで「401 か公開データのみ」という
+    // 原因の見えない壊れ方をする。ここを通す以上は必ず認証クッキーを送る。
+    ...API_FETCH_OPTIONS,
   });
 };
 
@@ -91,11 +93,11 @@ export const createFormDataRequest = async (
   formData: FormData,
 ): Promise<Response> => {
   const url = API_CONFIG.buildUrl(endpoint);
-  const headers = API_CONFIG.getFormDataAuthHeaders();
 
+  // Content-Type は指定しない。指定すると multipart の boundary が壊れる
   return fetch(url, {
     method: 'POST',
-    headers,
     body: formData,
+    ...API_FETCH_OPTIONS,
   });
 };

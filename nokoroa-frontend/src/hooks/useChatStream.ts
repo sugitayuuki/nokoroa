@@ -2,9 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { API_CONFIG } from '@/lib/apiConfig';
+import { API_CONFIG, createApiRequest } from '@/lib/apiConfig';
 import { PostData } from '@/types/post';
-import { getToken } from '@/utils/auth';
 
 export interface ChatMessage {
   role: 'user' | 'assistant';
@@ -86,18 +85,6 @@ function setRelatedPostsOnLastAssistant(
   return prev;
 }
 
-function readStoredToken(): string | null {
-  try {
-    return getToken();
-  } catch (storageErr) {
-    console.warn(
-      '[ChatPanel] localStorage access failed, sending without token',
-      storageErr,
-    );
-    return null;
-  }
-}
-
 function buildErrorContent(
   responseStatus: number,
   isNetworkError: boolean,
@@ -116,7 +103,6 @@ function buildErrorContent(
 async function requestChatStream(
   userMessage: string,
   messages: ChatMessage[],
-  token: string | null,
   signal: AbortSignal,
 ): Promise<Response> {
   // サーバー側の上限(履歴20件 / 1メッセージ8000文字)に合わせて送信分を絞る。
@@ -126,20 +112,8 @@ async function requestChatStream(
     content: msg.content.slice(0, MAX_HISTORY_CONTENT_LENGTH),
   }));
 
-  // createApiRequest ではなく素の fetch のままにしている。
-  // createApiRequest は getToken() を直接呼ぶが、ここは localStorage が
-  // 読めない環境でも「トークン無しで送る」ために readStoredToken() で
-  // ガード済みのトークンを受け取る契約になっているため。
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-
-  return fetch(API_CONFIG.buildUrl(API_CONFIG.endpoints.chatStream), {
+  return createApiRequest(API_CONFIG.endpoints.chatStream, {
     method: 'POST',
-    headers,
     body: JSON.stringify({
       message: userMessage,
       history,
@@ -277,22 +251,13 @@ export function useChatStream({
   const fetchSuggestions = async (
     userMessage: string,
     fullResponse: string,
-    token: string | null,
     signal: AbortSignal,
   ) => {
     try {
-      const suggestionsHeaders: Record<string, string> = {
-        'Content-Type': 'application/json',
-      };
-      if (token) {
-        suggestionsHeaders['Authorization'] = `Bearer ${token}`;
-      }
-      // requestChatStream と同じ理由でトークンは引数から受け取る
-      const suggestionsRes = await fetch(
-        API_CONFIG.buildUrl(API_CONFIG.endpoints.chatSuggestions),
+      const suggestionsRes = await createApiRequest(
+        API_CONFIG.endpoints.chatSuggestions,
         {
           method: 'POST',
-          headers: suggestionsHeaders,
           body: JSON.stringify({
             message: userMessage,
             ai_response: fullResponse,
@@ -390,13 +355,10 @@ export function useChatStream({
 
     let responseStatus = 0;
 
-    const token = readStoredToken();
-
     try {
       const response = await requestChatStream(
         userMessage,
         messages,
-        token,
         controller.signal,
       );
 
@@ -445,12 +407,7 @@ export function useChatStream({
       }
 
       if (fullResponse.trim()) {
-        await fetchSuggestions(
-          userMessage,
-          fullResponse,
-          token,
-          controller.signal,
-        );
+        await fetchSuggestions(userMessage, fullResponse, controller.signal);
       }
     } catch (err) {
       handleSendError(err, responseStatus);

@@ -1,6 +1,6 @@
 import useSWR from 'swr';
 
-import { API_CONFIG } from '@/lib/apiConfig';
+import { API_CONFIG, API_FETCH_OPTIONS } from '@/lib/apiConfig';
 
 import { SearchFilters, SearchResponse } from '../types/search';
 
@@ -14,11 +14,10 @@ export class SearchFetchError extends Error {
 }
 
 const fetcher = async (url: string): Promise<SearchResponse> => {
-  const isSemantic = url.includes(API_CONFIG.endpoints.semanticSearch);
-  const headers: Record<string, string> = isSemantic
-    ? API_CONFIG.getAuthHeaders()
-    : {};
-  const response = await fetch(url, { headers });
+  // セマンティック検索は認証が必須(未認証は 401)なので、認証クッキーを送る。
+  // キーワード検索は公開エンドポイントだが、経路を分けると付け忘れと
+  // 区別できなくなるため同じ設定で送る
+  const response = await fetch(url, API_FETCH_OPTIONS);
   if (!response.ok) {
     throw new SearchFetchError(
       response.status,

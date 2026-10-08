@@ -35,7 +35,7 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { toast } from 'react-toastify';
 
-import { API_CONFIG } from '@/lib/apiConfig';
+import { API_CONFIG, createApiRequest } from '@/lib/apiConfig';
 import { getFavoritesCount } from '@/utils/post';
 import { getTagColor } from '@/utils/tagColors';
 
@@ -94,12 +94,9 @@ export const PostDetail = ({ post }: PostDetailProps) => {
   const handleDeleteConfirm = async () => {
     setIsDeleting(true);
     try {
-      const response = await fetch(
-        API_CONFIG.buildUrl(API_CONFIG.endpoints.postById(String(post.id))),
-        {
-          method: 'DELETE',
-          headers: API_CONFIG.getAuthHeaders(),
-        },
+      const response = await createApiRequest(
+        API_CONFIG.endpoints.postById(String(post.id)),
+        { method: 'DELETE' },
       );
 
       if (!response.ok) {

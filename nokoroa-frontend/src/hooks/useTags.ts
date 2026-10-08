@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
-import { API_CONFIG } from '@/lib/apiConfig';
+import { API_CONFIG, API_FETCH_OPTIONS } from '@/lib/apiConfig';
 
 interface Tag {
   name: string;
@@ -24,9 +24,11 @@ export function useTags() {
       setError(null);
       setIsLoading(true);
 
-      // タグ一覧は公開エンドポイントのため認証ヘッダは付けない(既存挙動を維持)
+      // タグ一覧は公開エンドポイントだが、自社 API への fetch は
+      // 認証クッキーを送る設定で統一する(付け忘れの混在を避ける)
       const response = await fetch(
         API_CONFIG.buildUrl(API_CONFIG.endpoints.postTags),
+        API_FETCH_OPTIONS,
       );
 
       if (!response.ok) {

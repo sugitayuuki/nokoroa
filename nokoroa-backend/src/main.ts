@@ -3,12 +3,13 @@ import { Logger } from '@nestjs/common';
 import { HttpAdapterHost, NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import { NextFunction, Request, Response } from 'express';
 import helmet from 'helmet';
 
 import { AppModule } from './app.module';
+import { AUTH_COOKIE_NAME } from './auth/auth-cookie';
 import { assertKnownEnv, isDevelopmentEnv } from './common/environment';
 import { PrismaExceptionFilter } from './common/prisma-exception.filter';
-import { createValidationPipe } from './common/validation';
 
 async function bootstrap() {
   // NODE_ENV の打ち間違いは「無言で防御が緩む」形で効くため、起動前に弾く
@@ -30,6 +31,15 @@ async function bootstrap() {
     '/uploads',
     helmet.crossOriginResourcePolicy({ policy: 'cross-origin' }),
   );
+  // 認証をクッキーに移すと、RFC 9111 の「Authorization 付きの応答は共有キャッシュに
+  // 保存しない」という保護が外れる。応答はログイン中のユーザーによって変わるため、
+  // 共有キャッシュが別ユーザーへ再利用しないよう Vary を明示する。
+  app.use((_req: Request, res: Response, next: NextFunction) => {
+    res.setHeader('Vary', 'Cookie');
+    next();
+  });
+  // cookie-parser / ValidationPipe / クロスサイト拒否は AppModule が登録する。
+  // ここに書くと E2E（アプリを自前で組む）と乖離し、本番だけ壊れる形になるため。
   app.setGlobalPrefix('api');
 
   const config = new DocumentBuilder()
@@ -47,6 +57,9 @@ async function bootstrap() {
       },
       'JWT-auth',
     )
+    // ブラウザの主経路は httpOnly クッキー。Swagger UI から値を入れることは
+    // できないが、仕様書が実際の認証方式を取り違えないよう宣言しておく。
+    .addCookieAuth(AUTH_COOKIE_NAME)
     .addTag('auth', '認証関連')
     .addTag('users', 'ユーザー関連')
     .addTag('posts', '投稿関連')
@@ -59,8 +72,6 @@ async function bootstrap() {
     const document = SwaggerModule.createDocument(app, config);
     SwaggerModule.setup('api/docs', app, document);
   }
-
-  app.useGlobalPipes(createValidationPipe());
 
   const { httpAdapter } = app.get(HttpAdapterHost);
   app.useGlobalFilters(new PrismaExceptionFilter(httpAdapter));

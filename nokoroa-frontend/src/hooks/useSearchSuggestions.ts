@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { API_CONFIG } from '@/lib/apiConfig';
+import { API_CONFIG, API_FETCH_OPTIONS } from '@/lib/apiConfig';
 
 interface SearchSuggestionsHook {
   suggestions: string[];
@@ -50,7 +50,8 @@ export function useSearchSuggestions(
 
       setIsLoading(true);
       try {
-        // サジェストは公開エンドポイントのため認証ヘッダは付けない(既存挙動を維持)
+        // サジェストは公開エンドポイントだが、自社 API への fetch は
+        // 認証クッキーを送る設定で統一する(付け忘れの混在を避ける)
         const endpoint =
           type === 'keyword'
             ? API_CONFIG.endpoints.keywordSuggestions
@@ -58,7 +59,9 @@ export function useSearchSuggestions(
 
         const response = await fetch(
           API_CONFIG.buildUrl(`${endpoint}?q=${encodeURIComponent(query)}`),
-          { signal: controller.signal },
+          // credentials と signal は両方必要。credentials を落とすと認証
+          // クッキーが飛ばず、signal を落とすと上の中断が効かなくなる。
+          { ...API_FETCH_OPTIONS, signal: controller.signal },
         );
 
         if (!isCurrent()) return;

@@ -53,7 +53,9 @@ export default function DashboardLayout({
   const { user, logout } = useAuth();
 
   const handleLogout = () => {
-    logout();
+    // 認証クッキーの削除はサーバー往復を伴うが、呼び出し側で待つ必要はない
+    // (完了時に logout 自身が状態更新と遷移を行う)
+    void logout();
   };
 
   const menuItems = [
