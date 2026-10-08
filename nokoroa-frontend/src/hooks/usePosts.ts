@@ -1,11 +1,11 @@
 import useSWR from 'swr';
 
-import { API_CONFIG } from '@/lib/apiConfig';
+import { API_CONFIG, API_FETCH_OPTIONS } from '@/lib/apiConfig';
 
 import { PostsResponse } from '../types/post';
 
 const fetcher = async (url: string): Promise<PostsResponse> => {
-  const response = await fetch(url);
+  const response = await fetch(url, API_FETCH_OPTIONS);
   if (!response.ok) {
     throw new Error('Failed to fetch posts');
   }

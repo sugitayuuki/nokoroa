@@ -1,0 +1,25 @@
+# 停止・再開サイクルのあいだ固定しておく値。
+#
+# **初回構築では使わない。** 復元元がまだ存在しないため、README「再構築の手順」の
+# 手順 4 が示す heredoc（db_final_snapshot_identifier だけ）を使う。
+# このファイルが要るのは 2 周目以降（復元して再開するとき）。
+#
+#   cp cycle.auto.tfvars.example cycle.auto.tfvars
+# *.auto.tfvars は terraform が自動で読む（*.tfvars は .gitignore 済み）。
+# 背景は terraform/README.md「サイクル変数を固定する」。
+#
+# このファイルは**停止中にだけ**書き換える。db_snapshot_identifier は ForceNew なので、
+# 稼働中に値を変えると本番の DB が作り直される。
+#
+# runtime_enabled はここに書かない（毎回 `-var runtime_enabled=...` で明示する）。
+
+# 復元元。前回の停止で作られたスナップショット名に書き換えて有効化する。
+# 一覧は README「再開する」の describe-db-snapshots で確認する。
+# db_snapshot_identifier = "nokoroa-prod-20261007-1030"
+
+# 次の停止で作る最終スナップショットの名前。復元元とは必ず別名にする。
+db_final_snapshot_identifier = "nokoroa-prod-20261008-0900"
+
+# 復元元が無い場合（意図的な初期化）は上の db_snapshot_identifier を消して、
+# apply に -var db_start_from_empty=true を付ける。このファイルには書かない
+# （消し忘れが残ると、復元元の指定忘れを precondition が検知できなくなる）。

@@ -81,15 +81,53 @@ https://github.com/user-attachments/assets/f07d74f1-8a48-466a-92bb-30d0cdebf994
 
 こちらも前職での経験が土台です。React エコシステムの層の厚さは、1人で開発する際に素直に助かります。
 
-App Router を選んだのは、React Server Components を実際に触ってみたかったからです。ただし、**この判断には反省点もあります**。認証トークンを localStorage に置いた結果、サーバー側でトークンを読めず、ほとんどのページが Client Component になりました。
+App Router を選んだのは、React Server Components を実際に触ってみたかったからです。ただし、**この判断には反省点もありました**。当初は認証トークンを localStorage に置いていたため、サーバー側でトークンを読めず、ほとんどのページが Client Component になっていました。
 
-Cookie 認証に移せば段階的に RSC 化できる、というのが現時点での整理です。
+トークンは httpOnly クッキーに移したので、サーバー側から読める状態にはなりました。ただし**ページの Server Components 化はまだ手付かず**です。現状は「RSC 化を妨げていた原因を取り除いた」ところまでで、画面の移行はこれからの作業です。
 
 ### 認証: JWT + Google OAuth
 
 ライブラリに丸投げすれば早かったのですが、**認証は仕組みを理解しておきたかった**ため、自前で実装しました。その結果、トークンの寿命や失効の難しさを身をもって理解することになりました。
 
-Google OAuth は、パスワードを覚えてもらう前提のサービスにしたくなかったため追加しています。
+トークンの置き場所は httpOnly クッキー（`nokoroa_token`）です。属性は `HttpOnly` / `SameSite=Lax` / `Path=/`、`Secure` は開発環境以外で付けます。寿命は JWT の有効期限（1日）と揃えています。
+
+- **`HttpOnly`**: JavaScript から読めないため、XSS が 1 つあってもトークンを持ち出せません。localStorage に置いていた頃はここが無防備でした。
+- **`SameSite=Lax`**: フロントと API は同一サイト（本番は同一オリジン、開発は localhost のポート違い）なので Lax で届きます。`Strict` にすると Google のコールバック着地でクッキーが送られず、正規のログインが成立しません。
+- Google 認証後のリダイレクトでも、**トークンを URL のクエリに載せません**。載せるとブラウザ履歴・アクセスログ・Referer に残るためです。フロントは着地後に `GET /api/auth/me` でログイン状態を確認します。
+- `Authorization: Bearer` も引き続き受け付けます。Swagger の Authorize と E2E テストがこの経路を使うためです。ただし**クッキーがある場合はクッキーが優先**されるので、Swagger で別ユーザーを試すときはクッキーを消す必要があります。
+
+Google OAuth は、パスワードを覚えてもらう前提のサービスにしたくなかったため追加しています。既存アカウントへの自動連携は、**Google 側で確認済みのメールアドレスのときだけ**行います（未確認のメールを信じると、同じアドレスで作った別の Google アカウントから既存ユーザーを乗っ取れてしまうためです）。
+
+リフレッシュトークンとトークンの失効リストは未実装です。ログアウト（`POST /api/auth/logout`）はサーバーがクッキーを削除する方式で、発行済み JWT 自体は有効期限まで有効なままです。
+
+### CSRF — Cookie に移したことで開く面をどう閉じたか
+
+ブラウザが認証情報を自動で付けるようになると、localStorage + 明示ヘッダでは成立しなかった CSRF が成立します。
+
+| 攻撃 | 閉じ方 |
+| --- | --- |
+| クロスサイトからの POST / PUT / DELETE | `SameSite=Lax`（クッキーが乗らない） |
+| クロスサイトのフォーム POST で「攻撃者のアカウントでログインさせる」 | **`Origin` の検査**。ログインは既存クッキーを必要とせず `Set-Cookie` の受理も `SameSite` の対象外なので、Lax では止まりません。NestJS は既定で urlencoded を受けるため、これが無いと成立します |
+| クロスサイトのトップレベル GET 遷移（`window.open` で課金 API を踏ませる等） | **`Sec-Fetch-Site`** が `cross-site` なら拒否（Lax はこの経路にクッキーを乗せます）。あわせて意味検索にユーザー単位のレート制限を入れ、踏ませられる量も抑えています |
+| OAuth コールバックの `code` を踏ませてセッションを固定する | OAuth の `state` をクッキーに預けて照合（`nokoroa-backend/src/auth/oauth-state.store.ts`） |
+
+判定は `FetchMetadataGuard`（`nokoroa-backend/src/common/fetch-metadata.guard.ts`）にまとめています。どちらのヘッダも無いリクエスト（curl / Swagger / サーバー間）は通します。ここを必須にすると API クライアントが使えなくなるためです。
+
+**検査を 2 本立てにしている理由**: `Sec-Fetch-Site` は **Safari 16.3 以下と Firefox 89 以下では送信されません**。つまり「ブラウザはこのヘッダを省略できない」とは言えず、古いブラウザでは素通りします。一方 `Origin` はクロスオリジンの POST 等に必ず付き JS からは取り除けないので、**被害の大きいログイン CSRF は `Origin` 側で閉じています**。
+
+**残っている面**:
+
+- `Sec-Fetch-Site` を送らない古いブラウザでは、**クロスサイトのトップレベル GET 遷移**は止まりません（`Origin` が付かない経路のため）。意味検索のレート制限が被害の上限になります。
+- 同一サイト・別オリジンは通します（`SameSite` も Fetch Metadata も「同一サイト」は区別しません）。同じ登録ドメイン配下にホストが増えると、そこからは CSRF が成立します。
+- クッキー名に `__Host-` を付ければ Cookie tossing も塞げますが、`__Host-` は `Secure` 必須で開発環境（http）と両立しないため採用していません。
+
+### 初回表示の速さと httpOnly のトレードオフ
+
+JWT が読めなくなると、フロントは `GET /api/auth/me` を 1 往復するまでログイン状態を知れません。これを全訪問者に待たせると、未ログインの初回表示が丸ごと 1 RTT 遅くなります（認証が確定するまで画面を描画しないため）。
+
+そこで、**秘密を含まない**ログイン状態ヒント（`nokoroa_session=1`、httpOnly ではない）をトークンと同時に発行し、フロントはこれを同期で読んで分岐します。ヒントが無ければ即「未ログイン」として描画し、API を叩きません。ヒントがある場合だけサーバーに確認します。
+
+ヒントは JavaScript から書き換えられますが、**認可の判断には使っていません**。保護リソースを守るのはサーバー側の JWT 検証で、ヒントが嘘だった場合も `/api/auth/me` の結果で必ず上書きされます。
 
 ### インフラ: AWS ECS Fargate + Terraform
 
@@ -122,6 +160,8 @@ cd nokoroa
 # 1. バックエンド + DB + AI サービスの環境変数を用意
 #    .env.example には NODE_ENV=development が入っています。
 #    未設定だと本番相当とみなされ FRONTEND_URL / AWS_BUCKET_NAME が必須になります。
+#    さらに認証クッキーに Secure が付くため、http://localhost ではブラウザが
+#    クッキーを破棄し「ログインは通るのに認証が維持されない」状態になります。
 cd nokoroa-backend
 cp .env.example .env
 export JWT_SECRET=$(openssl rand -base64 32)   # 32文字未満だと起動しません
@@ -312,6 +352,8 @@ nokoroa/
 ├── nokoroa-backend/
 │   ├── src/
 │   │   ├── auth/                # 認証モジュール (JWT, Google OAuth)
+│   │   │   ├── auth-cookie.ts   # 認証クッキーの名前・属性の単一の正
+│   │   │   ├── oauth-state.store.ts # OAuth の state 検証 (ログインCSRF対策)
 │   │   │   ├── strategies/      # Passport認証戦略
 │   │   │   ├── auth.controller.ts
 │   │   │   ├── auth.service.ts

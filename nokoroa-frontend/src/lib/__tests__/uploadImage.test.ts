@@ -1,47 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// auth.test.ts と同じ方式で window / localStorage をスタブし、
-// fetch もモックして uploadPostImage の契約(URL / 401 文言 / throw)を固定する。
-function installBrowserStub() {
-  const store = new Map<string, string>();
-  const localStorageStub = {
-    getItem: (key: string) => (store.has(key) ? store.get(key)! : null),
-    setItem: (key: string, value: string) => {
-      store.set(key, String(value));
-    },
-    removeItem: (key: string) => {
-      store.delete(key);
-    },
-    clear: () => store.clear(),
-  };
-  vi.stubGlobal('window', { localStorage: localStorageStub });
-  vi.stubGlobal('localStorage', localStorageStub);
-}
-
+// fetch をモックして uploadPostImage の契約(URL / credentials / 401 文言 / throw)を固定する。
+// 認証は httpOnly クッキーなので、テスト側でトークンを用意する必要はない。
 const makeFile = () => new File(['dummy'], 'photo.png', { type: 'image/png' });
 
 describe('uploadPostImage', () => {
   beforeEach(() => {
-    installBrowserStub();
+    vi.resetModules();
   });
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
-  it('トークンが無ければ通信せずに throw する', async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
-    const { uploadPostImage } = await import('@/lib/uploadImage');
-
-    await expect(uploadPostImage(makeFile())).rejects.toThrow(
-      '認証トークンが見つかりません',
-    );
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
   it('成功時は url を返し、正しいエンドポイントを叩く', async () => {
-    localStorage.setItem('jwt', 'token-abc');
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({ url: 'https://cdn.example/photo.png' }),
@@ -57,8 +29,36 @@ describe('uploadPostImage', () => {
     expect(url.endsWith('/api/posts/upload-image')).toBe(true);
   });
 
+  it('認証クッキーを送る', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ url: 'https://cdn.example/photo.png' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { uploadPostImage } = await import('@/lib/uploadImage');
+
+    await uploadPostImage(makeFile());
+
+    // credentials を落とすと未ログイン扱いになり、常に 401 になる
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init.credentials).toBe('include');
+  });
+
+  it('Content-Type を指定しない(multipart の boundary を壊さない)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ url: 'https://cdn.example/photo.png' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { uploadPostImage } = await import('@/lib/uploadImage');
+
+    await uploadPostImage(makeFile());
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init.headers).toBeUndefined();
+  });
+
   it('401 は再ログインを促す文言で throw する', async () => {
-    localStorage.setItem('jwt', 'token-abc');
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue({
@@ -75,7 +75,6 @@ describe('uploadPostImage', () => {
   });
 
   it('その他の失敗はサーバメッセージを優先して throw する', async () => {
-    localStorage.setItem('jwt', 'token-abc');
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue({

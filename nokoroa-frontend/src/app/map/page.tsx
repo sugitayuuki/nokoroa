@@ -22,7 +22,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 
 import PostCard from '@/components/post/PostCard';
-import { API_CONFIG } from '@/lib/apiConfig';
+import { API_CONFIG, API_FETCH_OPTIONS } from '@/lib/apiConfig';
 import { isComposingEvent } from '@/utils/ime';
 
 import { GoogleMap } from '../../components/map/GoogleMap';
@@ -71,7 +71,10 @@ export default function MapPage() {
 
       const url = `${API_CONFIG.buildUrl(API_CONFIG.endpoints.searchByLocation)}?${params.toString()}`;
 
-      const response = await fetch(url);
+      // 自社 API への fetch は認証クッキーを送る設定で統一する。
+      // このエンドポイント自体は認証を見ない(公開投稿のみ返す)が、
+      // 「付けるかどうかを都度判断する」運用にすると付け忘れと区別できなくなる
+      const response = await fetch(url, API_FETCH_OPTIONS);
 
       if (!response.ok) {
         throw new Error('投稿の検索に失敗しました');

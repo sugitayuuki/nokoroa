@@ -48,8 +48,16 @@ npm run lint -- --fix
 ## API Endpoints
 
 ### Authentication
-- POST `/auth/register` - User registration
-- POST `/auth/login` - User login
+JWT is issued as an httpOnly cookie (`nokoroa_token`). `Authorization: Bearer`
+is still accepted for Swagger and the E2E suite, but the cookie takes priority
+when both are present. Cookie attributes live in `src/auth/auth-cookie.ts`.
+
+- POST `/users/signup` - User registration (there is no `/auth/register`)
+- POST `/auth/login` - User login (sets the auth cookie; also returns `access_token` in the body for Swagger/E2E)
+- GET `/auth/me` - Current session user (requires auth)
+- POST `/auth/logout` - Clear the auth cookie (no auth required; idempotent)
+- GET `/auth/google` - Start Google OAuth (issues the OAuth `state` cookie)
+- GET `/auth/google/callback` - Google OAuth callback (verifies `state`, sets the auth cookie, redirects to the frontend without query params)
 
 ### Posts
 - GET `/posts` - Get all posts (with pagination)

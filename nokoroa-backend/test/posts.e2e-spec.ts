@@ -7,7 +7,6 @@ import { createUserAndLogin } from './helpers';
 import { cleanupDatabase } from './setup';
 import { PostResponse, PostsListResponse } from './types';
 import { AppModule } from '../src/app.module';
-import { createValidationPipe } from '../src/common/validation';
 
 // imageUrl は必須項目。ローカル保存形式(localhostホスト)も通ることを併せて確認する。
 const TEST_IMAGE_URL = 'https://example.com/images/test.jpg';
@@ -24,8 +23,6 @@ describe('Posts (e2e)', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
-    // 本番(main.ts)と同一オプションのパイプを使う(素の ValidationPipe だと transform が効かない)
-    app.useGlobalPipes(createValidationPipe());
     await app.init();
     server = app.getHttpServer() as Server;
   });

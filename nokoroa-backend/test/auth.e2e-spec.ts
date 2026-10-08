@@ -6,7 +6,33 @@ import request from 'supertest';
 import { cleanupDatabase } from './setup';
 import { LoginResponse, SignupResponse, UserProfile } from './types';
 import { AppModule } from '../src/app.module';
-import { createValidationPipe } from '../src/common/validation';
+import {
+  AUTH_COOKIE_NAME,
+  SESSION_HINT_COOKIE_NAME,
+} from '../src/auth/auth-cookie';
+import { OAUTH_STATE_COOKIE_NAME } from '../src/auth/oauth-state.store';
+
+/**
+ * Set-Cookie から目的のクッキー 1 件の生文字列を取り出す。
+ * 属性まで含めて検証したいので、パースせず raw のまま返す。
+ */
+function findSetCookie(
+  response: request.Response,
+  name: string,
+): string | undefined {
+  const header: unknown = response.headers['set-cookie'];
+  const cookies: string[] = Array.isArray(header)
+    ? (header as string[])
+    : typeof header === 'string'
+      ? [header]
+      : [];
+  return cookies.find((cookie) => cookie.startsWith(`${name}=`));
+}
+
+/** Set-Cookie 文字列から「name=value」部分だけを取り出し、Cookie ヘッダ用に整える。 */
+function toCookieHeader(setCookie: string): string {
+  return setCookie.split(';')[0];
+}
 
 describe('Auth (e2e)', () => {
   let app: INestApplication;
@@ -18,8 +44,6 @@ describe('Auth (e2e)', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
-    // 本番(main.ts)と同一オプションのパイプを使う(素の ValidationPipe だと transform が効かない)
-    app.useGlobalPipes(createValidationPipe());
     await app.init();
     server = app.getHttpServer() as Server;
   });
@@ -117,6 +141,415 @@ describe('Auth (e2e)', () => {
         })
         .expect(401);
     });
+
+    it('JWT を httpOnly クッキーで発行する', async () => {
+      const response = await request(server)
+        .post('/auth/login')
+        .send({
+          email: 'login@example.com',
+          password: 'password123',
+        })
+        .expect(201);
+
+      const setCookie = findSetCookie(response, AUTH_COOKIE_NAME);
+      expect(setCookie).toBeDefined();
+      // JS から読めないこと・クロスサイトの更新リクエストに乗らないこと・
+      // 全パスに送られること・寿命が JWT(1d)と揃っていることを属性で担保する
+      expect(setCookie).toMatch(/HttpOnly/i);
+      expect(setCookie).toMatch(/SameSite=Lax/i);
+      expect(setCookie).toMatch(/Path=\//i);
+      expect(setCookie).toMatch(/Max-Age=86400\b/i);
+      // NODE_ENV=test は開発環境ではないので Secure が付く。
+      // 属性の環境別の正しさは auth-cookie.spec.ts が担保する
+      expect(setCookie).toMatch(/Secure/i);
+    });
+
+    it('ログイン状態ヒントは httpOnly にしない(フロントが同期で読むため)', async () => {
+      const response = await request(server)
+        .post('/auth/login')
+        .send({
+          email: 'login@example.com',
+          password: 'password123',
+        })
+        .expect(201);
+
+      const hint = findSetCookie(response, SESSION_HINT_COOKIE_NAME);
+      expect(hint).toBeDefined();
+      expect(hint).not.toMatch(/HttpOnly/i);
+      // 秘密は入れない。寿命と送信条件は認証クッキーと揃える
+      expect(hint).toMatch(new RegExp(`^${SESSION_HINT_COOKIE_NAME}=1;`));
+      expect(hint).toMatch(/Max-Age=86400\b/i);
+      expect(hint).toMatch(/SameSite=Lax/i);
+    });
+
+    it('トークンとヒントをキャッシュに残さない', async () => {
+      const response = await request(server)
+        .post('/auth/login')
+        .send({
+          email: 'login@example.com',
+          password: 'password123',
+        })
+        .expect(201);
+
+      expect(response.headers['cache-control']).toBe('no-store');
+    });
+
+    it('ログイン失敗時はクッキーを発行しない', async () => {
+      const response = await request(server)
+        .post('/auth/login')
+        .send({
+          email: 'login@example.com',
+          password: 'wrongpassword',
+        })
+        .expect(401);
+
+      expect(findSetCookie(response, AUTH_COOKIE_NAME)).toBeUndefined();
+    });
+  });
+
+  describe('GET /auth/me', () => {
+    let authCookie: string;
+    let accessToken: string;
+
+    beforeEach(async () => {
+      await request(server).post('/users/signup').send({
+        email: 'me@example.com',
+        password: 'password123',
+        name: 'Me User',
+      });
+
+      const loginResponse = await request(server).post('/auth/login').send({
+        email: 'me@example.com',
+        password: 'password123',
+      });
+
+      const setCookie = findSetCookie(loginResponse, AUTH_COOKIE_NAME);
+      if (!setCookie) {
+        throw new Error('ログインで認証クッキーが発行されていません');
+      }
+      authCookie = toCookieHeader(setCookie);
+      accessToken = (loginResponse.body as LoginResponse).access_token;
+    });
+
+    it('クッキーだけでログイン中のユーザーを取得できる', async () => {
+      const response = await request(server)
+        .get('/auth/me')
+        .set('Cookie', authCookie)
+        .expect(200);
+
+      const body = response.body as UserProfile;
+      expect(body.email).toBe('me@example.com');
+      expect(body.name).toBe('Me User');
+    });
+
+    it('Authorization ヘッダでも取得できる(Swagger / 既存 E2E 用の経路)', async () => {
+      const response = await request(server)
+        .get('/auth/me')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+
+      expect((response.body as UserProfile).email).toBe('me@example.com');
+    });
+
+    it('認証なしでは取得できない', async () => {
+      await request(server).get('/auth/me').expect(401);
+    });
+
+    it('不正なクッキーでは取得できない', async () => {
+      await request(server)
+        .get('/auth/me')
+        .set('Cookie', `${AUTH_COOKIE_NAME}=invalid-token`)
+        .expect(401);
+    });
+
+    it('クッキーと Authorization が両方あるとクッキーが勝つ', async () => {
+      // passport-jwt は最初に非 null を返した抽出器で確定するため、
+      // クッキーがある限り Bearer は評価されない。Swagger でブラウザの
+      // ログイン状態に引っ張られるのはこの性質によるので、契約として固定する
+      const other = await request(server).post('/users/signup').send({
+        email: 'other@example.com',
+        password: 'password123',
+        name: 'Other User',
+      });
+      expect(other.status).toBe(201);
+      const otherLogin = await request(server).post('/auth/login').send({
+        email: 'other@example.com',
+        password: 'password123',
+      });
+      const otherToken = (otherLogin.body as LoginResponse).access_token;
+
+      const response = await request(server)
+        .get('/auth/me')
+        .set('Cookie', authCookie)
+        .set('Authorization', `Bearer ${otherToken}`)
+        .expect(200);
+
+      expect((response.body as UserProfile).email).toBe('me@example.com');
+    });
+
+    it('クッキーが壊れていると Authorization にフォールバックしない', async () => {
+      // 上の「クッキー優先」の裏返し。壊れたクッキーが残っている端末では
+      // 有効な Bearer を付けても 401 になる
+      await request(server)
+        .get('/auth/me')
+        .set('Cookie', `${AUTH_COOKIE_NAME}=invalid-token`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(401);
+    });
+
+    it('本人の情報をキャッシュに残さない', async () => {
+      const response = await request(server)
+        .get('/auth/me')
+        .set('Cookie', authCookie)
+        .expect(200);
+
+      expect(response.headers['cache-control']).toBe('no-store');
+    });
+  });
+
+  describe('クロスサイトからのリクエスト (Fetch Metadata)', () => {
+    let authCookie: string;
+
+    beforeEach(async () => {
+      await request(server).post('/users/signup').send({
+        email: 'crosssite@example.com',
+        password: 'password123',
+        name: 'Cross Site User',
+      });
+      const loginResponse = await request(server).post('/auth/login').send({
+        email: 'crosssite@example.com',
+        password: 'password123',
+      });
+      const setCookie = findSetCookie(loginResponse, AUTH_COOKIE_NAME);
+      if (!setCookie) {
+        throw new Error('ログインで認証クッキーが発行されていません');
+      }
+      authCookie = toCookieHeader(setCookie);
+    });
+
+    it('クロスサイトのトップレベル GET 遷移を拒否する', async () => {
+      // SameSite=Lax はこの経路に Cookie を乗せるため、Lax だけでは防げない。
+      // 攻撃者ページから window.open で保護 API を踏ませる CSRF を閉じる
+      await request(server)
+        .get('/auth/me')
+        .set('Cookie', authCookie)
+        .set('Sec-Fetch-Site', 'cross-site')
+        .set('Sec-Fetch-Mode', 'navigate')
+        .expect(403);
+    });
+
+    it('クロスサイトのフォーム POST でログインできない', async () => {
+      // Nest は既定で urlencoded を受けるため、これが無いとクロスサイトの
+      // HTML フォームから「攻撃者アカウントでログインさせる」ことができる
+      await request(server)
+        .post('/auth/login')
+        .type('form')
+        .set('Sec-Fetch-Site', 'cross-site')
+        .set('Sec-Fetch-Mode', 'navigate')
+        .send({ email: 'crosssite@example.com', password: 'password123' })
+        .expect(403);
+    });
+
+    it('Google の認証開始とコールバックはクロスサイトでも通す', async () => {
+      // Google からのリダイレクトはクロスサイトのトップレベル遷移で届くため、
+      // ここを塞ぐと正規のログインが成立しない(代わりに state で検証する)
+      const response = await request(server)
+        .get('/auth/google')
+        .set('Sec-Fetch-Site', 'cross-site')
+        .set('Sec-Fetch-Mode', 'navigate');
+
+      expect(response.status).not.toBe(403);
+    });
+
+    it('OAuth 経路でもトップレベル遷移以外は拒否する', async () => {
+      // 画像等の埋め込み(no-cors)でコールバックを叩かせると、
+      // 被害者の進行中ログインの state を消して妨害できてしまう
+      await request(server)
+        .get('/auth/google/callback?code=x&state=y')
+        .set('Sec-Fetch-Site', 'cross-site')
+        .set('Sec-Fetch-Mode', 'no-cors')
+        .expect(403);
+    });
+
+    it('Sec-Fetch-Site を送らないブラウザでも Origin で更新系を拒否する', async () => {
+      // Safari 16.3 以下 / Firefox 89 以下は Sec-Fetch-Site を送らない。
+      // ログイン CSRF を止めているのはこの検査だけなので、Origin で二重化する
+      await request(server)
+        .post('/auth/login')
+        .set('Origin', 'https://evil.example')
+        .send({ email: 'crosssite@example.com', password: 'password123' })
+        .expect(403);
+    });
+
+    it('許可オリジンからの更新系は通す', async () => {
+      // FRONTEND_URL は test/env.ts で http://localhost:3000
+      await request(server)
+        .post('/auth/login')
+        .set('Origin', 'http://localhost:3000')
+        .send({ email: 'crosssite@example.com', password: 'password123' })
+        .expect(201);
+    });
+
+    it('Origin 検査は参照系(GET)には効かせない', async () => {
+      // GET にまで Origin 必須にすると、画像や外部からの参照が壊れる
+      await request(server)
+        .get('/auth/me')
+        .set('Cookie', authCookie)
+        .set('Origin', 'https://evil.example')
+        .expect(200);
+    });
+
+    it('プレフィックスの無いルート直下も検査対象にする', async () => {
+      // ミドルウェアだと setGlobalPrefix 配下にしかマウントされず、
+      // ルート直下だけ素通りする。ガードにしているのでここも拒否される
+      await request(server)
+        .get('/')
+        .set('Sec-Fetch-Site', 'cross-site')
+        .expect(403);
+    });
+
+    it('same-site(開発のポート違い)と same-origin は通す', async () => {
+      await request(server)
+        .get('/auth/me')
+        .set('Cookie', authCookie)
+        .set('Sec-Fetch-Site', 'same-site')
+        .expect(200);
+
+      await request(server)
+        .get('/auth/me')
+        .set('Cookie', authCookie)
+        .set('Sec-Fetch-Site', 'same-origin')
+        .expect(200);
+    });
+
+    it('ヘッダを送らないクライアント(curl / Swagger / supertest)は通す', async () => {
+      // ブラウザは Sec-Fetch-Site を省略できないので、ヘッダ無しを通しても
+      // 攻撃者が検査を回避する手段にはならない
+      await request(server)
+        .get('/auth/me')
+        .set('Cookie', authCookie)
+        .expect(200);
+    });
+  });
+
+  describe('Google OAuth の state', () => {
+    it('認証開始時に state を発行し、URL にも載せる', async () => {
+      const response = await request(server).get('/auth/google').expect(302);
+
+      const stateCookie = findSetCookie(response, OAUTH_STATE_COOKIE_NAME);
+      expect(stateCookie).toBeDefined();
+      expect(stateCookie).toMatch(/HttpOnly/i);
+      // コールバックはクロスサイトのトップレベル遷移なので Lax が必須
+      expect(stateCookie).toMatch(/SameSite=Lax/i);
+
+      const location = response.headers['location'];
+      const state = new URL(location).searchParams.get('state');
+      expect(state).toBeTruthy();
+      // URL の state とクッキーの state が一致していること
+      expect(toCookieHeader(stateCookie as string)).toBe(
+        `${OAUTH_STATE_COOKIE_NAME}=${state}`,
+      );
+    });
+
+    it('state クッキーが無いコールバックでは認証クッキーを発行しない', async () => {
+      // 攻撃者が取得した code を被害者にトップレベル遷移させる
+      // ログイン CSRF（セッション固定）を塞ぐ経路
+      const response = await request(server).get(
+        '/auth/google/callback?code=attacker-code&state=attacker-state',
+      );
+
+      expect(findSetCookie(response, AUTH_COOKIE_NAME)).toBeUndefined();
+      expect(findSetCookie(response, SESSION_HINT_COOKIE_NAME)).toBeUndefined();
+    });
+
+    it('state が一致しないコールバックでは認証クッキーを発行しない', async () => {
+      const start = await request(server).get('/auth/google').expect(302);
+      const stateCookie = findSetCookie(start, OAUTH_STATE_COOKIE_NAME);
+      if (!stateCookie) {
+        throw new Error('state クッキーが発行されていません');
+      }
+
+      const response = await request(server)
+        .get('/auth/google/callback?code=attacker-code&state=not-the-same')
+        .set('Cookie', toCookieHeader(stateCookie));
+
+      expect(findSetCookie(response, AUTH_COOKIE_NAME)).toBeUndefined();
+    });
+
+    it('認証失敗はフロントへ戻す(API オリジンの生 JSON で行き止まりにしない)', async () => {
+      // state 切れ・複数タブ・?code= 付き URL のリロードはやり直せる失敗なので、
+      // ユーザーがアプリへ戻れる形にする。クエリは付けない
+      const response = await request(server).get(
+        '/auth/google/callback?code=x&state=y',
+      );
+
+      expect(response.status).toBe(302);
+      expect(response.headers['location']).toBe(
+        'http://localhost:3000/auth/callback',
+      );
+      expect(response.headers['location']).not.toContain('?');
+    });
+
+    it('state は 1 度使うと消える(再生を防ぐ)', async () => {
+      const start = await request(server).get('/auth/google').expect(302);
+      const stateCookie = findSetCookie(start, OAUTH_STATE_COOKIE_NAME);
+      if (!stateCookie) {
+        throw new Error('state クッキーが発行されていません');
+      }
+
+      const response = await request(server)
+        .get('/auth/google/callback?code=x&state=y')
+        .set('Cookie', toCookieHeader(stateCookie));
+
+      const cleared = findSetCookie(response, OAUTH_STATE_COOKIE_NAME);
+      expect(cleared).toBeDefined();
+      expect(cleared).toMatch(new RegExp(`^${OAUTH_STATE_COOKIE_NAME}=;`));
+    });
+  });
+
+  describe('POST /auth/logout', () => {
+    it('認証クッキーを失効させる', async () => {
+      await request(server).post('/users/signup').send({
+        email: 'logout@example.com',
+        password: 'password123',
+        name: 'Logout User',
+      });
+      const loginResponse = await request(server).post('/auth/login').send({
+        email: 'logout@example.com',
+        password: 'password123',
+      });
+      const setCookie = findSetCookie(loginResponse, AUTH_COOKIE_NAME);
+      if (!setCookie) {
+        throw new Error('ログインで認証クッキーが発行されていません');
+      }
+
+      const response = await request(server)
+        .post('/auth/logout')
+        .set('Cookie', toCookieHeader(setCookie))
+        .expect(200);
+
+      const clearedCookie = findSetCookie(response, AUTH_COOKIE_NAME);
+      expect(clearedCookie).toBeDefined();
+      // 値が空かつ過去の expires。属性は発行時と揃っていないと
+      // ブラウザが別のクッキーとみなして上書きしない
+      expect(clearedCookie).toMatch(new RegExp(`^${AUTH_COOKIE_NAME}=;`));
+      expect(clearedCookie).toMatch(/Expires=/i);
+      expect(clearedCookie).toMatch(/HttpOnly/i);
+      expect(clearedCookie).toMatch(/SameSite=Lax/i);
+      expect(clearedCookie).toMatch(/Path=\//i);
+
+      // ログイン状態ヒントも同時に消さないと、未ログインなのに
+      // ログイン中として描画され /auth/me で 401 を引く
+      const clearedHint = findSetCookie(response, SESSION_HINT_COOKIE_NAME);
+      expect(clearedHint).toBeDefined();
+      expect(clearedHint).toMatch(new RegExp(`^${SESSION_HINT_COOKIE_NAME}=;`));
+    });
+
+    it('未ログインでも成功する(クッキーを消すだけなので冪等)', async () => {
+      const response = await request(server).post('/auth/logout').expect(200);
+
+      expect(findSetCookie(response, AUTH_COOKIE_NAME)).toBeDefined();
+    });
   });
 
   describe('GET /users/profile', () => {
@@ -145,6 +578,26 @@ describe('Auth (e2e)', () => {
       const body = response.body as UserProfile;
       expect(body.email).toBe('profile@example.com');
       expect(body.name).toBe('Profile User');
+    });
+
+    it('認証クッキーだけでもプロフィールを取得できる', async () => {
+      // /auth/me 以外の既存の保護エンドポイントもクッキーで通ることを確かめる
+      // (JWT の取り出しが Bearer 前提のまま残っていないかの担保)
+      const loginResponse = await request(server).post('/auth/login').send({
+        email: 'profile@example.com',
+        password: 'password123',
+      });
+      const setCookie = findSetCookie(loginResponse, AUTH_COOKIE_NAME);
+      if (!setCookie) {
+        throw new Error('ログインで認証クッキーが発行されていません');
+      }
+
+      const response = await request(server)
+        .get('/users/profile')
+        .set('Cookie', toCookieHeader(setCookie))
+        .expect(200);
+
+      expect((response.body as UserProfile).email).toBe('profile@example.com');
     });
 
     it('認証なしではプロフィールを取得できない', async () => {

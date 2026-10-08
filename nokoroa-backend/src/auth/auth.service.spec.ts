@@ -124,6 +124,35 @@ describe('AuthService', () => {
     });
   });
 
+  describe('getSessionUser', () => {
+    it('セッション表示に必要な項目だけを返す', async () => {
+      const sessionUser = {
+        id: 1,
+        email: 'test@example.com',
+        name: 'Test User',
+        avatar: null,
+      };
+      mockPrismaService.user.findUnique.mockResolvedValue(sessionUser);
+
+      const result = await service.getSessionUser(1);
+
+      expect(result).toEqual(sessionUser);
+      expect(mockPrismaService.user.findUnique).toHaveBeenCalledWith({
+        where: { id: 1 },
+        select: { id: true, email: true, name: true, avatar: true },
+      });
+    });
+
+    it('ユーザーが存在しない場合はUnauthorizedExceptionを投げる', async () => {
+      // JWT は有効でもユーザーが消えている(退会など)なら未認証として扱う
+      mockPrismaService.user.findUnique.mockResolvedValue(null);
+
+      await expect(service.getSessionUser(999)).rejects.toThrow(
+        UnauthorizedException,
+      );
+    });
+  });
+
   describe('googleLogin', () => {
     const googleUser = {
       googleId: 'google-123',

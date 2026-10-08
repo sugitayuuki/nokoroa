@@ -159,8 +159,15 @@
 
 - JWT (HS256) による認証
 - アクセストークン有効期限: 1日
+- トークンの受け渡し: **httpOnly クッキー** `nokoroa_token`
+  （`HttpOnly` / `SameSite=Lax` / `Path=/`、`Secure` は開発環境以外）。
+  クッキーの寿命と JWT の有効期限は同じ値を単一の定数から導出している。
+  `Authorization: Bearer` も Swagger / E2E 用に受け付ける（クッキー優先）。
+- CSRF 対策: `SameSite=Lax` + Fetch Metadata によるクロスサイト拒否 + OAuth の `state` 検証
 - パスワード: bcrypt (10ラウンド)
-- Google OAuth 2.0 対応
+- Google OAuth 2.0 対応（確認済みメールアドレスのみ既存アカウントへ連携）
+- リフレッシュトークン / 失効リストは未実装。ログアウトはクッキー削除のみで、
+  発行済み JWT は有効期限まで有効
 
 ### 4.3 通信
 

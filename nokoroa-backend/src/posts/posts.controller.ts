@@ -26,6 +26,7 @@ import {
   ApiBody,
   ApiParam,
 } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { memoryStorage } from 'multer';
 
 import {
@@ -34,6 +35,10 @@ import {
 } from '../common/image-upload';
 import { OffsetPaginationDto } from '../common/pagination.dto';
 import { S3Service } from '../common/s3.service';
+import {
+  USER_THROTTLER,
+  UserThrottlerGuard,
+} from '../common/user-throttler.guard';
 import { CreatePostDto } from './dto/create-post.dto';
 import { SearchPostsByLocationDto } from './dto/search-posts-by-location.dto';
 import { SearchPostsSemanticDto } from './dto/search-posts-semantic.dto';
@@ -153,7 +158,11 @@ export class PostsController {
   }
 
   @Get('search/semantic')
-  @UseGuards(JwtAuthGuard)
+  // 課金 API なので、認証後にユーザー単位で絞る（chat と同じ方式）。
+  // 認証をクッキーに移した結果、ブラウザは自動で資格情報を送るようになったため、
+  // IP 単位の基礎制限だけでは「他人に踏ませて課金させる」量を抑えきれない。
+  @UseGuards(JwtAuthGuard, UserThrottlerGuard)
+  @Throttle({ [USER_THROTTLER]: { ttl: 60_000, limit: 20 } })
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({
     summary: '意味検索（ベクトル検索）',

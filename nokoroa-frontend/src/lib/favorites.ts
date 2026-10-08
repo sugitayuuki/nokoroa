@@ -1,30 +1,32 @@
-import { API_CONFIG, createApiRequest } from '@/lib/apiConfig';
+import {
+  API_CONFIG,
+  API_FETCH_OPTIONS,
+  createApiRequest,
+} from '@/lib/apiConfig';
 import {
   FavoriteData,
   FavoritesResponse,
   FavoriteStatsResponse,
   FavoriteStatusResponse,
 } from '@/types/post';
-import { getToken } from '@/utils/auth';
 
 /**
  * 認証必須のお気に入り API を叩く共通処理。
- * 未ログイン・401・その他失敗の3系統を各関数で繰り返さないための集約。
+ * 401・その他失敗の2系統を各関数で繰り返さないための集約。
+ *
+ * 認証クッキーは httpOnly でここから読めず、React の外なので useAuth も
+ * 使えない。よって未ログインかどうかの判定はサーバーの 401 に委ねている。
  */
 async function requestAuthedFavorites(
   endpoint: string,
   failureMessage: string,
   options?: RequestInit,
 ): Promise<Response> {
-  if (!getToken()) {
-    throw new Error('認証が必要です。ログインしてください。');
-  }
-
   const response = await createApiRequest(endpoint, options);
 
   if (!response.ok) {
     if (response.status === 401) {
-      throw new Error('認証が無効です。再度ログインしてください。');
+      throw new Error('認証が必要です。再度ログインしてください。');
     }
     throw new Error(failureMessage);
   }
@@ -66,11 +68,7 @@ export async function getFavorites(
 export async function checkFavoriteStatus(
   postId: number,
 ): Promise<FavoriteStatusResponse> {
-  // 状態確認は失敗してもUIを壊さない(未ログイン・401・通信失敗は「未お気に入り」扱い)
-  if (!getToken()) {
-    return { isFavorited: false };
-  }
-
+  // 状態確認は失敗してもUIを壊さない(未ログイン=401・通信失敗は「未お気に入り」扱い)
   try {
     const response = await createApiRequest(
       API_CONFIG.endpoints.checkFavorite(postId.toString()),
@@ -94,6 +92,7 @@ export async function getFavoriteStats(
 ): Promise<FavoriteStatsResponse> {
   const response = await fetch(
     API_CONFIG.buildUrl(API_CONFIG.endpoints.favoriteStats(postId.toString())),
+    API_FETCH_OPTIONS,
   );
 
   if (!response.ok) {

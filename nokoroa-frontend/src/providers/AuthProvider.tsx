@@ -7,6 +7,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import { toast } from 'react-toastify';
@@ -14,7 +15,11 @@ import { mutate } from 'swr';
 
 import { useSmoothNavigation } from '@/hooks/useSmoothNavigation';
 import { API_CONFIG, createApiRequest } from '@/lib/apiConfig';
-import { getToken, removeToken, setToken } from '@/utils/auth';
+import {
+  clearSessionHint,
+  hasSessionHint,
+  purgeLegacyStoredToken,
+} from '@/utils/auth';
 
 /**
  * 認証セッションの本人情報。
@@ -36,7 +41,8 @@ type AuthContextType = {
   isLoggingOut: boolean;
   user?: AuthUser;
   login: (email: string, password: string) => Promise<boolean>;
-  logout: () => void;
+  /** 認証クッキーはサーバーしか消せないため、ログアウトは非同期になる */
+  logout: () => Promise<void>;
   register: (name: string, email: string, password: string) => Promise<boolean>;
 };
 
@@ -67,22 +73,34 @@ const toAuthUser = (raw: unknown): AuthUser | undefined => {
 
 type FetchAuthUserResult =
   | { status: 'ok'; user: AuthUser | undefined }
-  | { status: 'invalid' };
+  /** サーバーが「このセッションは無効」と答えた(401 など) */
+  | { status: 'unauthenticated' }
+  /** セッションの可否を確認できなかった(5xx / 通信失敗) */
+  | { status: 'unknown' };
 
 /**
- * プロフィール API からユーザー情報を取得する。
+ * セッション API からログイン中のユーザーを取得する。
  * 「認証が無効(非 2xx / 通信失敗)」と「200 だが形が想定外」を区別して返す。
- * 後者でトークンを消すと、API 側の一時的な応答形不良だけで強制ログアウトになるため。
+ * 後者を未認証扱いにすると、API 側の一時的な応答形不良だけで
+ * 強制ログアウトになるため。
+ *
+ * 認証クッキーは httpOnly でフロントから読めないので、
+ * ログイン状態の判定はこの呼び出しの結果が唯一の手段になる。
  */
 const fetchAuthUser = async (): Promise<FetchAuthUserResult> => {
   try {
-    const response = await createApiRequest(API_CONFIG.endpoints.userProfile);
+    const response = await createApiRequest(API_CONFIG.endpoints.me);
+    if (response.status === 401 || response.status === 403) {
+      return { status: 'unauthenticated' };
+    }
     if (!response.ok) {
-      return { status: 'invalid' };
+      // 5xx 等は「未ログイン」ではない。ここを未ログイン扱いにすると、
+      // API の一時障害だけで全ユーザーが強制ログアウトになる
+      return { status: 'unknown' };
     }
     return { status: 'ok', user: toAuthUser(await response.json()) };
   } catch {
-    return { status: 'invalid' };
+    return { status: 'unknown' };
   }
 };
 
@@ -97,6 +115,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const { push: navigatePush } = useSmoothNavigation();
   const pathname = usePathname();
 
+  // logout はサーバー往復を挟むため、再開時の pathname は closure の値と
+  // 食い違いうる。判定には常に最新を使う。
+  const pathnameRef = useRef(pathname);
+  pathnameRef.current = pathname;
+
+  // navigatePush は pathname を閉じ込んでおり、「現在パスと同じ href なら
+  // 遷移しない」早期 return を持つ。クリック時に掴んだ古い関数を往復後に呼ぶと、
+  // 例えば '/' でログアウトして往復中に保護ページへ移動した場合に
+  // 「古い closure から見れば現在パスは '/' なので遷移不要」と判断され、
+  // 遷移しないまま isLoggingOut が立ち続けて保護ページで固着する。
+  // 常に最新の関数を呼ぶ。
+  const navigatePushRef = useRef(navigatePush);
+  navigatePushRef.current = navigatePush;
+
+  /** logout の実行中。連打で二重に走らせない */
+  const isLoggingOutRef = useRef(false);
+
   // ログアウトの push('/') が完了(パス変化)したらフラグを戻す。
   // 戻し忘れると、ログアウト後に保護ページを直接開いたときのリダイレクトまで抑止してしまう
   useEffect(() => {
@@ -104,31 +139,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [pathname]);
 
   useEffect(() => {
-    const validateToken = async () => {
-      if (!getToken()) {
-        setIsAuthenticated(false);
-        setUser(undefined);
-        setIsLoading(false);
-        return;
-      }
+    // 旧実装が localStorage に残した JWT の後片付け。アプリ起動時に 1 回だけ。
+    purgeLegacyStoredToken();
 
-      // トークンの有効性を確認するため、プロフィールAPIを呼び出し
+    // ログイン中のヒントが無ければサーバーに聞く必要がない。
+    // 全訪問者に /auth/me を待たせると、未ログインの初回表示が 1 RTT 遅くなる
+    // (Layout は認証が確定するまで中身を描画しない)。
+    if (!hasSessionHint()) {
+      setIsAuthenticated(false);
+      setUser(undefined);
+      setIsLoading(false);
+      return;
+    }
+
+    const restoreSession = async () => {
+      // ヒントは JS から書き換えられるため、ここで必ずサーバーに確認する
       const result = await fetchAuthUser();
 
       if (result.status === 'ok') {
         // 200 なら認証は有効。形が想定外で user が取れなくても認証状態は維持する
         setIsAuthenticated(true);
         setUser(result.user);
+      } else if (result.status === 'unknown') {
+        // セッションの可否が分からないだけ。ヒントを信じて認証済みのまま進め、
+        // 実際に権限が無ければ各 API が 401 を返す
+        // (ここで未ログインに倒すと、API の一時障害で全員ログアウトになる)
+        setIsAuthenticated(true);
       } else {
-        // トークンが無効な場合は削除
-        removeToken();
         setIsAuthenticated(false);
         setUser(undefined);
       }
       setIsLoading(false);
     };
 
-    validateToken();
+    restoreSession();
   }, []);
 
   const login = useCallback(
@@ -146,25 +190,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           return false;
         }
 
+        // トークンはレスポンス本文から読まない。認証クッキー(httpOnly)を
+        // ブラウザが保存するので、フロントが触る必要がない。
+        // 本文の user は、下の /auth/me が形不良だったときの表示用の控え。
         const result = await response.json();
-
-        // access_token または token のいずれかを使用
-        const token = result.access_token || result.token;
-        if (!token) {
-          toast.error('認証トークンが取得できませんでした。');
-          return false;
-        }
 
         // トークン失効などで logout を経ずにユーザーが切り替わる場合があるため、
         // ログイン時にも前のユーザーのキャッシュを破棄する。
         void mutate(() => true, undefined, { revalidate: false });
 
-        setToken(token);
-
-        // ログイン後、プロフィールAPIを呼び出してユーザー情報を取得。
-        // 取得できなければログインレスポンスの user を使い、それも無ければ undefined のままにする。
-        // (取得失敗時に偽のユーザーを置くと、他人の名前でログインしたように見えてしまう)
+        // クッキーが実際に保存されたかはフロントから確認できない(httpOnly)。
+        // ここでセッションを引き直さないと、クッキーが保存されていない場合に
+        // 「ログインできたのに以降ずっと 401」という無言の詰みになる。
         const fetched = await fetchAuthUser();
+
+        // 401/403 だけが「クッキーが効いていない」の証拠。
+        // 5xx や通信断でログイン失敗にすると、サーバーは既にクッキーを
+        // 発行済みなので「失敗表示なのにリロードするとログイン済み」になる
+        if (fetched.status === 'unauthenticated') {
+          toast.error(
+            'ログイン状態を保存できませんでした。ブラウザのCookie設定をご確認ください。',
+          );
+          return false;
+        }
+
+        // /auth/me が使えない(5xx / 通信断)場合と、200 でも形が想定外の場合は、
+        // ログインレスポンスの user を使う。どちらも使えなければ undefined のまま
+        // (偽のユーザーを置くと、他人の名前でログインしたように見えてしまう)
         setUser(
           (fetched.status === 'ok' ? fetched.user : undefined) ??
             toAuthUser(result.user),
@@ -184,18 +236,52 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [],
   );
 
-  const logout = useCallback(() => {
+  const logout = useCallback(async () => {
+    // 連打で POST とトーストと遷移が二重に走るのを防ぐ
+    if (isLoggingOutRef.current) {
+      return;
+    }
+    isLoggingOutRef.current = true;
+
+    // 認証クッキーは httpOnly なのでフロントからは消せない。サーバーに
+    // 消してもらうまで**待ってから**状態を落とす。待たずに画面を切り替えると、
+    // リロードでログイン状態に戻ってしまう。
+    //
+    // この往復の「前」に isLoggingOut を立ててはいけない。往復中にユーザーが
+    // 別ページへ移動すると、pathname 変化の effect がフラグを false に戻し、
+    // 直後の setIsAuthenticated(false) で useRequireAuth の
+    // replace('/login') が navigatePush('/') に勝ってしまう
+    // (「ログアウトしたのにログイン画面へ着地する」= このフラグが防ぐはずの不具合)。
+    let serverCleared = true;
+    try {
+      const response = await createApiRequest(API_CONFIG.endpoints.logout, {
+        method: 'POST',
+      });
+      serverCleared = response.ok;
+    } catch {
+      // ネットワーク断でもローカルの状態は落とす(クッキーは有効期限で切れる)
+      serverCleared = false;
+    }
+
+    if (!serverCleared) {
+      // ヒントだけは JS から消せる。消さないと次のリロードで
+      // 「ログイン中」と判断してサーバーに問い合わせ、クッキーが生きていれば
+      // 前の利用者のセッションに戻ってしまう
+      clearSessionHint();
+    }
+
     // 認証状態を落とすと保護ページのガードが /login へ replace しようとするため、
-    // 「意図的なログアウト」であることを先に立てて push('/') を勝たせる
-    // (旧実装は全遷移に入っていた 100ms 遅延のおかげで偶然 '/' が勝っていた)。
+    // 「意図的なログアウト」であることを先に立てて push('/') を勝たせる。
     // すでに '/' に居る場合は push が遷移しない=パス変化のリセットが走らないため、
-    // フラグ自体を立てない(保護ページ上ではないのでガード抑止も不要)
-    if (pathname !== '/') {
+    // フラグ自体を立てない(保護ページ上ではないのでガード抑止も不要)。
+    // pathname は ref から読む: 往復中に遷移していると closure の値は古い。
+    if (pathnameRef.current !== '/') {
       setIsLoggingOut(true);
     }
-    removeToken();
+
     setIsAuthenticated(false);
     setUser(undefined);
+    isLoggingOutRef.current = false;
 
     // SWRのキャッシュはモジュールスコープで保持され、SPA遷移では破棄されない。
     // 認証済みで取得した内容(自分の非公開投稿など)が、同じ端末で次に
@@ -203,13 +289,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     void mutate(() => true, undefined, { revalidate: false });
 
     // 即座にホームページにリダイレクト
-    navigatePush('/');
+    navigatePushRef.current('/');
 
     // トーストは少し遅らせて表示
     setTimeout(() => {
-      toast.info('ログアウトしました');
+      if (serverCleared) {
+        toast.info('ログアウトしました');
+      } else {
+        // 認証クッキーが残っている可能性がある。共用端末では致命的なので
+        // 黙らせない。Max-Age 付きの永続クッキーなのでブラウザを閉じても
+        // 消えない点を踏まえた案内にする
+        toast.warn(
+          'ログアウトしましたが、サーバー側の解除を確認できませんでした。共用の端末では、時間を置いて再度ログアウトするかブラウザのCookieを削除してください。',
+        );
+      }
     }, 100);
-  }, [pathname, navigatePush]);
+  }, []);
 
   const register = useCallback(
     async (name: string, email: string, password: string): Promise<boolean> => {

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { toast } from 'react-toastify';
 
 import { API_CONFIG, createApiRequest } from '@/lib/apiConfig';
-import { getToken } from '@/utils/auth';
+import { useAuth } from '@/providers/AuthProvider';
 
 interface UpdateUserData {
   name?: string;
@@ -21,13 +21,15 @@ interface UseUpdateUserReturn {
 export function useUpdateUser(): UseUpdateUserReturn {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // 認証クッキーは httpOnly で読めないため、ログイン状態は useAuth() で見る
+  const { isAuthenticated } = useAuth();
 
   const updateUser = async (data: UpdateUserData): Promise<boolean> => {
     try {
       setIsLoading(true);
       setError(null);
 
-      if (!getToken()) {
+      if (!isAuthenticated) {
         throw new Error('認証が必要です');
       }
 
