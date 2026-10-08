@@ -11,6 +11,11 @@ export default function SignUpModal() {
       onClose={() => {
         router.back();
       }}
+      // 登録できたがサインインは未完了のとき、ここを渡さないと
+      // 「ログインしてご利用ください」と案内した先へ進めない
+      onSwitchToLogin={() => {
+        router.replace('/login');
+      }}
     />
   );
 }

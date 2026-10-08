@@ -14,6 +14,13 @@ export default function SignupPage() {
               window.location.href = '/';
             }
           }}
+          // 登録できたがサインインは未完了のとき、ここを渡さないと
+          // 「ログインしてご利用ください」と案内した先へ進めない
+          onSwitchToLogin={() => {
+            if (typeof window !== 'undefined') {
+              window.location.href = '/login';
+            }
+          }}
         />
       </Box>
     </Container>
