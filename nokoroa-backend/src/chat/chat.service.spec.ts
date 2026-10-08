@@ -287,6 +287,40 @@ describe('ChatService', () => {
     expect(mockPosts.search).toHaveBeenCalledTimes(2);
   });
 
+  // 埋め込みプロバイダの障害(残高切れ・レート制限など)でベクトル検索が
+  // 例外を投げても、外部APIに依存しないDB検索は動けるはずなので落とさない。
+  it('ベクトル検索が失敗してもキーワード検索へフォールバックする', async () => {
+    mockEmbeddings.searchSimilar.mockRejectedValue(
+      new Error('embedding provider unavailable'),
+    );
+    mockPosts.search.mockResolvedValue({
+      posts: [
+        {
+          id: 42,
+          title: 'KW',
+          content: 'X',
+          location: '京都',
+          author: { name: 'u' },
+        },
+      ],
+      total: 1,
+      hasMore: false,
+    });
+    makeStreamFetch();
+
+    await service.streamChat({ message: '京都 2泊3日' }, makeRes().res);
+
+    expect(mockPosts.search).toHaveBeenCalledWith({
+      q: '京都 2泊3日',
+      limit: 5,
+      offset: 0,
+    });
+    // 検索できただけでなく、結果がAIのコンテキストまで届いていること
+    const [, init] = findStreamCall();
+    const sent = JSON.parse(init.body) as { context_posts: unknown[] };
+    expect(sent.context_posts).toHaveLength(1);
+  });
+
   it('AI service への fetch に X-Internal-Token header を含める', async () => {
     mockEmbeddings.searchSimilar.mockResolvedValue([]);
     mockPosts.search.mockResolvedValue({
