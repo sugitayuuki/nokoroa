@@ -1,7 +1,7 @@
 ---
 name: nokoroa-autopilot-converge
 description: "/nokoroa-autopilot + /nokoroa-review 収束ループを組み合わせた上位開発フロー。/nokoroa-autopilot で実装〜PR作成 → /nokoroa-review を「P0+P1 連続 2 ラウンド 0 件」になるまで最大 5 ラウンド回す → 累積 P2 課題と未解決指摘を**報告のみ**で締める (自動起票はしない)。Nokoroa 専用 (NestJS backend + Next.js frontend + Terraform 構成)。Use when: (1) `/nokoroa-autopilot-converge` と入力された、(2)「ノコロアでオートパイロット収束」「収束付きで実装して」「強化版オートパイロット」「nokoroa を厳密に」と指示された場合、(3) 単発の /nokoroa-autopilot より厳密な品質保証が必要な開発タスク。"
-user_invocable: true
+user-invocable: true
 ---
 
 # nokoroa-autopilot-converge — Nokoroa 収束保証付き完全自動開発サイクル
