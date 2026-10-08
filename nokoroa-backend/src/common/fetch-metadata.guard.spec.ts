@@ -135,57 +135,35 @@ describe('FetchMetadataGuard', () => {
   });
 
   describe('印が付いてもトップレベル遷移に限る', () => {
-    it('埋め込み(no-cors)は拒否する', () => {
-      // 画像等でコールバックを叩かせ、進行中ログインの state を壊す経路
-      expect(() =>
-        guard.canActivate(
-          contextFor(stub.oauthRoute, {
-            headers: {
-              'sec-fetch-site': 'cross-site',
-              'sec-fetch-mode': 'no-cors',
-              'sec-fetch-dest': 'image',
-            },
-          }),
-        ),
-      ).toThrow(ForbiddenException);
-    });
-
-    it('iframe からのナビゲーションは拒否する', () => {
-      // iframe も sec-fetch-mode は navigate を送るため、dest で分ける
-      expect(() =>
-        guard.canActivate(
-          contextFor(stub.oauthRoute, {
-            headers: {
-              'sec-fetch-site': 'cross-site',
-              'sec-fetch-mode': 'navigate',
-              'sec-fetch-dest': 'iframe',
-            },
-          }),
-        ),
-      ).toThrow(ForbiddenException);
-    });
-
-    // dest 側だけで拒否できてしまうケースばかりだと mode 側の判定が
-    // 無保護になり、「冗長だから」と削る改変がテストで止まらない
+    // mode / dest は片方だけでも拒否できる必要がある。両方揃ったケースしか
+    // 無いと、片側の判定を「冗長だから」と削る改変がテストで止まらない。
+    // 画像や iframe でコールバックを叩かせ、進行中ログインの state を壊す経路。
     it.each([
-      { desc: 'dest を送らない', dest: undefined },
-      { desc: 'dest は document', dest: 'document' },
-    ])(
-      'Sec-Fetch-Mode だけが埋め込みを示していても拒否する ($desc)',
-      ({ dest }) => {
-        expect(() =>
-          guard.canActivate(
-            contextFor(stub.oauthRoute, {
-              headers: {
-                'sec-fetch-site': 'cross-site',
-                'sec-fetch-mode': 'no-cors',
-                ...(dest === undefined ? {} : { 'sec-fetch-dest': dest }),
-              },
-            }),
-          ),
-        ).toThrow(ForbiddenException);
+      { desc: '画像としての読み込み', mode: 'no-cors', dest: 'image' },
+      { desc: 'iframe へのナビゲーション', mode: 'navigate', dest: 'iframe' },
+      {
+        desc: 'mode だけが埋め込み(dest 無し)',
+        mode: 'no-cors',
+        dest: undefined,
       },
-    );
+      {
+        desc: 'mode だけが埋め込み(dest は document)',
+        mode: 'no-cors',
+        dest: 'document',
+      },
+    ])('$desc は拒否する', ({ mode, dest }) => {
+      expect(() =>
+        guard.canActivate(
+          contextFor(stub.oauthRoute, {
+            headers: {
+              'sec-fetch-site': 'cross-site',
+              'sec-fetch-mode': mode,
+              ...(dest === undefined ? {} : { 'sec-fetch-dest': dest }),
+            },
+          }),
+        ),
+      ).toThrow(ForbiddenException);
+    });
 
     it('Sec-Fetch-Mode / Dest が重複して連結されていても通す', () => {
       // 拒否側だけ連結耐性を入れると、正規のログインがここで 403 になる

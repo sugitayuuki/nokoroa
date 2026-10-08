@@ -736,6 +736,12 @@ describe('Auth (e2e, setGlobalPrefix 有り)', () => {
         .sort((a, b) => a.name.localeCompare(b.name));
     }
 
+    function describeHttpMethod(httpMethod: unknown): string {
+      return typeof httpMethod === 'number'
+        ? (RequestMethod[httpMethod] ?? String(httpMethod))
+        : 'HTTP メソッドデコレータなし';
+    }
+
     it('印が付いているのは Google 認証の 2 本だけ', () => {
       // 一覧が変わったことに気づく手段がここしかない。
       // 増えている場合: そのハンドラ自身が CSRF を防げるか確認してから一覧を更新する。
@@ -754,8 +760,14 @@ describe('Auth (e2e, setGlobalPrefix 有り)', () => {
       // ここで機械的に止める。
       const marked = collectMarkedHandlers();
       expect(marked.length).toBeGreaterThan(0);
+      // 落ちたときに「どのハンドラに何で付いたか」が読めるよう、
+      // RequestMethod の数値ではなく名前で出す
       expect(
-        marked.filter((entry) => entry.httpMethod !== RequestMethod.GET),
+        marked
+          .filter((entry) => entry.httpMethod !== RequestMethod.GET)
+          .map(
+            (entry) => `${entry.name}: ${describeHttpMethod(entry.httpMethod)}`,
+          ),
       ).toEqual([]);
     });
   });

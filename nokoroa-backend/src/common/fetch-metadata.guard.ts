@@ -127,6 +127,9 @@ export class FetchMetadataGuard implements CanActivate {
    * 経路上の装置が同名ヘッダを足すと Express は `", "` で連結する。単一の値
    * として見ると、連結された途端に判定が外れる（許可側なら正規のログインが
    * 403 になり、許可リストに載らない側なら素通りする）。
+   *
+   * 現構成（ALB → ECS）にヘッダを足す装置は無く、ブラウザからは禁止ヘッダなので
+   * 注入もできない。CDN / WAF を挟んだときのための保険として残している。
    * 大文字小文字も装置によって変わりうるので、ここで揃えておく。
    */
   private values(header: string | undefined): string[] {

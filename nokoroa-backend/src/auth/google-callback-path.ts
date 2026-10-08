@@ -19,8 +19,11 @@ export const GOOGLE_CALLBACK_PATH = `/${API_GLOBAL_PREFIX}/auth/google/callback`
  * デプロイ時まで前倒しする。
  *
  * 見るのはパスだけ。スキームとホストは環境ごとに正解が違う（開発はフロントと
- * ポートが別）ため、ここでは判定できない。値が無い場合は何もしない
- * （必須かどうかは GoogleStrategy の責務）。
+ * ポートが別）ため、ここでは判定できない。
+ *
+ * 値が無い場合は何もしない。必須かどうかは GoogleStrategy の責務で、現状は
+ * `NestFactory.create()` の中で先に throw するためここには届かない
+ * （assert をより前に動かすとこの分岐が生きる）。
  */
 export function assertGoogleCallbackUrlMatchesRoute(
   callbackUrl: string | undefined,
