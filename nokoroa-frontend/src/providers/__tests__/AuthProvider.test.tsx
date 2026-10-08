@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   toastError: vi.fn(),
   toastInfo: vi.fn(),
   navigatePush: vi.fn(),
+  mutate: vi.fn(),
 }));
 
 vi.mock('@/lib/apiConfig', async (importOriginal) => ({
@@ -51,7 +52,9 @@ vi.mock('@/hooks/useSmoothNavigation', () => ({
   useSmoothNavigation: () => ({ push: mocks.navigatePush }),
 }));
 
-vi.mock('swr', () => ({ mutate: vi.fn() }));
+vi.mock('swr', () => ({
+  mutate: (...args: unknown[]) => mocks.mutate(...args),
+}));
 
 const VERIFIED: AuthSessionResult = {
   status: 'ok',
@@ -115,6 +118,9 @@ describe('login', () => {
     expect(mocks.toastSuccess).toHaveBeenCalledWith('ログインしました');
     expect(auth.isAuthenticated).toBe(true);
     expect(auth.user?.name).toBe('裕貴 杉田');
+    // 同じ端末で別ユーザーがログインしたとき、前のユーザーの非公開投稿が
+    // 一瞬描画されるのを防ぐためキャッシュを破棄する
+    expect(mocks.mutate).toHaveBeenCalled();
   });
 
   // 検証できていないのに成功を名乗ると、次の読み込みで未認証に覆る
@@ -291,5 +297,40 @@ describe('起動時検証', () => {
     await renderWithToken({ status: 'unavailable', reason: 'network' });
 
     expect(auth.isLoading).toBe(false);
+  });
+
+  // 検証中にトークンが差し替わったら、古いトークンに対する判定を
+  // 適用してはいけない。適用すると保存直後の新しいトークンを消してしまう
+  it('検証中にトークンが差し替わったら判定を適用しない', async () => {
+    cleanup();
+    mocks.getToken.mockReturnValueOnce('old').mockReturnValue('new');
+    mocks.fetchAuthSession.mockResolvedValue({ status: 'unauthenticated' });
+
+    await renderProvider();
+
+    expect(mocks.removeToken).not.toHaveBeenCalled();
+    expect(auth.isLoading).toBe(false);
+  });
+
+  // コールバック画面は自前の失敗表示を持つので、同じ事象に対して
+  // 文面の違う通知を 2 つ出さない
+  it.each([
+    ['/auth/callback', false],
+    ['/auth/callback/', false],
+    ['/', true],
+    // 前方一致だけにすると、別ルートまで巻き込んで通知が黙って消える
+    ['/auth/callback-error', true],
+  ])('%s では検証不能の通知を %s 出す', async (pathname, shown) => {
+    cleanup();
+    window.history.replaceState({}, '', pathname);
+    mocks.getToken.mockReturnValue('stored');
+    mocks.fetchAuthSession.mockResolvedValue({
+      status: 'unavailable',
+      reason: 'server',
+    });
+
+    await renderProvider();
+
+    expect(mocks.toastError).toHaveBeenCalledTimes(shown ? 1 : 0);
   });
 });

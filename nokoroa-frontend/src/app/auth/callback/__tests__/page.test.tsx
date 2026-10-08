@@ -130,8 +130,10 @@ describe('AuthCallbackPage', () => {
       renderCallback();
       await settle(1500);
 
+      // 成功時も固着時もスピナーは出たままなので、描画の有無では両者を
+      // 区別できない。apply が実際に走ったことを副作用で見る
+      expect(mocks.toastSuccess).toHaveBeenCalled();
       expect(mocks.replaceLocation).toHaveBeenCalledWith('/');
-      expect(screen.queryByText('認証処理中...')).toBeTruthy();
     });
 
     it('トークンとユーザー情報を URL から取り除く', async () => {

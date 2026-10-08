@@ -108,11 +108,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // ただしコールバック画面は自前の失敗表示を持つので、1 つの事象に対して
       // 文面の違う通知を 2 つ出さないよう譲る
       // pathname はこの effect を再実行させたくないので location から読む
-      // 末尾スラッシュ等で完全一致が崩れると抑止が外れて通知が二重になる
-      if (
-        decision.action === 'retain' &&
-        !window.location.pathname.startsWith(AUTH_CALLBACK_PATH)
-      ) {
+      // 末尾スラッシュで完全一致が崩れると抑止が外れて通知が二重になる。
+      // 前方一致だけにすると /auth/callback-xxx まで巻き込むので配下に限る
+      const onCallback =
+        window.location.pathname === AUTH_CALLBACK_PATH ||
+        window.location.pathname.startsWith(`${AUTH_CALLBACK_PATH}/`);
+      if (decision.action === 'retain' && !onCallback) {
         // 保護ページでは直後に /login へ飛ばされるため、「再読み込み」など
         // この画面に留まる前提の案内はできない
         toast.error(
