@@ -34,7 +34,12 @@ type FormType = z.infer<typeof schema>;
 
 interface LoginDialogProps {
   onClose: () => void;
-  onSwitchToSignup?: () => void;
+  /**
+   * 「新規登録」へ切り替える。呼び出し元ごとに手段が違う(ダイアログの差し替え /
+   * ルーティング)ため注入する。省略可にすると渡し忘れが無反応として
+   * 静かに残るので必須にしている
+   */
+  onSwitchToSignup: () => void;
 }
 
 export default function LoginDialog({
@@ -172,7 +177,7 @@ export default function LoginDialog({
             underline="hover"
             onClick={(e) => {
               e.preventDefault();
-              onSwitchToSignup?.();
+              onSwitchToSignup();
             }}
           >
             こちら

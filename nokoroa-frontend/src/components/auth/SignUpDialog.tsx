@@ -44,7 +44,12 @@ type FormType = z.infer<typeof schema>;
 interface SignUpDialogProps {
   /** `router.back()` などで「戻る」挙動をさせるコールバック */
   onClose: () => void;
-  onSwitchToLogin?: () => void;
+  /**
+   * 「ログイン」へ切り替える。呼び出し元ごとに手段が違う(ダイアログの差し替え /
+   * ルーティング)ため注入する。省略可にすると渡し忘れが無反応として
+   * 静かに残るので必須にしている
+   */
+  onSwitchToLogin: () => void;
 }
 
 /* ------------------ Dialog 本体 ------------------ */
@@ -81,7 +86,7 @@ export default function SignUpDialog({
     // 登録はできたがサインインは未完了。未ログインのままホームへ送ると
     // 成功時と見分けが付かないので、案内どおりログイン画面へ切り替える
     if (result === 'registered') {
-      onSwitchToLogin?.();
+      onSwitchToLogin();
     }
   };
 
@@ -235,7 +240,7 @@ export default function SignUpDialog({
             underline="hover"
             onClick={(e) => {
               e.preventDefault();
-              onSwitchToLogin?.();
+              onSwitchToLogin();
             }}
           >
             こちら

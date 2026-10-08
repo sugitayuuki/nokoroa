@@ -11,6 +11,9 @@ export default function LoginModal() {
       onClose={() => {
         router.back();
       }}
+      onSwitchToSignup={() => {
+        router.replace('/signup');
+      }}
     />
   );
 }
