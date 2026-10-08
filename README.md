@@ -113,11 +113,14 @@ Google OAuth は、パスワードを覚えてもらう前提のサービスに�
 
 判定は `FetchMetadataGuard`（`nokoroa-backend/src/common/fetch-metadata.guard.ts`）にまとめています。どちらのヘッダも無いリクエスト（curl / Swagger / サーバー間）は通します。ここを必須にすると API クライアントが使えなくなるためです。
 
+**例外（印）**: `@AllowCrossSiteNavigation()`（`nokoroa-backend/src/common/allow-cross-site-navigation.decorator.ts`）を付けたハンドラだけは `Sec-Fetch-Site: cross-site` でも通ります。Google からのリダイレクトがこの形で届くためです。印を付けても `Origin` 検査は外れず、通るのもトップレベル遷移に限ります。印を付けてよい条件はデコレータの JSDoc にあり、印が付いたハンドラの一覧は E2E が固定しています（増減すると落ちます）。
+
 **検査を 2 本立てにしている理由**: `Sec-Fetch-Site` は **Safari 16.3 以下と Firefox 89 以下では送信されません**。つまり「ブラウザはこのヘッダを省略できない」とは言えず、古いブラウザでは素通りします。一方 `Origin` はクロスオリジンの POST 等に必ず付き JS からは取り除けないので、**被害の大きいログイン CSRF は `Origin` 側で閉じています**。
 
 **残っている面**:
 
 - `Sec-Fetch-Site` を送らない古いブラウザでは、**クロスサイトのトップレベル GET 遷移**は止まりません（`Origin` が付かない経路のため）。意味検索のレート制限が被害の上限になります。
+- 印を付けたハンドラは、`Sec-Fetch-*` を送らないクライアントに対してはトップレベル遷移の制限も効きません（ヘッダが無いものは「ブラウザ以外」として通すため）。印を付けてよいのは、そのハンドラ自身が CSRF を防げる場合に限ります。
 - 同一サイト・別オリジンは通します（`SameSite` も Fetch Metadata も「同一サイト」は区別しません）。同じ登録ドメイン配下にホストが増えると、そこからは CSRF が成立します。
 - クッキー名に `__Host-` を付ければ Cookie tossing も塞げますが、`__Host-` は `Secure` 必須で開発環境（http）と両立しないため採用していません。
 

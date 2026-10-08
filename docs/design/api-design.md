@@ -7,8 +7,10 @@
   - `Authorization: Bearer <JWT>` も受け付ける（Swagger / E2E 用）。
     両方ある場合は**クッキーが優先**される（`src/auth/jwt.strategy.ts`）。
   - ブラウザからの fetch は `credentials: 'include'` が必須。
-  - クロスサイト（`Sec-Fetch-Site: cross-site`）からのリクエストは
-    `/auth/google` と `/auth/google/callback` を除き 403 で拒否される。
+  - 自サイト以外（`Sec-Fetch-Site` が `same-origin` / `same-site` / `none` 以外）からの
+    リクエストは 403 で拒否される。例外は `@AllowCrossSiteNavigation()` を付けた
+    ハンドラのみ（現在は Google 認証の開始とコールバック）。前提と残る面は
+    README のセキュリティ節を参照。
 - フォーマット: JSON
 
 ---

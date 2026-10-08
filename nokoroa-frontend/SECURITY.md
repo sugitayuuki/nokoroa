@@ -29,14 +29,19 @@
 2. **メールアドレス確認のない signup** — パスワード登録にメール確認が無いため、
    「他人のメールアドレスで先に登録し、後からその人の Google ログインで紐付けられるのを待つ」経路が残っている
    （`email_verified` チェックは Google 側の未確認メールだけを塞いでいる）
-3. **同一サイト・別オリジン** — `SameSite` と Fetch Metadata はどちらも「同一サイト」を通すため、
+3. **印を付けたハンドラ** — `@AllowCrossSiteNavigation()`（Google 認証の往復）はクロスサイトの
+   トップレベル遷移を受け付ける。コールバック側で CSRF を閉じているのは OAuth の `state` 検証のみで、
+   これを緩めるとクロスサイト拒否の穴が同時に開く。開始側は資格情報を発行しないことが根拠で、
+   踏まれても影響は進行中ログインの `state` 上書き（やり直し）まで。
+   印の前提と残る面は README のセキュリティ節を参照
+4. **同一サイト・別オリジン** — `SameSite` と Fetch Metadata はどちらも「同一サイト」を通すため、
    同じ登録ドメイン配下に別ホストが増えると、そこからは CSRF が成立する。
    クッキー名に `__Host-` を付けていないため Cookie tossing も残る（`Secure` 必須で開発の http と両立しないため採用していない）
-4. **`Sec-Fetch-Site` 非対応ブラウザでのトップレベル GET 遷移** — Safari 16.3 以下 / Firefox 89 以下は
+5. **`Sec-Fetch-Site` 非対応ブラウザでのトップレベル GET 遷移** — Safari 16.3 以下 / Firefox 89 以下は
    このヘッダを送らないため、クロスサイトのトップレベル GET 遷移は止まらない
    （`Origin` が付かない経路のため `Origin` 検査では代替できない）。
    被害の上限は各エンドポイントのレート制限で抑えている
-5. **ログアウトの取り消し不能性** — `POST /api/auth/logout` が失敗した場合、
+6. **ログアウトの取り消し不能性** — `POST /api/auth/logout` が失敗した場合、
    フロントは非 httpOnly のヒントだけ消せるが `nokoroa_token` は消せない。
    失効リストが無いため、そのクッキーは有効期限まで有効
 
@@ -131,7 +136,7 @@ localStorage ベースから httpOnly クッキーへの移行は完了してい
 | クッキーの名前・属性・発行・削除 | `nokoroa-backend/src/auth/auth-cookie.ts` |
 | JWT の取り出し（クッキー優先 → Bearer） | `nokoroa-backend/src/auth/jwt.strategy.ts` |
 | セッション確認 / ログアウト | `nokoroa-backend/src/auth/auth.controller.ts`（`GET /auth/me` / `POST /auth/logout`） |
-| クロスサイト拒否 | `nokoroa-backend/src/common/fetch-metadata.middleware.ts` |
+| クロスサイト拒否 | `nokoroa-backend/src/common/fetch-metadata.guard.ts` / `nokoroa-backend/src/common/allow-cross-site-navigation.decorator.ts` |
 | OAuth の state 検証 | `nokoroa-backend/src/auth/oauth-state.store.ts` |
 | フロントの認証状態 | `nokoroa-frontend/src/providers/AuthProvider.tsx` |
 | 自社 API への fetch 設定 | `nokoroa-frontend/src/lib/apiConfig.ts`（`API_FETCH_OPTIONS`） |

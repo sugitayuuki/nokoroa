@@ -1,5 +1,11 @@
 import { Server } from 'http';
-import { INestApplication } from '@nestjs/common';
+import { INestApplication, RequestMethod } from '@nestjs/common';
+import { METHOD_METADATA } from '@nestjs/common/constants';
+import {
+  DiscoveryModule,
+  DiscoveryService,
+  MetadataScanner,
+} from '@nestjs/core';
 import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
 
@@ -10,7 +16,10 @@ import {
   AUTH_COOKIE_NAME,
   SESSION_HINT_COOKIE_NAME,
 } from '../src/auth/auth-cookie';
+import { GOOGLE_CALLBACK_PATH } from '../src/auth/google-callback-path';
 import { OAUTH_STATE_COOKIE_NAME } from '../src/auth/oauth-state.store';
+import { ALLOW_CROSS_SITE_NAVIGATION_KEY } from '../src/common/allow-cross-site-navigation.decorator';
+import { API_GLOBAL_PREFIX } from '../src/common/api-prefix';
 
 /**
  * Set-Cookie から目的のクッキー 1 件の生文字列を取り出す。
@@ -609,6 +618,157 @@ describe('Auth (e2e)', () => {
         .get('/users/profile')
         .set('Authorization', 'Bearer invalid-token')
         .expect(401);
+    });
+  });
+});
+
+/**
+ * 他の E2E はプレフィックス無しでアプリを組むため、プレフィックス起因の退行を
+ * 検出できない（経緯は `API_GLOBAL_PREFIX` の JSDoc）。ここだけ main.ts と
+ * 同じ setGlobalPrefix を掛けて、その差を塞ぐ。
+ *
+ * 到達できたことを 302 まで固定するのが肝心。`not.toBe(403)` だけだと、
+ * ルートの改名やマウント位置の変更で 404 になっても緑のままになる。
+ */
+describe('Auth (e2e, setGlobalPrefix 有り)', () => {
+  let app: INestApplication;
+  let server: Server;
+
+  beforeAll(async () => {
+    const moduleFixture: TestingModule = await Test.createTestingModule({
+      imports: [AppModule, DiscoveryModule],
+    }).compile();
+
+    app = moduleFixture.createNestApplication();
+    app.setGlobalPrefix(API_GLOBAL_PREFIX);
+    await app.init();
+    server = app.getHttpServer() as Server;
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  it('Google の認証開始はクロスサイトのトップレベル遷移でも通す', async () => {
+    const response = await request(server)
+      .get(`/${API_GLOBAL_PREFIX}/auth/google`)
+      .set('Sec-Fetch-Site', 'cross-site')
+      .set('Sec-Fetch-Mode', 'navigate')
+      .set('Sec-Fetch-Dest', 'document')
+      .expect(302);
+
+    expect(response.headers.location).toContain('accounts.google.com');
+  });
+
+  it('Google のコールバックはクロスサイトのトップレベル遷移でも通す', async () => {
+    // Google からのリダイレクトはこの形で届く。403 だとログインが成立しない。
+    // state は一致しないので、やり直し案内へのリダイレクトになる
+    const response = await request(server)
+      .get(`${GOOGLE_CALLBACK_PATH}?code=x&state=y`)
+      .set('Sec-Fetch-Site', 'cross-site')
+      .set('Sec-Fetch-Mode', 'navigate')
+      .set('Sec-Fetch-Dest', 'document')
+      .expect(302);
+
+    expect(response.headers.location).toContain('/auth/callback');
+  });
+
+  it('OAuth 経路でも埋め込みからの呼び出しは拒否する', async () => {
+    await request(server)
+      .get(`${GOOGLE_CALLBACK_PATH}?code=x&state=y`)
+      .set('Sec-Fetch-Site', 'cross-site')
+      .set('Sec-Fetch-Mode', 'no-cors')
+      .set('Sec-Fetch-Dest', 'image')
+      .expect(403);
+  });
+
+  it('OAuth 以外のルートはプレフィックス付きでもクロスサイトを拒否する', async () => {
+    await request(server)
+      .get(`/${API_GLOBAL_PREFIX}/auth/me`)
+      .set('Sec-Fetch-Site', 'cross-site')
+      .set('Sec-Fetch-Mode', 'navigate')
+      .set('Sec-Fetch-Dest', 'document')
+      .expect(403);
+  });
+
+  describe('クロスサイト許可ハンドラの棚卸し', () => {
+    /**
+     * 全コントローラを走査し、印が付いたハンドラを `Controller.method` の形で返す。
+     *
+     * 判定はガード（`FetchMetadataGuard`）と同じ truthy で行い、継承した
+     * ハンドラも拾えるようプロトタイプチェーンを辿る。**検知はガードより
+     * 緩くしてはいけない** — 緩いと「ガードは免除するのに一覧には出ない」
+     * 状態が作れてしまい、この棚卸し自体が fail-open になる。
+     */
+    function collectMarkedHandlers(): {
+      name: string;
+      httpMethod: unknown;
+    }[] {
+      const scanner = new MetadataScanner();
+      return app
+        .get(DiscoveryService)
+        .getControllers()
+        .flatMap((wrapper) => {
+          // インスタンスを解決できないコントローラ(request-scoped 等)は
+          // 走査の外に落ちるため、黙って飛ばさず失敗させる
+          expect(wrapper.instance).toBeDefined();
+          const prototype = Object.getPrototypeOf(
+            wrapper.instance as object,
+          ) as object;
+
+          return scanner
+            .getAllMethodNames(prototype)
+            .map((member) => ({
+              member,
+              handler: (prototype as Record<string, object>)[member],
+            }))
+            .filter(({ handler }) =>
+              Reflect.getMetadata(ALLOW_CROSS_SITE_NAVIGATION_KEY, handler),
+            )
+            .map(({ member, handler }) => ({
+              name: `${wrapper.metatype?.name ?? 'unknown'}.${member}`,
+              httpMethod: Reflect.getMetadata(
+                METHOD_METADATA,
+                handler,
+              ) as unknown,
+            }));
+        })
+        .sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    function describeHttpMethod(httpMethod: unknown): string {
+      return typeof httpMethod === 'number'
+        ? (RequestMethod[httpMethod] ?? String(httpMethod))
+        : 'HTTP メソッドデコレータなし';
+    }
+
+    it('印が付いているのは Google 認証の 2 本だけ', () => {
+      // 一覧が変わったことに気づく手段がここしかない。
+      // 増えている場合: そのハンドラ自身が CSRF を防げるか確認してから一覧を更新する。
+      // 減っている場合: 印が外れた退行(Google ログインが 403 になる)。
+      //   期待値を減らす前にデコレータの有無を確認すること。
+      expect(collectMarkedHandlers().map((entry) => entry.name)).toEqual([
+        'AuthController.googleAuth',
+        'AuthController.googleAuthRedirect',
+      ]);
+    });
+
+    it('印が付いたハンドラはすべて GET', () => {
+      // 印は「クロスサイトのトップレベル遷移」を受けるためのもので、それは
+      // 定義上 GET。更新系に付いた時点で設計外の使われ方をしており、残る防御も
+      // Origin 検査 1 枚だけになる。一覧の更新だけでは回避できないよう、
+      // ここで機械的に止める。
+      const marked = collectMarkedHandlers();
+      expect(marked.length).toBeGreaterThan(0);
+      // 落ちたときに「どのハンドラに何で付いたか」が読めるよう、
+      // RequestMethod の数値ではなく名前で出す
+      expect(
+        marked
+          .filter((entry) => entry.httpMethod !== RequestMethod.GET)
+          .map(
+            (entry) => `${entry.name}: ${describeHttpMethod(entry.httpMethod)}`,
+          ),
+      ).toEqual([]);
     });
   });
 });

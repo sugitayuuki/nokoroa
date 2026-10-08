@@ -1,5 +1,6 @@
 import { join } from 'path';
 import { Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { HttpAdapterHost, NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
@@ -8,6 +9,8 @@ import helmet from 'helmet';
 
 import { AppModule } from './app.module';
 import { AUTH_COOKIE_NAME } from './auth/auth-cookie';
+import { assertGoogleCallbackUrlMatchesRoute } from './auth/google-callback-path';
+import { API_GLOBAL_PREFIX } from './common/api-prefix';
 import { assertKnownEnv, isDevelopmentEnv } from './common/environment';
 import { PrismaExceptionFilter } from './common/prisma-exception.filter';
 
@@ -40,7 +43,14 @@ async function bootstrap() {
   });
   // cookie-parser / ValidationPipe / クロスサイト拒否は AppModule が登録する。
   // ここに書くと E2E（アプリを自前で組む）と乖離し、本番だけ壊れる形になるため。
-  app.setGlobalPrefix('api');
+  app.setGlobalPrefix(API_GLOBAL_PREFIX);
+  // プレフィックスを当てた直後に、Google へ登録したコールバック URL が
+  // 実際のマウント先を指しているか突き合わせる。読み元は GoogleStrategy と
+  // 揃える（process.env を直読みすると ConfigModule の設定次第で
+  // 「assert が有効なつもりで実は未設定扱い」に静かに落ちる）
+  assertGoogleCallbackUrlMatchesRoute(
+    app.get(ConfigService).get<string>('GOOGLE_CALLBACK_URL')?.trim(),
+  );
 
   const config = new DocumentBuilder()
     .setTitle('Nokoroa API')
@@ -70,7 +80,7 @@ async function bootstrap() {
   // 「本番以外」だと staging で露出してしまうため、開発環境を明示で判定する。
   if (isDevelopment) {
     const document = SwaggerModule.createDocument(app, config);
-    SwaggerModule.setup('api/docs', app, document);
+    SwaggerModule.setup(`${API_GLOBAL_PREFIX}/docs`, app, document);
   }
 
   const { httpAdapter } = app.get(HttpAdapterHost);
