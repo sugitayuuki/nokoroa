@@ -60,6 +60,26 @@ describe('AuthCallbackPage', () => {
     expect(replace).not.toHaveBeenCalled();
   });
 
+  // 上のケースは「ロード中は着地しない」という上限しか固定しない。
+  // 「ロードが解けたら必ず 1 回着地する」という下限も固定しないと、
+  // 依存から isLoading が落ちる等で着地が一生起きなくなる退行
+  // (= トーストも遷移も出ずスピナーのまま)を見逃す。
+  it('ロードが解けたら着地する', () => {
+    const { rerender } = render(<AuthCallbackPage />);
+    expect(toastCalls).toEqual([]);
+
+    authState = {
+      isLoading: false,
+      isAuthenticated: true,
+      user: { id: 1, name: '裕貴 杉田', email: 'me@example.com' },
+    };
+    rerender(<AuthCallbackPage />);
+
+    expect(toastCalls).toEqual(['success:ようこそ、裕貴 杉田さん！']);
+    expect(replace).toHaveBeenCalledTimes(1);
+    expect(replace).toHaveBeenCalledWith('/');
+  });
+
   // 実際に観測された不具合。
   it('StrictMode で effect が二重に走っても歓迎トーストは 1 回だけ出す', () => {
     authState = {
@@ -93,9 +113,31 @@ describe('AuthCallbackPage', () => {
     expect(replace).toHaveBeenCalledWith('/');
   });
 
+  // 遷移経路と StrictMode の二重実行が重ならないこと。
+  it('ロードが解けて未認証に確定したら StrictMode でも 1 回だけ着地する', () => {
+    const { rerender } = render(
+      <StrictMode>
+        <AuthCallbackPage />
+      </StrictMode>,
+    );
+    expect(toastCalls).toEqual([]);
+
+    authState = { isLoading: false, isAuthenticated: false };
+    rerender(
+      <StrictMode>
+        <AuthCallbackPage />
+      </StrictMode>,
+    );
+
+    expect(toastCalls).toEqual(['error:認証に失敗しました']);
+    expect(replace).toHaveBeenCalledTimes(1);
+    expect(replace).toHaveBeenCalledWith('/');
+  });
+
   // もう一つの発生源。StrictMode は AuthProvider の復元 effect も二重に
-  // 走らせるので /auth/me が 2 本飛び、後から解決した方が setUser に別の
-  // オブジェクトを渡す。着地後に user が変わっても着地はやり直さない。
+  // 走らせるので /auth/me が 2 本飛び、後から解決した方が 200 を返すと
+  // setUser に別のオブジェクトが渡る。着地後に user が変わっても
+  // 着地はやり直さない。
   it('着地後に user が差し替わっても着地は 1 回で確定する', () => {
     authState = { isLoading: false, isAuthenticated: true };
     const { rerender } = render(<AuthCallbackPage />);

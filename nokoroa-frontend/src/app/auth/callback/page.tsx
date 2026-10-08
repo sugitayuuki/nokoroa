@@ -32,9 +32,10 @@ export default function AuthCallbackPage() {
    * そのまま 2 回の着地になる。
    *
    * 発生源はもう一つある。StrictMode は AuthProvider の復元 effect も
-   * 二重に走らせるので `/auth/me` が 2 本飛び、後から解決した方が setUser に
-   * 新しいオブジェクトを渡す。これで下の user 依存が変わり、着地がもう一度
-   * 走る(ガード無しだと実測で計 3 回)。
+   * 二重に走らせるので `/auth/me` が 2 本飛ぶ。後から解決した方が 200 と
+   * 想定どおりの形を返せば setUser に新しいオブジェクトが渡り、下の user
+   * 依存が変わって着地がもう一度走る(ガード無しだと実測で計 3 回。5xx 等で
+   * user が差し替わらなければ 2 回)。
    *
    * ref は StrictMode の擬似 remount をまたいで保持されるので両方を塞げる。
    * 依存配列は exhaustive-deps を満たすための形で、実行回数はこのフラグが
