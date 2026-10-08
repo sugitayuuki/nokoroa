@@ -112,8 +112,12 @@ describe('AuthCallbackPage', () => {
     expect(replace).toHaveBeenCalledWith('/');
   });
 
-  // 遷移経路と StrictMode の二重実行が重ならないこと。
-  it('ロードが解けて未認証に確定したら StrictMode でも 1 回だけ着地する', () => {
+  // ここは isLoading **だけ**が変わる遷移。上の「ロードが解けたら着地する」は
+  // 同時に isAuthenticated と user も変わるので、依存配列から isLoading が
+  // 落ちても別の依存で着地してしまい、その退行を見逃す。
+  // (StrictMode の二重実行はマウント時のみで更新時には起きないため、
+  //  このケースで効いているのは StrictMode ではなく依存の方。)
+  it('isLoading だけが変わる遷移でも 1 回だけ着地する', () => {
     const { rerender } = render(
       <StrictMode>
         <AuthCallbackPage />
