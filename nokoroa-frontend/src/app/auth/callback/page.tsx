@@ -2,7 +2,7 @@
 
 import { CircularProgress, Container, Typography } from '@mui/material';
 import { useRouter } from 'next/navigation';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { toast } from 'react-toastify';
 
 import { useAuth } from '@/providers/AuthProvider';
@@ -22,10 +22,22 @@ export default function AuthCallbackPage() {
   const router = useRouter();
   const { isLoading, isAuthenticated, user } = useAuth();
 
+  /**
+   * 着地処理(トースト + 遷移)を済ませたか。
+   *
+   * このページは router.replace('/') の SPA 遷移が完了するまでマウントされたまま
+   * なので、その間に依存が変わると effect が再実行される。実際 user は
+   * AuthProvider がセッションを引き直すたびに新しいオブジェクトになるため、
+   * 中身が同じでも参照が変わって同じトーストが 2 個出る。
+   * 着地は 1 回きりの副作用なので、ref で明示的に一度だけに縛る。
+   */
+  const hasLandedRef = useRef(false);
+
   useEffect(() => {
-    if (isLoading) {
+    if (isLoading || hasLandedRef.current) {
       return;
     }
+    hasLandedRef.current = true;
 
     if (!isAuthenticated) {
       toast.error('認証に失敗しました');
