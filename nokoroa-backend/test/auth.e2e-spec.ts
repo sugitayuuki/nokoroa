@@ -1,5 +1,6 @@
 import { Server } from 'http';
-import { INestApplication } from '@nestjs/common';
+import { INestApplication, RequestMethod } from '@nestjs/common';
+import { METHOD_METADATA } from '@nestjs/common/constants';
 import { DiscoveryModule, DiscoveryService } from '@nestjs/core';
 import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
@@ -686,32 +687,74 @@ describe('Auth (e2e, setGlobalPrefix 有り)', () => {
       .expect(403);
   });
 
-  it('クロスサイトを許可しているハンドラは Google 認証の 2 本だけ', () => {
-    // 免除が「1 箇所の正規表現」から「各所のデコレータ」に変わったため、
-    // 増えたことに気づく手段がここしかない。増やすときは意図的にこの一覧を
-    // 更新すること(そのハンドラ自身が CSRF を防げるかの確認とセットで)。
-    const controllers = app.get(DiscoveryService).getControllers();
-    const allowed = controllers.flatMap((wrapper) => {
-      const prototype: unknown = wrapper.instance
-        ? Object.getPrototypeOf(wrapper.instance)
-        : null;
-      if (prototype === null || typeof prototype !== 'object') {
-        return [];
+  describe('クロスサイト許可ハンドラの棚卸し', () => {
+    /**
+     * 全コントローラを走査し、印が付いたハンドラを `Controller.method` の形で返す。
+     *
+     * 判定はガード（`FetchMetadataGuard`）と同じ truthy で行い、継承した
+     * ハンドラも拾えるようプロトタイプチェーンを辿る。**検知はガードより
+     * 緩くしてはいけない** — 緩いと「ガードは免除するのに一覧には出ない」
+     * 状態が作れてしまい、この棚卸し自体が fail-open になる。
+     */
+    function collectAllowedHandlers(): {
+      name: string;
+      handler: () => unknown;
+    }[] {
+      const found: { name: string; handler: () => unknown }[] = [];
+      for (const wrapper of app.get(DiscoveryService).getControllers()) {
+        const controllerName = wrapper.metatype?.name ?? 'unknown';
+        // インスタンスを解決できないコントローラ(request-scoped 等)は
+        // 走査の外に落ちるため、黙って飛ばさず失敗させる
+        expect(wrapper.instance).toBeDefined();
+
+        const seen = new Set<string>();
+        let target = Object.getPrototypeOf(wrapper.instance as object) as
+          | object
+          | null;
+        while (target !== null && target !== Object.prototype) {
+          const members = target as Record<string, unknown>;
+          for (const member of Object.getOwnPropertyNames(members)) {
+            if (member === 'constructor' || seen.has(member)) continue;
+            seen.add(member);
+            const handler = members[member];
+            if (
+              typeof handler === 'function' &&
+              Reflect.getMetadata(ALLOW_CROSS_SITE_KEY, handler)
+            ) {
+              found.push({
+                name: `${controllerName}.${member}`,
+                handler: handler as () => unknown,
+              });
+            }
+          }
+          target = Object.getPrototypeOf(target) as object | null;
+        }
       }
-      const target = prototype as Record<string, unknown>;
-      return Object.getOwnPropertyNames(target)
-        .filter(
-          (name) =>
-            name !== 'constructor' &&
-            typeof target[name] === 'function' &&
-            Reflect.getMetadata(ALLOW_CROSS_SITE_KEY, target[name]) === true,
-        )
-        .map((name) => `${wrapper.metatype?.name ?? 'unknown'}.${name}`);
+      return found.sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    it('印が付いているのは Google 認証の 2 本だけ', () => {
+      // 免除が「1 箇所の正規表現」から「各所のデコレータ」に変わったため、
+      // 一覧が変わったことに気づく手段がここしかない。
+      // 増えている場合: そのハンドラ自身が CSRF を防げるか確認してから一覧を更新する。
+      // 減っている場合: 印が外れた退行(Google ログインが 403 になる)。
+      //   期待値を減らす前にデコレータの有無を確認すること。
+      expect(collectAllowedHandlers().map((entry) => entry.name)).toEqual([
+        'AuthController.googleAuth',
+        'AuthController.googleAuthRedirect',
+      ]);
     });
 
-    expect(allowed.sort()).toEqual([
-      'AuthController.googleAuth',
-      'AuthController.googleAuthRedirect',
-    ]);
+    it('印が付いたハンドラはすべて GET', () => {
+      // Origin 検査は更新系にしか掛からず、ブラウザは GET 遷移に Origin を
+      // 付けない。つまり印を付けた更新系はクロスサイトから素通りになる。
+      // 一覧の更新だけでは回避できないよう、ここで機械的に止める。
+      for (const { name, handler } of collectAllowedHandlers()) {
+        expect([
+          name,
+          Reflect.getMetadata(METHOD_METADATA, handler) as unknown,
+        ]).toEqual([name, RequestMethod.GET]);
+      }
+    });
   });
 });

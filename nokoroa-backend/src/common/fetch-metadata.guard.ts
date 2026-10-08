@@ -32,13 +32,17 @@ const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
  *   必ず `Origin` を付け、JS から取り除けない。許可オリジン以外なら拒否する。
  *   Sec-Fetch-Site を送らない古いブラウザ（Safari 16.3 以下 / Firefox 89 以下）でも
  *   こちらが効くため、上記 2 のログイン CSRF はここで閉じる。
- *   **`@AllowCrossSite` でも免除しない** — 免除は「クロスサイトから到達してよい」
- *   という宣言であって「Origin を信用してよい」ではないため。
+ *   **印が付いていても免除しない** — 印は「クロスサイトから到達してよい」という
+ *   宣言であって「Origin を信用してよい」ではないため。
  * - **Sec-Fetch-Site**: `cross-site` なら拒否。GET 遷移（`Origin` が付かない）を
  *   閉じるのはこちらだけなので、**上記 1 は Sec-Fetch-Site を送るブラウザに限って
- *   閉じている**（README の「残っている面」に明記）。例外として
- *   `@AllowCrossSite` を付けたハンドラだけはトップレベル遷移に限り通す
- *   （何を前提にした例外かは `AllowCrossSite` の JSDoc）。
+ *   閉じている**（README の「残っている面」に明記）。
+ *
+ * 唯一の例外が `@AllowCrossSiteNavigation` を付けたハンドラで、ここだけは
+ * `cross-site` でも通す。ただし `Sec-Fetch-Mode` / `Sec-Fetch-Dest` が
+ * トップレベル遷移を示す場合に限る（どちらも送らないクライアントは、他の検査と
+ * 同じく「ブラウザ以外」として通す）。印を付けてよい条件は
+ * `AllowCrossSiteNavigation` の JSDoc。
  *
  * どちらのヘッダも無いリクエスト（curl / Swagger / supertest / サーバー間）は通す。
  * ここを必須にすると API クライアントが全滅する。
@@ -74,11 +78,16 @@ export class FetchMetadataGuard implements CanActivate {
       return true;
     }
 
-    // 印はハンドラ単位でのみ読む（理由は AllowCrossSite の JSDoc）。
-    if (
-      !this.reflector.get<boolean>(ALLOW_CROSS_SITE_KEY, context.getHandler())
-    ) {
-      this.reject(req, 'sec-fetch-site=cross-site');
+    // 印はハンドラ単位でのみ読む（理由は AllowCrossSiteNavigation の JSDoc）。
+    const handler = context.getHandler();
+    if (!this.reflector.get<boolean>(ALLOW_CROSS_SITE_KEY, handler)) {
+      // 解決先を添える。「印が外れた」事故（今回の 403 の再発）と
+      // 「正常な遮断」はこれが無いとログ上で見分けられない。
+      this.reject(
+        req,
+        `sec-fetch-site=cross-site and ${context.getClass().name}.${handler.name} ` +
+          'has no @AllowCrossSiteNavigation',
+      );
     }
 
     // 印が付いていてもトップレベル遷移に限る。埋め込み（画像・iframe 等）で
@@ -89,7 +98,7 @@ export class FetchMetadataGuard implements CanActivate {
     if ((mode && mode !== 'navigate') || (dest && dest !== 'document')) {
       this.reject(
         req,
-        `cross-site allowed route needs a top-level navigation ` +
+        'cross-site allowed route needs a top-level navigation ' +
           `(sec-fetch-mode=${mode ?? 'none'} sec-fetch-dest=${dest ?? 'none'})`,
       );
     }

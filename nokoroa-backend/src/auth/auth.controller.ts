@@ -28,7 +28,7 @@ import {
 } from './auth-cookie';
 import { AuthService } from './auth.service';
 import { GoogleAuthFailureFilter } from './google-auth-failure.filter';
-import { AllowCrossSite } from '../common/allow-cross-site.decorator';
+import { AllowCrossSiteNavigation } from '../common/allow-cross-site.decorator';
 import { frontendBaseUrl } from '../common/frontend-url';
 import { LoginDto } from './dto/login.dto';
 import { GoogleAuthGuard } from './guards/google-auth.guard';
@@ -114,7 +114,7 @@ export class AuthController {
   // 開始とコールバックは state クッキーで対になっているため、片方だけ通しても
   // ログインは成立しない。踏まれた場合の影響は「進行中ログインの state が
   // 上書きされてやり直しになる」までで、認証情報は発行されない。
-  @AllowCrossSite()
+  @AllowCrossSiteNavigation()
   @ApiOperation({
     summary: 'Google認証開始',
     description: 'Googleの認証ページにリダイレクトします',
@@ -128,7 +128,7 @@ export class AuthController {
   @UseGuards(AuthGuard('google'))
   // Google からのリダイレクトはクロスサイトのトップレベル遷移で届く。
   // ここを塞ぐと正規のログインが必ず失敗する。
-  @AllowCrossSite()
+  @AllowCrossSiteNavigation()
   // 認証に失敗しても API オリジン上の生 JSON で行き止まりにしない。
   // state 切れ・複数タブ・未確認メールはいずれもユーザーがやり直せる失敗なので、
   // フロントへ戻して案内させる（詳細は GoogleAuthFailureFilter）。

@@ -8,13 +8,13 @@ import { Request } from 'express';
 
 import {
   ALLOW_CROSS_SITE_KEY,
-  AllowCrossSite,
+  AllowCrossSiteNavigation,
 } from './allow-cross-site.decorator';
 import { FetchMetadataGuard } from './fetch-metadata.guard';
 
 // `this` を使わないことを明示する（ハンドラを値として取り回すため）
 class StubController {
-  @AllowCrossSite()
+  @AllowCrossSiteNavigation()
   oauthRoute(this: void): void {}
 
   protectedRoute(this: void): void {}

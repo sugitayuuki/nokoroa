@@ -8,6 +8,7 @@ import helmet from 'helmet';
 
 import { AppModule } from './app.module';
 import { AUTH_COOKIE_NAME } from './auth/auth-cookie';
+import { assertGoogleCallbackUrlMatchesRoute } from './auth/google-callback-path';
 import { API_GLOBAL_PREFIX } from './common/api-prefix';
 import { assertKnownEnv, isDevelopmentEnv } from './common/environment';
 import { PrismaExceptionFilter } from './common/prisma-exception.filter';
@@ -42,6 +43,9 @@ async function bootstrap() {
   // cookie-parser / ValidationPipe / クロスサイト拒否は AppModule が登録する。
   // ここに書くと E2E（アプリを自前で組む）と乖離し、本番だけ壊れる形になるため。
   app.setGlobalPrefix(API_GLOBAL_PREFIX);
+  // プレフィックスを当てた直後に、Google へ登録したコールバック URL が
+  // 実際のマウント先を指しているか突き合わせる
+  assertGoogleCallbackUrlMatchesRoute(process.env.GOOGLE_CALLBACK_URL);
 
   const config = new DocumentBuilder()
     .setTitle('Nokoroa API')
