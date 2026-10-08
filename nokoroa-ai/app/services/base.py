@@ -1,7 +1,9 @@
 """チャット / 埋め込みプロバイダの共通インタフェース。
 
-ルーターはこの型だけに依存する。実装 (Gemini / Ollama) を直接参照させないのは、
-プロバイダを足すたびにルーター側を触らずに済むようにするため。
+チャットと埋め込みを別の Protocol に分けている。両方を備えるプロバイダ
+(Gemini / Ollama) がある一方、Claude は埋め込み API を持たないため、
+1 つのインタフェースに押し込むと「実装できないメソッド」が生まれるため。
+ルーターはそれぞれ必要な側だけに依存する。
 """
 
 from collections.abc import Iterator
@@ -11,11 +13,7 @@ from app.schemas import ContextPost, Message, TaskType
 
 
 @runtime_checkable
-class AIService(Protocol):
-    def embed(self, text: str, task_type: TaskType = "RETRIEVAL_DOCUMENT") -> list[float]:
-        """text の埋め込みベクトルを返す。長さは settings.embedding_dim と一致すること。"""
-        ...
-
+class ChatProvider(Protocol):
     def chat_stream(
         self,
         message: str,
@@ -31,4 +29,11 @@ class AIService(Protocol):
 
     async def generate_suggestions(self, user_message: str, ai_response: str) -> list[str]:
         """フォローアップ候補を返す。補助機能なので失敗時は空リストに倒す。"""
+        ...
+
+
+@runtime_checkable
+class EmbeddingProvider(Protocol):
+    def embed(self, text: str, task_type: TaskType = "RETRIEVAL_DOCUMENT") -> list[float]:
+        """text の埋め込みベクトルを返す。長さは settings.embedding_dim と一致すること。"""
         ...

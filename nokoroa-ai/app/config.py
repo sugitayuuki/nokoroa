@@ -3,19 +3,29 @@ from typing import Literal
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+ChatProviderName = Literal["gemini", "ollama", "claude"]
+EmbeddingProviderName = Literal["gemini", "ollama", "openai"]
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env")
 
-    # gemini: 外部APIへ従量課金。Google検索グラウンディングが使える。
-    # ollama: ローカル推論で課金ゼロ。検索グラウンディングは使えない。
-    ai_provider: Literal["gemini", "ollama"] = "gemini"
+    # チャットと埋め込みを別々に選ぶ。Claude には embeddings API が無く、
+    # 1 つの設定では「チャットは Claude・検索は別」という構成を表せないため。
+    #   gemini … Google検索グラウンディングが使える唯一の経路
+    #   ollama … ローカル推論で課金ゼロ。検索グラウンディングは使えない
+    #   claude … 外部APIへ従量課金。チャットのみ
+    chat_provider: ChatProviderName = "gemini"
+    #   openai … text-embedding-3-small。dimensions で 768 に合わせられる
+    embedding_provider: EmbeddingProviderName = "gemini"
 
-    # ollama 運用では不要なので必須にしない。gemini を選んだときだけ
-    # 下の model_validator で必須化する。
-    gemini_api_key: str = ""
     cors_origins: str = "http://localhost:3000,http://localhost:4000"
     internal_ai_token: str = ""
+
+    # 使うプロバイダのぶんだけ必須。下の model_validator で検証する。
+    gemini_api_key: str = ""
+    anthropic_api_key: str = ""
+    openai_api_key: str = ""
 
     # Geminiのモデルは定期的にshutdownされるため、コードへ固定せず差し替え可能にする。
     # 既定値の失効状況は https://ai.google.dev/gemini-api/docs/deprecations を参照。
@@ -25,9 +35,17 @@ class Settings(BaseSettings):
     # post_embedding.embedding の vector(768) と一致させること。
     embedding_dim: int = 768
 
+    anthropic_base_url: str = "https://api.anthropic.com"
+    claude_model: str = "claude-sonnet-4-5-20250929"
+
+    openai_base_url: str = "https://api.openai.com"
+    # dimensions 指定に対応したモデルであること。未対応のモデルだと
+    # 1536 次元が返り、embeddings ルーターの次元チェックで弾かれる。
+    openai_embedding_model: str = "text-embedding-3-small"
+
     ollama_base_url: str = "http://localhost:11434"
     # 既定を 7B にしているのは速度のため。backend は 60 秒でストリームを打ち切るので、
-    # 大きいモデルほど初回のロードと生成で上限に触れやすい。
+    # 大きいモデルほど初回ロードと生成で上限に触れやすい。
     ollama_chat_model: str = "qwen2.5:7b"
     # nomic-embed-text の出力は 768 次元で、embedding_dim とそのまま一致する。
     # 別モデルへ変えると次元が変わり、embeddings ルーターの検証で弾かれる。
@@ -37,12 +55,21 @@ class Settings(BaseSettings):
     ollama_keep_alive: str = "30m"
 
     @model_validator(mode="after")
-    def _require_gemini_key(self) -> "Settings":
-        # 以前は gemini_api_key を必須フィールドにして起動時に落としていた。
-        # ollama 運用のために任意へ緩めたので、gemini を選んだ場合の保護を
-        # ここで復元する(未設定のまま起動すると全リクエストが実行時に落ちる)。
-        if self.ai_provider == "gemini" and not self.gemini_api_key:
-            raise ValueError("GEMINI_API_KEY is required when AI_PROVIDER=gemini")
+    def _require_keys_for_selected_providers(self) -> "Settings":
+        # 鍵を任意フィールドにした代わりに、選んだプロバイダのぶんだけ
+        # 起動時に必須化する。未設定のまま起動すると、全リクエストが
+        # 実行時に落ちるまで誰も気づかないため。
+        required = {
+            "gemini": ("gemini_api_key", "GEMINI_API_KEY"),
+            "claude": ("anthropic_api_key", "ANTHROPIC_API_KEY"),
+            "openai": ("openai_api_key", "OPENAI_API_KEY"),
+        }
+        for provider in (self.chat_provider, self.embedding_provider):
+            if provider not in required:
+                continue
+            attr, env_name = required[provider]
+            if not getattr(self, attr):
+                raise ValueError(f"{env_name} is required for provider '{provider}'")
         return self
 
 

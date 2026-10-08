@@ -49,10 +49,13 @@ services:
     ports:
       - '8000:8000'
     environment:
-      # gemini(既定) は外部APIへ従量課金、ollama はローカル推論で課金ゼロ。
-      - AI_PROVIDER=${AI_PROVIDER:-gemini}
-      # AI_PROVIDER=gemini のときのみ必須。未設定だと起動時に失敗する。
+      # チャットと埋め込みは別々に選ぶ (Claude には埋め込み API が無いため)。
+      - CHAT_PROVIDER=${CHAT_PROVIDER:-gemini}
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-gemini}
+      # 選んだプロバイダのぶんだけ必須。未設定だと起動時に失敗する。
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       # Ollama はコンテナではなくホスト上で動くため、localhost では届かない。
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       # backend と同じ値にする。未設定だと全リクエストが503になる。

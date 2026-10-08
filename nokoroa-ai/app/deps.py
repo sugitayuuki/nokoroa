@@ -1,6 +1,6 @@
 """FastAPI の依存関係。
 
-認証と AIService の提供をここへ集約する。サービスをモジュールレベルで
+認証とプロバイダの提供をここへ集約する。サービスをモジュールレベルで
 生成するとインポート時に API キーが必須になりテストが書けないため、
 必ずこの provider 経由で取得する。
 """
@@ -12,7 +12,7 @@ from typing import Annotated
 from fastapi import Depends, Header, HTTPException
 
 from app.config import settings
-from app.services.base import AIService
+from app.services.base import ChatProvider, EmbeddingProvider
 
 
 def verify_internal_token(
@@ -42,19 +42,51 @@ def verify_internal_token(
         raise HTTPException(status_code=401, detail="invalid internal token")
 
 
-@lru_cache
-def get_ai_service() -> AIService:
-    """設定されたプロバイダのサービスを 1 インスタンスだけ生成して使い回す。
+# import を関数内に置くのは、選ばれていないプロバイダの依存を
+# インポート時に要求しないため。
 
-    ルーターごとに生成すると HTTP 接続プールが分裂するため、
-    chat / embeddings の双方がこの provider を使う。
+
+@lru_cache
+def get_chat_service() -> ChatProvider:
+    """設定されたチャットプロバイダを 1 インスタンスだけ生成して使い回す。
+
+    ルーターごとに生成すると HTTP 接続プールが分裂する。
     """
-    # import をここに置くのは、選ばれていない側のプロバイダの依存
-    # (google-genai / httpx) をインポート時に要求しないため。
-    if settings.ai_provider == "ollama":
+    if settings.chat_provider == "ollama":
         from app.services.ollama_service import create_ollama_service
 
         return create_ollama_service()
+
+    if settings.chat_provider == "claude":
+        from app.services.claude_service import create_claude_service
+
+        return create_claude_service()
+
+    from app.services.gemini_service import GeminiService
+
+    return GeminiService(api_key=settings.gemini_api_key)
+
+
+@lru_cache
+def get_embedding_service() -> EmbeddingProvider:
+    """設定された埋め込みプロバイダを 1 インスタンスだけ生成して使い回す。
+
+    チャットと同じプロバイダなら同じインスタンスを返し、接続を共有する。
+    """
+    if settings.embedding_provider == settings.chat_provider:
+        service = get_chat_service()
+        if isinstance(service, EmbeddingProvider):
+            return service
+
+    if settings.embedding_provider == "ollama":
+        from app.services.ollama_service import create_ollama_service
+
+        return create_ollama_service()
+
+    if settings.embedding_provider == "openai":
+        from app.services.openai_embedding_service import create_openai_embedding_service
+
+        return create_openai_embedding_service()
 
     from app.services.gemini_service import GeminiService
 
@@ -63,4 +95,5 @@ def get_ai_service() -> AIService:
 
 # ルーター側は引数デフォルトに Depends を書かず、この別名を型注釈として使う
 # (FastAPI が推奨する形式。可変デフォルト引数の警告も避けられる)。
-AIServiceDep = Annotated[AIService, Depends(get_ai_service)]
+ChatServiceDep = Annotated[ChatProvider, Depends(get_chat_service)]
+EmbeddingServiceDep = Annotated[EmbeddingProvider, Depends(get_embedding_service)]

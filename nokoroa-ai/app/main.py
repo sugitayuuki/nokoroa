@@ -14,19 +14,22 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    from app.deps import get_chat_service, get_embedding_service
+
+    # チャットと埋め込みが同じプロバイダなら同一インスタンスが返るため、
+    # 二重に warmup / close しないよう id で畳む。
+    services = {id(s): s for s in (get_chat_service(), get_embedding_service())}.values()
+
     # ローカル推論は初回だけモデルのロードに数十秒かかり、backend の
     # タイムアウト(埋め込み 10 秒)に必ず掛かる。起動直後に裏で読み込ませて
     # 「最初の 1 通だけ失敗する」のを避ける。
     # await せず投げっぱなしにするのは、ヘルスチェックを待たせないため。
-    if settings.ai_provider != "ollama":
-        yield
-        return
-
-    from app.deps import get_ai_service
-
-    service = get_ai_service()
-    # 参照を保持しないとタスクが GC される可能性がある
-    app.state.warmup_task = asyncio.create_task(asyncio.to_thread(service.warmup))
+    # 参照を保持しないとタスクが GC される可能性がある。
+    app.state.warmup_tasks = [
+        asyncio.create_task(asyncio.to_thread(s.warmup))
+        for s in services
+        if hasattr(s, "warmup")
+    ]
 
     try:
         yield
@@ -34,8 +37,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # 先読みが走っている最中の終了では、スレッドを待たずに接続だけ畳む。
         # to_thread のスレッドはキャンセルできないため、待つと終了が最大
         # OLLAMA_WARMUP_TIMEOUT_S ぶん伸びる。
-        app.state.warmup_task.cancel()
-        service.close()
+        for task in app.state.warmup_tasks:
+            task.cancel()
+        for service in services:
+            if hasattr(service, "close"):
+                service.close()
 
 
 def create_app() -> FastAPI:

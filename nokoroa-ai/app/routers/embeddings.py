@@ -4,7 +4,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.config import settings
-from app.deps import AIServiceDep, verify_internal_token
+from app.deps import EmbeddingServiceDep, verify_internal_token
 from app.schemas import EmbeddingRequest, EmbeddingResponse
 
 logger = logging.getLogger(__name__)
@@ -17,7 +17,7 @@ router = APIRouter(dependencies=[Depends(verify_internal_token)])
 @router.post("/", response_model=EmbeddingResponse)
 async def create_embedding(
     request: EmbeddingRequest,
-    ai: AIServiceDep,
+    ai: EmbeddingServiceDep,
 ) -> EmbeddingResponse:
     try:
         vector = await asyncio.to_thread(ai.embed, request.text, request.task_type)

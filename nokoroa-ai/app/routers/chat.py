@@ -4,7 +4,7 @@ from collections.abc import Iterator
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
-from app.deps import AIServiceDep, verify_internal_token
+from app.deps import ChatServiceDep, verify_internal_token
 from app.schemas import (
     ChatRequest,
     FollowUpRequest,
@@ -36,7 +36,7 @@ def _sse_event(payload: str) -> str:
 @router.post("/stream")
 async def chat_stream(
     request: ChatRequest,
-    ai: AIServiceDep,
+    ai: ChatServiceDep,
 ) -> StreamingResponse:
     def generate() -> Iterator[str]:
         try:
@@ -67,7 +67,7 @@ async def chat_stream(
 @router.post("/suggestions", response_model=SuggestionsResponse)
 async def get_suggestions(
     request: FollowUpRequest,
-    ai: AIServiceDep,
+    ai: ChatServiceDep,
 ) -> SuggestionsResponse:
     # サジェストは補助機能であり、失敗してもチャット本体は成立するため空配列に倒す
     suggestions = await ai.generate_suggestions(
