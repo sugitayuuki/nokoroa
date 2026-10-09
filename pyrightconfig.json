@@ -1,0 +1,8 @@
+{
+  "venvPath": "nokoroa-ai",
+  "venv": "venv",
+  "include": ["nokoroa-ai"],
+  "exclude": ["**/node_modules", "**/__pycache__", "nokoroa-ai/venv"],
+  "extraPaths": ["nokoroa-ai"],
+  "typeCheckingMode": "standard"
+}

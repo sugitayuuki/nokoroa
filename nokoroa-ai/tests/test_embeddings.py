@@ -2,6 +2,8 @@
 
 import threading
 
+import pytest
+
 from app.schemas import MAX_EMBEDDING_TEXT_LENGTH
 from app.services.gemini_service import EMBEDDING_DIM
 
@@ -31,6 +33,17 @@ def test_maps_upstream_failure_to_502(client, auth, models):
     response = client.post("/api/embeddings/", json={"text": "京都"}, headers=auth)
     assert response.status_code == 502
     assert "quota" not in response.text
+
+
+@pytest.mark.parametrize("empty", [None, []], ids=["embeddings_missing", "values_empty"])
+def test_maps_empty_embedding_to_502(client, auth, models, empty):
+    """埋め込みが空の応答は上流起因の 502 に倒す。
+
+    素通しすると None への添字で TypeError になるか、「0 次元」という
+    紛らわしい 500 になる。OpenAI 側と同じく空応答として先に落とす。"""
+    models.embed_values = empty
+    response = client.post("/api/embeddings/", json={"text": "京都"}, headers=auth)
+    assert response.status_code == 502
 
 
 def test_rejects_empty_text(client, auth):

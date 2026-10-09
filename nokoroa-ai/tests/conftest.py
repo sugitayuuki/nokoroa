@@ -27,8 +27,10 @@ class _FakeEmbedding:
 
 
 class FakeEmbedResponse:
-    def __init__(self, values: list[float]):
-        self.embeddings = [_FakeEmbedding(values)]
+    def __init__(self, values: list[float] | None):
+        # 実 SDK は embeddings 自体を省略しうる。その応答を再現できるよう、
+        # None は「埋め込みが 1 件も無い」応答として扱う。
+        self.embeddings = None if values is None else [_FakeEmbedding(values)]
 
 
 class FakeModels:
@@ -39,7 +41,7 @@ class FakeModels:
         self.generate_content_error: Exception | None = None
         self.stream_chunks: list[str] = ["こんにちは"]
         self.stream_error: Exception | None = None
-        self.embed_values: list[float] = [0.1] * 768
+        self.embed_values: list[float] | None = [0.1] * 768
         self.embed_error: Exception | None = None
         self.prompts: list[str] = []
         self.threads: set[str] = set()
@@ -148,7 +150,11 @@ def models() -> FakeModels:
     get_chat_service.cache_clear()
     get_embedding_service.cache_clear()
     service = get_chat_service()
-    return service.client.models
+    # CHAT_PROVIDER を gemini に固定しているため GeminiService が返り、その client は
+    # _install_fake_genai が差し替えた FakeClient。戻り値型は ChatProvider
+    # (client を持たない) で、実体は sys.modules 差し替え後にしか決まらないため、
+    # 静的には追跡できない。
+    return service.client.models  # type: ignore[attr-defined]
 
 
 @pytest.fixture

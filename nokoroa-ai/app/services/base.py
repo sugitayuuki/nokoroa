@@ -37,3 +37,17 @@ class EmbeddingProvider(Protocol):
     def embed(self, text: str, task_type: TaskType = "RETRIEVAL_DOCUMENT") -> list[float]:
         """text の埋め込みベクトルを返す。長さは settings.embedding_dim と一致すること。"""
         ...
+
+
+@runtime_checkable
+class Closable(Protocol):
+    """自前で HTTP 接続を保持するプロバイダ。
+
+    チャット / 埋め込みとは独立した軸なので別の Protocol にする。httpx を直接
+    使う Claude / OpenAI は解放が必要だが、Gemini は SDK が接続を管理するため
+    close を持たない。アプリ終了時はこの Protocol で判定して呼び分ける。
+    """
+
+    def close(self) -> None:
+        """保持している HTTP 接続を解放する。"""
+        ...
