@@ -63,7 +63,15 @@ class GeminiService:
                 http_options=types.HttpOptions(timeout=GEMINI_REQUEST_TIMEOUT_MS),
             ),
         )
-        return list(result.embeddings[0].values)
+        # embeddings も values も SDK 上は省略されうる。素通しすると
+        # NoneType への添字で TypeError になり「embedding failed」としか
+        # 残らないため、OpenAI 側と同じく空の応答として明示的に落とす
+        # (呼び出し元の embeddings ルーターが 502 に変換する)。
+        embeddings = result.embeddings
+        values = embeddings[0].values if embeddings else None
+        if not values:
+            raise ValueError("gemini returned no embeddings")
+        return list(values)
 
     def chat_stream(
         self,

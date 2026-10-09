@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.routers import chat, embeddings
+from app.services.base import Closable
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # HTTP 接続を張りっぱなしにしない。GeminiService は SDK が管理するため
         # close を持たない。
         for service in services:
-            if hasattr(service, "close"):
+            if isinstance(service, Closable):
                 service.close()
 
 
