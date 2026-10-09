@@ -28,7 +28,7 @@ ignore = [
 testpaths = ["tests"]
 pythonpath = ["."]
 
-[tool.pyright]
-venvPath = "."
-venv = "venv"
-typeCheckingMode = "standard"
+# pyright の設定はここには書かない。pyrightconfig.json が同じディレクトリに
+# あると pyright は [tool.pyright] を一切読まないため、両方に書くと片方が
+# 黙って無効になる (実際にこの節の typeCheckingMode は効いていなかった)。
+# 設定は pyrightconfig.json に一本化する。
