@@ -27,7 +27,14 @@ import {
 // text-embedding-3-small の日本語では、無関係な文どうしでも 0.3 台が普通に出る。
 // 本番データでの実測は 完全一致クエリ=0.73 / 同じ公園という関連=0.44 /
 // 無関係=0.33〜0.36 で、0.40 が「関連あり」と「地の雑音」の境目にあたる。
-// 投稿が増えて分布が変わったら SEMANTIC_MIN_SIMILARITY で再デプロイ無しに調整できる。
+// ★ この値は埋め込みプロバイダに紐付く。EMBEDDING_PROVIDER を gemini へ戻すと
+//   類似度の分布ごと変わるため、同じ 0.4 が「ほぼ全件0件」にも「足切りが実質無効」にも
+//   化けうる。プロバイダを変えたら必ず実測し直すこと。
+// 投稿が増えて分布が変わったら SEMANTIC_MIN_SIMILARITY で調整できる。
+// ただし本番で terraform apply しただけでは反映されない: ECS サービスは
+// lifecycle.ignore_changes = [task_definition] を持つため、apply は新リビジョンを
+// 登録するだけで稼働中のタスクは古い値を使い続ける。apply 後にデプロイを流すこと
+// (手順は terraform/envs/prod/terraform.tfvars.example を参照)。
 const DEFAULT_SEMANTIC_MIN_SIMILARITY = 0.4;
 
 function slugify(text: string): string {
@@ -49,7 +56,7 @@ export class PostsService {
     configService: ConfigService,
   ) {
     this.minSimilarity = this.resolveMinSimilarity(
-      configService.get<string>('SEMANTIC_MIN_SIMILARITY'),
+      configService.get('SEMANTIC_MIN_SIMILARITY'),
     );
   }
 
@@ -57,16 +64,27 @@ export class PostsService {
    * 類似度の下限を環境変数から解決する。
    * 不正値で 0 に落とすと足切りが無言で無効化されるため、既定値へ戻して警告する。
    */
-  private resolveMinSimilarity(raw: string | undefined): number {
-    if (raw === undefined || raw.trim() === '') {
+  private resolveMinSimilarity(raw: unknown): number {
+    // get<string>() は型アサーションでしかない。config ローダ次第で数値や
+    // オブジェクトが入りうるので、trim を呼ぶ前に実体を確かめる。
+    const text = typeof raw === 'number' ? String(raw) : raw;
+    if (typeof text !== 'string' || text.trim() === '') {
       return DEFAULT_SEMANTIC_MIN_SIMILARITY;
     }
-    const parsed = Number(raw);
+    const parsed = Number(text);
     if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
       this.logger.warn(
-        `SEMANTIC_MIN_SIMILARITY=${raw} is not a number in [0,1]; falling back to ${DEFAULT_SEMANTIC_MIN_SIMILARITY}`,
+        `SEMANTIC_MIN_SIMILARITY=${text} is not a number in [0,1]; falling back to ${DEFAULT_SEMANTIC_MIN_SIMILARITY}`,
       );
       return DEFAULT_SEMANTIC_MIN_SIMILARITY;
+    }
+    if (parsed === 0) {
+      // 0 は「足切りを全部外す」逃げ道として有効値のまま残すが、
+      // 事故で 0 が入ると元の不具合(無関係な投稿が10件並ぶ)に静かに戻るため、
+      // 無効値と違って正常系でも必ず痕跡を残す。
+      this.logger.warn(
+        'SEMANTIC_MIN_SIMILARITY=0: 意味検索の足切りは無効です（関連の薄い投稿も返します）',
+      );
     }
     return parsed;
   }

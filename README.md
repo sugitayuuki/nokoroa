@@ -221,6 +221,15 @@ npm run dev
 cd nokoroa-backend && npm run backfill:embeddings -- --all
 ```
 
+成否は終了コードで判定してください。**1 件でも失敗すると非ゼロで終わります**。
+最後の `done — success=… , skipped=… , failed=…` も確認を。`skipped` は本文が空で
+埋め込みを作れなかった投稿で、成功には数えていません。
+
+あわせて、プロバイダを変えたら意味検索の足切り閾値
+（`SEMANTIC_MIN_SIMILARITY`、既定 0.4）も実測し直してください。
+プロバイダが変わると類似度の分布ごと変わるため、同じ値が
+「ほぼ全件 0 件」にも「足切りが実質無効」にも化けます。
+
 **2. スキーマ変更を含むデプロイは、先にマイグレーション**
 
 アプリを入れ替える前に `npx prisma migrate deploy` を実行してください。

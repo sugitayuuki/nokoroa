@@ -684,5 +684,5 @@ aws rds delete-db-snapshot --db-snapshot-identifier <古い名前>
   ```
 
 - **残しているリソースが state に載っていない**: 停止中も AWS に残るリソースは state に記録されません。このまま `terraform apply` すると名前の衝突で落ちるため、再構築の前に `terraform import` が必要です。実測した全量は「[import する](#import-する)」の表を参照してください。Secrets Manager は削除待ち中のものが混ざりうるため、`import` の前に `list-secrets --include-planned-deletion` で状態を確認してください（削除待ちのものは `import` できず、`restore-secret` か待機満了が必要です）。
-- **変数の `validation` がほぼ未設定**: 101 個の変数すべてに `description` と `type` はありますが、値域の検証が入っているのは `final_snapshot_identifier`（AWS の識別子規則）の 1 個だけです。
+- **変数の `validation` がほぼ未設定**: ほぼ全ての変数に `description` と `type` はありますが、値域の検証が入っているのは `final_snapshot_identifier`（AWS の識別子規則）、`chat_provider` / `embedding_provider`（列挙）、`semantic_min_similarity`（0〜1）だけです。
 - **`import` 後に周辺設定が残る**: 「[import する](#import-する)」に必須 14 件の対応表を載せていますが、`modules/s3` の周辺設定（バージョニング・暗号化・CORS・ポリシー）は任意扱いで、`import` せず apply で上書きさせる前提です。state とクラウドの対応が完全に一致した状態にはなりません。

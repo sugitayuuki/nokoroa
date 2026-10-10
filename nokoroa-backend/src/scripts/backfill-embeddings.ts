@@ -38,6 +38,7 @@ async function main() {
 
     let success = 0;
     let failed = 0;
+    let skipped = 0;
 
     for (const post of posts) {
       try {
@@ -45,12 +46,19 @@ async function main() {
         // 正常 return するため、全件失敗しても failed=0 と報告してしまう。
         // このスクリプトはプロバイダ切替時の唯一の復旧手段(README 参照)なので、
         // 成否を取り違えると「直したつもり」で壊れたまま運用が続く。
-        await embeddings.generateForPostStrict(
+        const embedded = await embeddings.generateForPostStrict(
           post.id,
           post.title,
           post.content,
         );
-        success += 1;
+        // 本文が空の投稿は埋め込みを書かずに false が返る。成功に混ぜると
+        // 「埋め込みが無いのに success」になるため別勘定にする。
+        if (embedded) {
+          success += 1;
+        } else {
+          skipped += 1;
+          logger.warn(`post ${post.id}: skipped (title と content が空)`);
+        }
       } catch (err) {
         failed += 1;
         logger.warn(
@@ -59,7 +67,9 @@ async function main() {
       }
     }
 
-    logger.log(`done — success=${success}, failed=${failed}`);
+    logger.log(
+      `done — success=${success}, skipped=${skipped}, failed=${failed}`,
+    );
     // 1件でも落ちたら埋め込みは歯抜けのままなので、終了コードで分かるようにする。
     // CI やデプロイ手順から呼ばれたとき、無言で次の手順へ進ませない。
     if (failed > 0) {

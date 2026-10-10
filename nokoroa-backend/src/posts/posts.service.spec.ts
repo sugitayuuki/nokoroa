@@ -96,8 +96,9 @@ describe('PostsService', () => {
         PostsService,
         { provide: PrismaService, useValue: mockPrismaService },
         { provide: EmbeddingsService, useValue: mockEmbeddingsService },
-        // 未設定時の既定値(0.4)で動かす。環境変数の解決そのものは
-        // resolveMinSimilarity のテストで個別に確認する。
+        // 未設定時の既定値(0.4)で動かす。環境変数を与えた場合の挙動は
+        // 「searchSemantic の類似度下限設定」が searchSemantic 経由で確認する
+        // (下限は private なので直接は観測しない)。
         { provide: ConfigService, useValue: { get: () => undefined } },
       ],
     }).compile();
@@ -106,6 +107,19 @@ describe('PostsService', () => {
 
     jest.clearAllMocks();
   });
+
+  /** 類似度の下限だけを差し替えた PostsService を組む */
+  const buildServiceWithThreshold = async (envValue: unknown) => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        PostsService,
+        { provide: PrismaService, useValue: mockPrismaService },
+        { provide: EmbeddingsService, useValue: mockEmbeddingsService },
+        { provide: ConfigService, useValue: { get: () => envValue } },
+      ],
+    }).compile();
+    return module.get<PostsService>(PostsService);
+  };
 
   describe('create', () => {
     it('新規投稿を作成できる', async () => {
@@ -791,7 +805,10 @@ describe('PostsService', () => {
       expect(result.aiAvailable).toBe(true);
     });
 
-    it('distance が 1 を超えても similarity は負にならない', async () => {
+    it('distance が 1 を超えても similarity は 0 にクランプする', async () => {
+      // 足切りを無効化(0)した状態で見ないと、クランプを外して similarity が
+      // 負になっても「下限未満だから消えた」と区別がつかず、テストが空振りする。
+      const svc = await buildServiceWithThreshold('0');
       mockEmbeddingsService.searchSimilarStrict.mockResolvedValueOnce([
         { postId: 1, distance: 1.5 },
       ]);
@@ -799,28 +816,17 @@ describe('PostsService', () => {
         { ...mockPost, id: 1 },
       ]);
 
-      const result = await service.searchSemantic({ q: 'q', limit: 5 });
+      const result = await svc.searchSemantic({ q: 'q', limit: 5 });
 
-      // クランプ後は 0 で、下限(0.4)にも届かないため結果からは消える。
-      expect(result.posts).toEqual([]);
+      expect(result.posts[0].similarity).toBe(0);
     });
   });
 
   describe('searchSemantic の類似度下限設定', () => {
-    const buildService = async (envValue: unknown) => {
-      const module: TestingModule = await Test.createTestingModule({
-        providers: [
-          PostsService,
-          { provide: PrismaService, useValue: mockPrismaService },
-          { provide: EmbeddingsService, useValue: mockEmbeddingsService },
-          { provide: ConfigService, useValue: { get: () => envValue } },
-        ],
-      }).compile();
-      return module.get<PostsService>(PostsService);
-    };
-
+    // 下限は「落ちる側」と「残る側」の両方を見ないと固定できない。
+    // 片側だけだと、常に 1.0 を返す実装や NaN を返す実装でも通ってしまう。
     const runWith = async (envValue: unknown, distance: number) => {
-      const svc = await buildService(envValue);
+      const svc = await buildServiceWithThreshold(envValue);
       mockEmbeddingsService.searchSimilarStrict.mockResolvedValueOnce([
         { postId: 1, distance },
       ]);
@@ -830,18 +836,45 @@ describe('PostsService', () => {
       return svc.searchSemantic({ q: 'q', limit: 5 });
     };
 
-    it('SEMANTIC_MIN_SIMILARITY で下限を上書きできる', async () => {
-      // 既定(0.4)なら残る 0.5 が、0.6 を指定すると落ちる
-      const result = await runWith('0.6', 0.5);
-
-      expect(result.posts).toEqual([]);
+    it('SEMANTIC_MIN_SIMILARITY で指定した値がそのまま下限になる', async () => {
+      // 0.6 指定: 類似度 0.5 は落ち、0.65 は残る
+      expect((await runWith('0.6', 0.5)).posts).toEqual([]);
+      expect((await runWith('0.6', 0.35)).posts).toHaveLength(1);
     });
 
-    it('範囲外の値は既定値へ戻す（足切りを無言で無効化しない）', async () => {
-      // 空文字や NaN を 0 と解釈すると下限が消え、元の不具合に戻る
-      const result = await runWith('ぜんぶ', 0.7);
+    it('読み出すキーは SEMANTIC_MIN_SIMILARITY である', async () => {
+      // キーを無視するモックだと名前の打ち間違いを検出できず、
+      // .env.example / Terraform が渡す名前との結線が未検証のままになる。
+      const get = jest.fn().mockReturnValue('0.6');
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          PostsService,
+          { provide: PrismaService, useValue: mockPrismaService },
+          { provide: EmbeddingsService, useValue: mockEmbeddingsService },
+          { provide: ConfigService, useValue: { get } },
+        ],
+      }).compile();
+      module.get<PostsService>(PostsService);
 
-      expect(result.posts).toEqual([]);
+      expect(get).toHaveBeenCalledWith('SEMANTIC_MIN_SIMILARITY');
+    });
+
+    it.each([
+      ['数値にならない値', 'ぜんぶ'],
+      ['負の値', '-0.5'],
+      ['1 を超える値', '1.5'],
+      ['文字列でない値', { nope: true }],
+    ])('%s は既定値 0.4 へ戻す', async (_label, envValue) => {
+      // 0 に落ちると足切りが無言で消え、元の不具合に戻る。
+      // 逆に 1.0 等へ飛んでも全件 0 件になるので、両側を固定する。
+      expect((await runWith(envValue, 0.7)).posts).toEqual([]);
+      expect((await runWith(envValue, 0.55)).posts).toHaveLength(1);
+    });
+
+    it('0 を明示指定すると足切りを無効化できる（逃げ道として残す）', async () => {
+      const result = await runWith('0', 0.99);
+
+      expect(result.posts).toHaveLength(1);
     });
   });
 

@@ -104,6 +104,46 @@ describe('EmbeddingsService', () => {
     });
   });
 
+  describe('generateForPostStrict', () => {
+    // backfill の終了コードは「このメソッドが失敗時に throw すること」に
+    // 全面的に依存している。ここが将来 try/catch を取り戻すと、
+    // 全件失敗しても exit 0 で終わる元の不具合に戻る。
+    it('AI service 失敗時は throw する', async () => {
+      global.fetch = jest.fn(() =>
+        Promise.resolve({ ok: false, status: 500 } as Response),
+      ) as unknown as typeof fetch;
+
+      await expect(
+        service.generateForPostStrict(1, 'タイトル', '本文'),
+      ).rejects.toThrow();
+      expect(mockPrisma.$executeRaw).not.toHaveBeenCalled();
+    });
+
+    it('DB の upsert 失敗時も throw する', async () => {
+      mockPrisma.$executeRaw.mockRejectedValue(new Error('deadlock'));
+
+      await expect(
+        service.generateForPostStrict(1, 'タイトル', '本文'),
+      ).rejects.toThrow();
+    });
+
+    it('書き込めたら true を返す', async () => {
+      mockPrisma.$executeRaw.mockResolvedValue(1);
+
+      await expect(
+        service.generateForPostStrict(42, 'タイトル', '本文'),
+      ).resolves.toBe(true);
+    });
+
+    it('text 空のときは書かずに false を返す（成功と区別する）', async () => {
+      await expect(service.generateForPostStrict(1, '', '')).resolves.toBe(
+        false,
+      );
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(mockPrisma.$executeRaw).not.toHaveBeenCalled();
+    });
+  });
+
   describe('searchSimilar', () => {
     it('クエリを埋め込みコサイン類似度検索する', async () => {
       mockPrisma.$queryRaw.mockResolvedValue([

@@ -44,14 +44,18 @@ export class EmbeddingsService {
   /**
    * 埋め込みを生成して保存する。失敗時は例外を投げる。
    * 成否を呼び出し側が知る必要がある経路(backfill スクリプト)はこちらを使う。
+   *
+   * 戻り値は「実際に埋め込みを書いたか」。本文が空の投稿は書かずに false を返す。
+   * これを成功と区別しないと、埋め込みが作られていないのに backfill が
+   * success に数えて終了コード 0 で終わってしまう。
    */
   async generateForPostStrict(
     postId: number,
     title: string,
     content: string,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const fullText = `${title}\n\n${content}`.trim();
-    if (!fullText) return;
+    if (!fullText) return false;
     const text = fullText.slice(0, MAX_TEXT_LEN);
 
     const vector = await this.embed(text, 'RETRIEVAL_DOCUMENT');
@@ -64,6 +68,7 @@ export class EmbeddingsService {
         embedding = EXCLUDED.embedding,
         "updatedAt" = NOW()
     `;
+    return true;
   }
 
   /**

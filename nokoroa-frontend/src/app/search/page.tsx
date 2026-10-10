@@ -135,6 +135,7 @@ function SearchPageContent() {
         isLoading={isLoading}
         error={error}
         hasSearched={hasSearched}
+        hasQuery={Boolean(filters.q?.trim())}
         hasMore={hasMore && !error}
         isLoadingMore={isLoadingMore}
         onLoadMore={loadMore}

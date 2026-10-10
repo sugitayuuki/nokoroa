@@ -166,4 +166,11 @@ variable "semantic_min_similarity" {
   description = "Minimum cosine similarity for semantic search results (0-1)"
   type        = number
   default     = 0.4
+
+  # module 側にも同じ検証があるが、tfvars の誤りは呼び出し元で落ちた方が
+  # どこを直せばよいか分かる。
+  validation {
+    condition     = var.semantic_min_similarity >= 0 && var.semantic_min_similarity <= 1
+    error_message = "semantic_min_similarity must be between 0 and 1."
+  }
 }
