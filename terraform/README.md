@@ -564,6 +564,17 @@ aws ecs run-task --cluster nokoroa-prod-cluster --task-definition nokoroa-prod-b
   --overrides '{"containerOverrides":[{"name":"backend","command":["npm","run","seed"]}]}'
 ```
 
+seed は利用者 5 名・地点 32 件・投稿 40 件を入れます。**投稿が 1 件でもある DB では何もせずに正常終了します**（投稿は upsert ではなく作成なので、素通しすると二度目の実行で投稿がそのまま倍に増えるため）。復元した DB に追加したい場合だけ `SEED_FORCE=1` を付けてください。その場合は投稿が重複します。
+
+```bash
+# 中身のある DB へ重複を承知で追加する場合のみ
+  --overrides '{"containerOverrides":[{"name":"backend","command":["npm","run","seed"],"environment":[{"name":"SEED_FORCE","value":"1"}]}]}'
+```
+
+**seed はコンテナイメージに焼かれています。** `prisma/seed.ts` を変更しても、deploy.yml を実行して ECR を更新するまで本番には入りません。
+
+**seed した投稿には埋め込みが作られません。** 埋め込みは API 経由の投稿作成時にのみ生成されるため、seed 投稿はキーワード検索には出ますが、ベクトル検索と AI チャットの関連投稿には出てきません。
+
 **アプリのコードは「最後に deploy.yml を手動実行した時点のイメージ」です。** deploy.yml は `workflow_dispatch` のみなので、main にマージされたコミットは誰かが実行するまで ECR に載りません。最新の main を見せたい場合は、再開 apply のあとに deploy.yml を流してください。
 
 あわせて、**再開では Terraform がタスク定義を作り直します**（ファミリのリビジョン番号は deregister 後も継続するので 1 には戻りませんが、中身は `terraform.tfvars` の `*_image` から再生成されます）。停止でサービスとタスク定義が state ごと消えるため、`modules/ecs` の `ignore_changes = [task_definition]`（稼働中の apply でイメージが巻き戻るのを防ぐ設定）はサイクルを跨いでは効きません。
