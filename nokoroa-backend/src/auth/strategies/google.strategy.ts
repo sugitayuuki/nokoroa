@@ -73,7 +73,7 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
     profile: Profile,
     done: VerifyCallback,
   ): void {
-    const { name, emails, photos } = profile;
+    const { name, displayName, emails, photos } = profile;
     const primaryEmail = emails?.[0];
 
     // メールアドレスが無い / Google 側で未確認の場合はログインを拒否する。
@@ -103,7 +103,16 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
       // 上の検証を通った値をそのまま使う。emails?.[0]?.value を読み直すと
       // 「確認済みであることを検証した値」との対応が切れる。
       email: primaryEmail.value,
-      name: (name?.givenName ?? '') + ' ' + (name?.familyName ?? ''),
+      // displayName を優先する。givenName + familyName の連結は常に
+      // 「名 姓」になるため、姓を先に書く文化圏の利用者が「裕貴 杉田」の
+      // ように逆順で登録される。displayName は Google 側が本人のロケールに
+      // 沿った順序で組み立てた値なので、こちらを信じるほうが正しい。
+      //
+      // 連結はあくまで displayName が空だったときの保険。その場合は順序の
+      // 手がかりが無いので、従来どおり「名 姓」で繋ぐ。
+      name: displayName?.trim()
+        ? displayName.trim()
+        : [name?.givenName, name?.familyName].filter(Boolean).join(' '),
       picture: photos?.[0]?.value ?? '',
       googleId: profile.id,
     };
