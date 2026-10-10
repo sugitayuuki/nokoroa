@@ -303,9 +303,11 @@ module "ecs" {
   google_client_secret_arn    = module.secrets.google_client_secret_arn
   # 作成しなかった鍵の output は null。null のまま渡すと「既定値を使う」という
   # 暗黙の解決に頼ることになるので、ここで空文字へ倒して意図を明示する。
-  gemini_api_key_secret_arn    = coalesce(module.secrets.gemini_api_key_arn, "")
-  anthropic_api_key_secret_arn = coalesce(module.secrets.anthropic_api_key_arn, "")
-  openai_api_key_secret_arn    = coalesce(module.secrets.openai_api_key_arn, "")
+  # coalesce は使えない。空文字を「値なし」として捨てるため、候補が null と ""
+  # だけのこの形では引数が全滅し、評価そのものがエラーになる。
+  gemini_api_key_secret_arn    = module.secrets.gemini_api_key_arn == null ? "" : module.secrets.gemini_api_key_arn
+  anthropic_api_key_secret_arn = module.secrets.anthropic_api_key_arn == null ? "" : module.secrets.anthropic_api_key_arn
+  openai_api_key_secret_arn    = module.secrets.openai_api_key_arn == null ? "" : module.secrets.openai_api_key_arn
   internal_api_key_secret_arn  = module.secrets.internal_api_key_arn
 
   # AI プロバイダの選択
