@@ -343,6 +343,18 @@ resource "aws_ecs_task_definition" "frontend" {
         {
           name  = "NODE_ENV"
           value = var.environment == "prod" ? "production" : var.environment
+        },
+        # Next.js standalone の server.js は bind アドレスに process.env.HOSTNAME を
+        # そのまま使う。Fargate はコンテナの HOSTNAME をタスクの内部 DNS 名
+        # (ip-10-0-1-217.ap-northeast-1.compute.internal) で埋めるため、
+        # Dockerfile の ENV HOSTNAME="0.0.0.0" は上書きされて効かない。
+        # 結果 ENI の IP にしか bind されず 127.0.0.1 では待ち受けないため、
+        # ALB のヘルスチェック(タスク IP 宛)は通るのに下の healthCheck
+        # (localhost 宛)だけが必ず失敗し、タスクが数分ごとに kill され続ける。
+        # ここで明示的に上書きして全インターフェースへ bind させる。
+        {
+          name  = "HOSTNAME"
+          value = "0.0.0.0"
         }
       ]
 

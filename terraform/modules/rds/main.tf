@@ -15,9 +15,14 @@ resource "aws_db_parameter_group" "main" {
   # メジャーバージョンを揃える。
   family = "postgres16"
 
+  # vector は入れない。pgvector は共有メモリもバックグラウンドワーカーも使わない
+  # 通常の拡張で、プリロードせずに CREATE EXTENSION vector; だけで有効になる。
+  # RDS は shared_preload_libraries に許可リスト外の値を渡すと
+  # ModifyDBParameterGroup を InvalidParameterValue で拒否するため、
+  # 書くと「パラメータグループは作れるのに設定だけ失敗する」形で apply が止まる。
   parameter {
     name         = "shared_preload_libraries"
-    value        = "pg_stat_statements,vector"
+    value        = "pg_stat_statements"
     apply_method = "pending-reboot"
   }
 
