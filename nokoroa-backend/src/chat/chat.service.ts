@@ -104,7 +104,18 @@ export class ChatService {
     let relatedPostsRaw: FormattedPost[] = [];
 
     try {
-      const posts: FormattedPost[] = await this.searchByVector(dto.message, 5);
+      // ベクトル検索だけは外部の埋め込みAPIに依存する。ここの失敗を
+      // 外へ投げると、外部APIを一切使わない下のDB検索まで巻き添えで
+      // 飛ばされ、プロバイダ障害時に関連投稿が完全に出なくなる。
+      // ヒット0件と同じ扱いにしてフォールバックへ進ませる。
+      let posts: FormattedPost[] = [];
+      try {
+        posts = await this.searchByVector(dto.message, 5);
+      } catch (error) {
+        this.logger.warn(
+          `Vector search unavailable, falling back to keyword search: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        );
+      }
 
       if (posts.length === 0) {
         const searchResult = await this.postsService.search({
