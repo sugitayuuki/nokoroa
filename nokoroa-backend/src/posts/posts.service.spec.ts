@@ -1,4 +1,5 @@
 import { NotFoundException, ForbiddenException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
 import { Prisma } from '@prisma/client';
 
@@ -95,6 +96,9 @@ describe('PostsService', () => {
         PostsService,
         { provide: PrismaService, useValue: mockPrismaService },
         { provide: EmbeddingsService, useValue: mockEmbeddingsService },
+        // 未設定時の既定値(0.4)で動かす。環境変数の解決そのものは
+        // resolveMinSimilarity のテストで個別に確認する。
+        { provide: ConfigService, useValue: { get: () => undefined } },
       ],
     }).compile();
 
@@ -751,7 +755,43 @@ describe('PostsService', () => {
       expect(mockPrismaService.post.findMany).not.toHaveBeenCalled();
     });
 
-    it('distance が 1 を超えても similarity は 0 にクランプする', async () => {
+    it('類似度が下限未満の投稿は落とし、total も絞った件数になる', async () => {
+      // ベクトル検索は常に上位N件を返すため、関連が無くても行は返ってくる。
+      // 0.39 は実測の「地の雑音」帯(0.33〜0.36)の側。
+      mockEmbeddingsService.searchSimilarStrict.mockResolvedValueOnce([
+        { postId: 2, distance: 0.2 },
+        { postId: 1, distance: 0.61 },
+      ]);
+      mockPrismaService.post.findMany.mockResolvedValue([
+        { ...mockPost, id: 1 },
+        { ...mockPost, id: 2 },
+      ]);
+
+      const result = await service.searchSemantic({ q: 'q', limit: 5 });
+
+      expect(result.posts.map((p) => p.id)).toEqual([2]);
+      expect(result.total).toBe(1);
+      expect(result.aiAvailable).toBe(true);
+    });
+
+    it('全件が下限未満なら空結果だが aiAvailable は true のまま', async () => {
+      // 「AIが落ちている」と「関連が無い」を取り違えると、
+      // 利用者に出す案内が逆になる。
+      mockEmbeddingsService.searchSimilarStrict.mockResolvedValueOnce([
+        { postId: 1, distance: 0.67 },
+      ]);
+      mockPrismaService.post.findMany.mockResolvedValue([
+        { ...mockPost, id: 1 },
+      ]);
+
+      const result = await service.searchSemantic({ q: 'q', limit: 5 });
+
+      expect(result.posts).toEqual([]);
+      expect(result.total).toBe(0);
+      expect(result.aiAvailable).toBe(true);
+    });
+
+    it('distance が 1 を超えても similarity は負にならない', async () => {
       mockEmbeddingsService.searchSimilarStrict.mockResolvedValueOnce([
         { postId: 1, distance: 1.5 },
       ]);
@@ -761,7 +801,47 @@ describe('PostsService', () => {
 
       const result = await service.searchSemantic({ q: 'q', limit: 5 });
 
-      expect(result.posts[0].similarity).toBe(0);
+      // クランプ後は 0 で、下限(0.4)にも届かないため結果からは消える。
+      expect(result.posts).toEqual([]);
+    });
+  });
+
+  describe('searchSemantic の類似度下限設定', () => {
+    const buildService = async (envValue: unknown) => {
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          PostsService,
+          { provide: PrismaService, useValue: mockPrismaService },
+          { provide: EmbeddingsService, useValue: mockEmbeddingsService },
+          { provide: ConfigService, useValue: { get: () => envValue } },
+        ],
+      }).compile();
+      return module.get<PostsService>(PostsService);
+    };
+
+    const runWith = async (envValue: unknown, distance: number) => {
+      const svc = await buildService(envValue);
+      mockEmbeddingsService.searchSimilarStrict.mockResolvedValueOnce([
+        { postId: 1, distance },
+      ]);
+      mockPrismaService.post.findMany.mockResolvedValue([
+        { ...mockPost, id: 1 },
+      ]);
+      return svc.searchSemantic({ q: 'q', limit: 5 });
+    };
+
+    it('SEMANTIC_MIN_SIMILARITY で下限を上書きできる', async () => {
+      // 既定(0.4)なら残る 0.5 が、0.6 を指定すると落ちる
+      const result = await runWith('0.6', 0.5);
+
+      expect(result.posts).toEqual([]);
+    });
+
+    it('範囲外の値は既定値へ戻す（足切りを無言で無効化しない）', async () => {
+      // 空文字や NaN を 0 と解釈すると下限が消え、元の不具合に戻る
+      const result = await runWith('ぜんぶ', 0.7);
+
+      expect(result.posts).toEqual([]);
     });
   });
 

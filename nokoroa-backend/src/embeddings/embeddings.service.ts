@@ -41,7 +41,11 @@ export class EmbeddingsService {
     }
   }
 
-  async generateForPost(
+  /**
+   * 埋め込みを生成して保存する。失敗時は例外を投げる。
+   * 成否を呼び出し側が知る必要がある経路(backfill スクリプト)はこちらを使う。
+   */
+  async generateForPostStrict(
     postId: number,
     title: string,
     content: string,
@@ -50,29 +54,32 @@ export class EmbeddingsService {
     if (!fullText) return;
     const text = fullText.slice(0, MAX_TEXT_LEN);
 
-    let vector: number[];
-    try {
-      vector = await this.embed(text, 'RETRIEVAL_DOCUMENT');
-    } catch (err) {
-      this.logger.error(
-        `Failed to embed post ${postId}: ${err instanceof Error ? err.message : 'unknown'}`,
-      );
-      return;
-    }
-
+    const vector = await this.embed(text, 'RETRIEVAL_DOCUMENT');
     const literal = this.vectorLiteral(vector);
+    await this.prisma.$executeRaw`
+      INSERT INTO post_embedding ("postId", "contentText", embedding, "createdAt", "updatedAt")
+      VALUES (${postId}, ${text}, ${literal}::vector, NOW(), NOW())
+      ON CONFLICT ("postId") DO UPDATE SET
+        "contentText" = EXCLUDED."contentText",
+        embedding = EXCLUDED.embedding,
+        "updatedAt" = NOW()
+    `;
+  }
+
+  /**
+   * 埋め込みを生成して保存する。失敗はログに残して飲み込む。
+   * 投稿の作成・更新を埋め込みの失敗で巻き添えにしない経路はこちらを使う。
+   */
+  async generateForPost(
+    postId: number,
+    title: string,
+    content: string,
+  ): Promise<void> {
     try {
-      await this.prisma.$executeRaw`
-        INSERT INTO post_embedding ("postId", "contentText", embedding, "createdAt", "updatedAt")
-        VALUES (${postId}, ${text}, ${literal}::vector, NOW(), NOW())
-        ON CONFLICT ("postId") DO UPDATE SET
-          "contentText" = EXCLUDED."contentText",
-          embedding = EXCLUDED.embedding,
-          "updatedAt" = NOW()
-      `;
+      await this.generateForPostStrict(postId, title, content);
     } catch (err) {
       this.logger.error(
-        `Failed to upsert embedding for post ${postId}: ${err instanceof Error ? err.message : 'unknown'}`,
+        `Failed to generate embedding for post ${postId}: ${err instanceof Error ? err.message : 'unknown'}`,
       );
     }
   }

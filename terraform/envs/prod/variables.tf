@@ -159,3 +159,11 @@ variable "embedding_provider" {
   type        = string
   default     = "gemini"
 }
+
+# 意味検索で「関連あり」とみなす下限。下げるとハズレが混ざり、上げると
+# 0 件が増える。投稿が増えて類似度の分布が変わったらここで調整する。
+variable "semantic_min_similarity" {
+  description = "Minimum cosine similarity for semantic search results (0-1)"
+  type        = number
+  default     = 0.4
+}

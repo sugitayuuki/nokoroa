@@ -167,7 +167,7 @@ export class PostsController {
   @ApiOperation({
     summary: '意味検索（ベクトル検索）',
     description:
-      '自然文クエリを Gemini で埋め込み、pgvector の cosine 類似度で投稿を検索します（要ログイン: 課金 API のため）',
+      '自然文クエリを埋め込み、pgvector の cosine 類似度で投稿を検索します。類似度が下限(SEMANTIC_MIN_SIMILARITY)未満の投稿は返さないため、limit より少ない件数になることがあります（要ログイン: 課金 API のため）',
   })
   @ApiResponse({ status: 200, description: '検索成功' })
   @ApiResponse({ status: 401, description: '認証エラー' })

@@ -43,6 +43,13 @@ google_client_secret = "YOUR_GOOGLE_CLIENT_SECRET"
 chat_provider      = "claude"
 embedding_provider = "openai"
 
+# --- 意味検索の足切り ---
+# 類似度がこの値未満の投稿は検索結果に出さない (0〜1)。
+# 適正値は投稿データの分布で変わる。本番の実測では
+# 完全一致=0.73 / 関連あり=0.44 / 無関係=0.33〜0.36 だったため 0.4 が既定。
+# 下げるとハズレが混ざり、上げると0件が増える。
+semantic_min_similarity = 0.4
+
 gemini_api_key    = ""
 anthropic_api_key = "YOUR_ANTHROPIC_API_KEY"
 openai_api_key    = "YOUR_OPENAI_API_KEY"

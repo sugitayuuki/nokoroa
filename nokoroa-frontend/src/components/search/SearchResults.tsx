@@ -110,7 +110,17 @@ export const SearchResults = ({
     // useSearchPosts は semantic でクエリが空のとき url を null にしてフェッチせず、
     // SearchForm はその状態でも送信できるため、未確定が永続してスピナーが
     // 止まらなくなる。
-    return <EmptyState message="検索条件にマッチする投稿がありません" />;
+    // 意味検索は類似度の下限で足切りするため「0件」が普通に起きる。
+    // キーワード検索と同じ文言だと、条件の問題なのか関連が無いのか区別できない。
+    return (
+      <EmptyState
+        message={
+          mode === 'semantic'
+            ? '関連する投稿が見つかりませんでした。別の言い回しで試してみてください'
+            : '検索条件にマッチする投稿がありません'
+        }
+      />
+    );
   }
 
   return (
@@ -124,7 +134,7 @@ export const SearchResults = ({
         </Typography>
         {mode === 'semantic' && (
           <Alert severity="info" sx={{ mt: 2 }} icon={false}>
-            AI意味検索は類似度が高い上位 {posts.length} 件のみ表示します
+            AI意味検索は関連度の高い順に表示し、関連が薄い投稿は除いています
           </Alert>
         )}
       </Box>

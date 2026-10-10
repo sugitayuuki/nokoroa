@@ -41,7 +41,15 @@ async function main() {
 
     for (const post of posts) {
       try {
-        await embeddings.generateForPost(post.id, post.title, post.content);
+        // generateForPost ではなく Strict を使う。前者は失敗をログに出して
+        // 正常 return するため、全件失敗しても failed=0 と報告してしまう。
+        // このスクリプトはプロバイダ切替時の唯一の復旧手段(README 参照)なので、
+        // 成否を取り違えると「直したつもり」で壊れたまま運用が続く。
+        await embeddings.generateForPostStrict(
+          post.id,
+          post.title,
+          post.content,
+        );
         success += 1;
       } catch (err) {
         failed += 1;
@@ -52,6 +60,11 @@ async function main() {
     }
 
     logger.log(`done — success=${success}, failed=${failed}`);
+    // 1件でも落ちたら埋め込みは歯抜けのままなので、終了コードで分かるようにする。
+    // CI やデプロイ手順から呼ばれたとき、無言で次の手順へ進ませない。
+    if (failed > 0) {
+      process.exitCode = 1;
+    }
   } finally {
     await app.close();
   }

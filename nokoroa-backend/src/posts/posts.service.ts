@@ -4,6 +4,7 @@ import {
   NotFoundException,
   ForbiddenException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import {
   EmbeddingsService,
@@ -22,6 +23,13 @@ import {
   postWithFavoritesCountInclude,
 } from './post-format';
 
+// 意味検索で「関連あり」とみなすコサイン類似度の下限。
+// text-embedding-3-small の日本語では、無関係な文どうしでも 0.3 台が普通に出る。
+// 本番データでの実測は 完全一致クエリ=0.73 / 同じ公園という関連=0.44 /
+// 無関係=0.33〜0.36 で、0.40 が「関連あり」と「地の雑音」の境目にあたる。
+// 投稿が増えて分布が変わったら SEMANTIC_MIN_SIMILARITY で再デプロイ無しに調整できる。
+const DEFAULT_SEMANTIC_MIN_SIMILARITY = 0.4;
+
 function slugify(text: string): string {
   return text
     .toLowerCase()
@@ -33,11 +41,35 @@ function slugify(text: string): string {
 @Injectable()
 export class PostsService {
   private readonly logger = new Logger(PostsService.name);
+  private readonly minSimilarity: number;
 
   constructor(
     private prisma: PrismaService,
     private embeddingsService: EmbeddingsService,
-  ) {}
+    configService: ConfigService,
+  ) {
+    this.minSimilarity = this.resolveMinSimilarity(
+      configService.get<string>('SEMANTIC_MIN_SIMILARITY'),
+    );
+  }
+
+  /**
+   * 類似度の下限を環境変数から解決する。
+   * 不正値で 0 に落とすと足切りが無言で無効化されるため、既定値へ戻して警告する。
+   */
+  private resolveMinSimilarity(raw: string | undefined): number {
+    if (raw === undefined || raw.trim() === '') {
+      return DEFAULT_SEMANTIC_MIN_SIMILARITY;
+    }
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+      this.logger.warn(
+        `SEMANTIC_MIN_SIMILARITY=${raw} is not a number in [0,1]; falling back to ${DEFAULT_SEMANTIC_MIN_SIMILARITY}`,
+      );
+      return DEFAULT_SEMANTIC_MIN_SIMILARITY;
+    }
+    return parsed;
+  }
 
   /**
    * 投稿の埋め込みを非同期で同期させる。
@@ -320,7 +352,12 @@ export class PostsService {
         const similarity = Math.max(0, 1 - hit.distance);
         return { ...post, similarity };
       })
-      .filter((p): p is NonNullable<typeof p> => p !== null);
+      .filter((p): p is NonNullable<typeof p> => p !== null)
+      // ベクトル検索は「一番マシな上位N件」を必ず返すため、関連する投稿が
+      // 一件も無くても無関係な投稿が10件並ぶ。実測では「上野公園だけの投稿を」
+      // の1位が 0.46、10位(無関係なねぶた祭)が 0.33 で、差は 0.13 しかない。
+      // 利用者から見ると全件ハズレに見えるので、ここで足切りする。
+      .filter((p) => p.similarity >= this.minSimilarity);
 
     return {
       posts: ranked,
