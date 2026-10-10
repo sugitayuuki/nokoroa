@@ -34,36 +34,92 @@ const AI_STREAM_TIMEOUT_MS = 60_000;
 // 上限が無いと1リクエストで単語数ぶんのDB検索が直列実行される。
 const MAX_FALLBACK_KEYWORDS = 5;
 
-// 投稿者を名指しした質問かどうかの判定語。これが無い文でも利用者名は
-// 偶然含まれうる(地名と同じ名前など)ため、意図が明示されている場合に限って
+// 投稿を求めている質問かどうかの判定語。敬称付きの名前は依頼文にも出る
+// (「田中さんに教わった京都の店」)ため、投稿を指す語がある場合に限って
 // 著者で絞り込む。
 const AUTHOR_SCOPE_INTENT = /投稿|記事|ポスト/;
-// 著者名の直後に来る語。「ピエールさんの投稿」の「さん」、
-// 「アレックスの投稿」の「の」にあたる。
-const AUTHOR_NAME_FOLLOWER = /^(?:さん|サン|くん|君|ちゃん|様|さま|氏|の)/;
-// 1文字の名前はどんな文にも偶然含まれるため、著者解決の対象から外す。
-const MIN_AUTHOR_NAME_LENGTH = 2;
-// メッセージに部分一致する利用者をDBから取り出す上限。
-const AUTHOR_CANDIDATE_LIMIT = 10;
+// 名前の直後に置かれる敬称。敬称を必須にすることで、地名や一般名詞と同じ
+// 表示名(name に一意制約は無く本人が自由に変更できる)を登録して
+// 「京都の投稿」のような質問の検索結果を乗っ取る経路を塞ぐ。
+// 代償として敬称の無い「〇〇の投稿」は拾えない(従来どおりの検索に落ちる)。
+const AUTHOR_HONORIFIC = /さん|サン|くん|君|ちゃん|様|さま|氏/g;
+// 敬称の手前から左へ何区切りまで遡って候補を作るか。
+const MAX_NAME_SEGMENTS = 4;
+// 候補として認める名前の長さ。これを超える切り出しは名前ではない。
+const MAX_AUTHOR_NAME_LENGTH = 50;
+// 1メッセージから作る候補の上限。2000文字の長文で候補が際限なく増えるのを防ぐ。
+const MAX_AUTHOR_CANDIDATES = 12;
+// 同時に絞り込む投稿者の上限。「AさんとBさんの投稿」までを想定する。
+const MAX_SCOPED_AUTHORS = 3;
+
+// 名前の切れ目。ここに当たったら候補の延長を止める。
+const NAME_DELIMITER = /[\s\u3000、。,.!?！？「」『』【】()（）[\]:：;；"'`]/;
+const SPACE = /[\s\u3000]/;
+const KANJI = /[々一-鿿]/;
+// 「ー」「・」はカタカナ名の一部なのでカタカナ側に含める。
+const KATAKANA = /[ァ-ヺ・ー]/;
+const HIRAGANA = /[ぁ-ゖ]/;
+const ALNUM = /[0-9A-Za-z０-９Ａ-Ｚａ-ｚ]/;
+
+function scriptOf(char: string): string {
+  if (KANJI.test(char)) return 'kanji';
+  if (KATAKANA.test(char)) return 'katakana';
+  if (HIRAGANA.test(char)) return 'hiragana';
+  if (ALNUM.test(char)) return 'alnum';
+  return 'other';
+}
+
+/** text.slice(0, end) の末尾にある区切りの開始位置を返す */
+function segmentStart(text: string, end: number): number {
+  const last = text[end - 1];
+
+  if (NAME_DELIMITER.test(last)) {
+    // 「裕貴 杉田さん」のように姓名が空白で割れている場合だけ空白を飲み込む。
+    // 句読点や括弧は名前の外なのでそこで打ち切る。
+    if (!SPACE.test(last)) return end;
+    let i = end - 1;
+    while (i > 0 && SPACE.test(text[i - 1])) i--;
+    return i;
+  }
+
+  const script = scriptOf(last);
+  let i = end - 1;
+  while (i > 0 && scriptOf(text[i - 1]) === script) i--;
+  return i;
+}
 
 /**
- * message 中に name が現れ、その直後が敬称または「の」であるかを判定する。
- * 大小文字を無視するため、添字がずれないよう小文字化した側だけで走査する。
+ * 敬称の直前から左へ遡って表示名の候補を切り出す。
+ *
+ * 文字種(漢字 / カタカナ / ひらがな / 英数)が変わる位置を名前の切れ目と
+ * みなす。「今日はピエールさん」なら「ピエール」、「健太郎さん」なら
+ * 「健太郎」が得られる。候補は後段で表示名と**完全一致**したものだけを
+ * 採用するため、これは「利用者名がメッセージに含まれるか」を部分一致で
+ * 見た場合の誤爆(「健太郎さん」が利用者「太郎」に解決される)を防ぐ
+ * 境界判定を兼ねている。
  */
-function isAuthorReference(message: string, name: string): boolean {
-  const haystack = message.toLowerCase();
-  const needle = name.toLowerCase();
-  if (needle.length === 0) return false;
+function authorNameCandidates(message: string): string[] {
+  const candidates = new Set<string>();
 
-  for (let from = 0; from <= haystack.length; ) {
-    const at = haystack.indexOf(needle, from);
-    if (at === -1) return false;
-    if (AUTHOR_NAME_FOLLOWER.test(haystack.slice(at + needle.length))) {
-      return true;
+  for (const match of message.matchAll(AUTHOR_HONORIFIC)) {
+    if (candidates.size >= MAX_AUTHOR_CANDIDATES) break;
+
+    const head = message.slice(0, match.index);
+    let start = head.length;
+
+    for (let segment = 0; segment < MAX_NAME_SEGMENTS && start > 0; segment++) {
+      const next = segmentStart(head, start);
+      if (next === start) break;
+      start = next;
+
+      const candidate = head.slice(start).trim();
+      if (candidate.length === 0) continue;
+      if (candidate.length > MAX_AUTHOR_NAME_LENGTH) break;
+      candidates.add(candidate);
     }
-    from = at + 1;
   }
-  return false;
+
+  return [...candidates];
 }
 
 @Injectable()
@@ -142,24 +198,36 @@ export class ChatService {
 
       // 「〇〇さんの投稿」と名指しされた場合は、その投稿者だけに絞る。
       // 著者解決に失敗しても通常の検索は動くので、絞り込みなしで続行する。
-      let authorScope: { id: number; name: string } | null = null;
+      let scopedAuthors: Array<{ id: number; name: string }> = [];
       try {
-        authorScope = await this.resolveAuthorScope(dto.message);
+        scopedAuthors = await this.resolveScopedAuthors(dto.message);
       } catch (error) {
         this.logger.warn(
           `Author scope resolution failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
         );
       }
 
-      if (authorScope) {
+      if (scopedAuthors.length > 0) {
         // ヒット0件でも下の検索へ落とさない。落とすと、名指しされていない
         // 投稿者の投稿が関連投稿カードに並び、名指しの意図を裏切る。
-        const byAuthor = await this.postsService.search({
-          authorId: authorScope.id,
-          limit: 5,
-          offset: 0,
-        });
-        posts = byAuthor.posts;
+        const seen = new Set<number>();
+        for (const author of scopedAuthors) {
+          const byAuthor = await this.postsService.search({
+            authorId: author.id,
+            limit: 5,
+            offset: 0,
+          });
+          for (const p of byAuthor.posts) {
+            if (!seen.has(p.id)) {
+              seen.add(p.id);
+              posts.push(p);
+            }
+          }
+        }
+        // 複数人を名指しされた場合、1人目だけで5件を埋めてしまわないよう
+        // 全員ぶんを新しい順に並べ直してから切り詰める。
+        posts.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+        if (posts.length > 5) posts.length = 5;
       } else {
         // ベクトル検索だけは外部の埋め込みAPIに依存する。ここの失敗を
         // 外へ投げると、外部APIを一切使わない下のDB検索まで巻き添えで
@@ -329,35 +397,42 @@ export class ChatService {
    * そのためここでは文から名前を切り出すのではなく、登録済みの name が
    * メッセージに含まれるかをDB側で判定する(敬称の有無に依存しない)。
    */
-  private async resolveAuthorScope(
+  private async resolveScopedAuthors(
     message: string,
-  ): Promise<{ id: number; name: string } | null> {
-    if (!AUTHOR_SCOPE_INTENT.test(message)) return null;
+  ): Promise<Array<{ id: number; name: string }>> {
+    if (!AUTHOR_SCOPE_INTENT.test(message)) return [];
 
-    // name は索引が無く %LIKE% も使えないため position() で走査する。
-    // message は DTO 側で 2000 文字に制限済み。
-    const candidates = await this.prisma.$queryRaw<
+    const candidates = authorNameCandidates(message);
+    if (candidates.length === 0) return [];
+
+    // 公開投稿を持つ利用者だけを候補にする。これが無いと「公開投稿が0件の
+    // 利用者がその表示名で登録されているか」を応答の差(関連投稿が出るか
+    // 出ないか)から判別でき、在籍確認の手段になる。
+    //
+    // name は候補との完全一致で引くが、等価比較に使える索引は無いので
+    // user の全件走査になる(user_name_trgm_idx は ILIKE 用で等価には
+    // 効かない)。候補は十数件の短い文字列なので、走査は行数のみに比例する。
+    const authors = await this.prisma.$queryRaw<
       Array<{ id: number; name: string }>
     >`
-      SELECT id, name FROM "user"
-      WHERE char_length(name) >= ${MIN_AUTHOR_NAME_LENGTH}
-        AND position(lower(name) in lower(${message})) > 0
-      ORDER BY char_length(name) DESC
-      LIMIT ${AUTHOR_CANDIDATE_LIMIT}
+      SELECT u.id, u.name
+      FROM "user" u
+      WHERE EXISTS (
+              SELECT 1
+              FROM unnest(${candidates}::text[]) AS candidate(value)
+              WHERE lower(u.name) = lower(candidate.value)
+            )
+        AND EXISTS (
+              SELECT 1 FROM "post" p
+              WHERE p."authorId" = u.id AND p."isPublic" = true
+            )
+      ORDER BY u.id
+      LIMIT ${MAX_SCOPED_AUTHORS + 1}
     `;
 
-    const named = candidates.filter((user) =>
-      isAuthorReference(message, user.name),
-    );
-    if (named.length === 0) return null;
-
-    // 「ピエール」と「ピエール・デュボワ」が両方一致する場合は長い方が意図に近い。
-    const longest = Math.max(...named.map((user) => user.name.length));
-    const top = named.filter((user) => user.name.length === longest);
-
-    // 同名の別人が居る場合はどちらか決められない。誤った1人に絞るより、
-    // 絞り込みを諦めて通常の検索へ戻す方が害が小さい。
-    return top.length === 1 ? top[0] : null;
+    // 対象が広がりすぎた場合は名指しとして扱わない(通常の検索の方が
+    // 意図に近い)。1件多く取っているのは、超過を検知するため。
+    return authors.length > MAX_SCOPED_AUTHORS ? [] : authors;
   }
 
   private async searchByVector(

@@ -349,31 +349,46 @@ describe('ChatService', () => {
   // 関連投稿カードには別人の投稿が並ぶ、という食い違いを防ぐ。
   describe('投稿者を名指しした質問', () => {
     /** related_posts の SSE イベントとして書き出された投稿を取り出す */
-    function relatedPostsFrom(write: jest.Mock): unknown[] | null {
-      for (const [chunk] of write.mock.calls) {
+    function relatedPostsFrom(write: jest.Mock): Array<{ id: number }> | null {
+      const calls = write.mock.calls as Array<[unknown]>;
+      for (const [chunk] of calls) {
         if (typeof chunk !== 'string') continue;
         if (!chunk.startsWith('data: ')) continue;
         const parsed = JSON.parse(chunk.slice('data: '.length)) as {
           type?: string;
-          posts?: unknown[];
+          posts?: Array<{ id: number }>;
         };
         if (parsed.type === 'related_posts') return parsed.posts ?? [];
       }
       return null;
     }
 
+    /**
+     * 表示名の候補として DB へ渡された文字列。SQL 自体はモックなので、
+     * 「どの範囲を名前として切り出したか」はここでしか検証できない。
+     */
+    function candidatesSentToDb(): string[] {
+      const calls = mockPrisma.$queryRaw.mock.calls as Array<
+        [unknown, string[], number]
+      >;
+      return calls[0][1];
+    }
+
+    function post(id: number, createdAt: string, authorName: string) {
+      return {
+        id,
+        title: `T${id}`,
+        content: 'C',
+        location: '東京',
+        createdAt: new Date(createdAt),
+        author: { name: authorName },
+      };
+    }
+
     it('名指しされた投稿者の投稿だけに絞り、ベクトル検索を使わない', async () => {
       mockPrisma.$queryRaw.mockResolvedValue([{ id: 7, name: 'ピエール' }]);
       mockPosts.search.mockResolvedValue({
-        posts: [
-          {
-            id: 1,
-            title: '築地で出汁の材料を仕入れる朝',
-            content: 'C',
-            location: '築地場外市場',
-            author: { name: 'ピエール' },
-          },
-        ],
+        posts: [post(1, '2025-10-06T17:03:00Z', 'ピエール')],
         total: 1,
         hasMore: false,
       });
@@ -384,6 +399,7 @@ describe('ChatService', () => {
         makeRes().res,
       );
 
+      expect(candidatesSentToDb()).toContain('ピエール');
       expect(mockPosts.search).toHaveBeenCalledWith({
         authorId: 7,
         limit: 5,
@@ -392,8 +408,8 @@ describe('ChatService', () => {
       expect(mockEmbeddings.searchSimilar).not.toHaveBeenCalled();
     });
 
-    it('敬称が無くても「〇〇の投稿」なら絞り込む', async () => {
-      mockPrisma.$queryRaw.mockResolvedValue([{ id: 3, name: 'アレックス' }]);
+    it('名前の手前に文が続いていても名前だけを切り出す', async () => {
+      mockPrisma.$queryRaw.mockResolvedValue([{ id: 7, name: 'ピエール' }]);
       mockPosts.search.mockResolvedValue({
         posts: [],
         total: 0,
@@ -402,8 +418,113 @@ describe('ChatService', () => {
       makeStreamFetch();
 
       await service.streamChat(
-        { message: 'アレックスの投稿を教えて' },
+        { message: '今日はピエールさんの投稿が見たい' },
         makeRes().res,
+      );
+
+      expect(candidatesSentToDb()).toContain('ピエール');
+    });
+
+    it('姓名が空白で割れていても1つの名前として切り出す', async () => {
+      mockPrisma.$queryRaw.mockResolvedValue([{ id: 2, name: '裕貴 杉田' }]);
+      mockPosts.search.mockResolvedValue({
+        posts: [],
+        total: 0,
+        hasMore: false,
+      });
+      makeStreamFetch();
+
+      await service.streamChat(
+        { message: '裕貴 杉田さんの投稿' },
+        makeRes().res,
+      );
+
+      expect(candidatesSentToDb()).toContain('裕貴 杉田');
+    });
+
+    // 部分一致で引くと利用者「太郎」が「健太郎さん」の質問を奪ってしまう。
+    // 本PRが直そうとしている「別人の投稿が並ぶ」症状の再発にあたる。
+    it('他人の名前の一部に含まれる表示名を候補にしない', async () => {
+      mockPrisma.$queryRaw.mockResolvedValue([]);
+      mockEmbeddings.searchSimilar.mockResolvedValue([]);
+      mockPosts.search.mockResolvedValue({
+        posts: [],
+        total: 0,
+        hasMore: false,
+      });
+      makeStreamFetch();
+
+      await service.streamChat(
+        { message: '健太郎さんの投稿が見たい' },
+        makeRes().res,
+      );
+
+      expect(candidatesSentToDb()).toContain('健太郎');
+      expect(candidatesSentToDb()).not.toContain('太郎');
+    });
+
+    // 表示名は一意でも不変でもないため、地名と同じ名前を登録して
+    // 「京都の投稿」のような質問の検索結果を奪えてはいけない。
+    it('敬称が無ければ著者指名とみなさない', async () => {
+      mockEmbeddings.searchSimilar.mockResolvedValue([]);
+      mockPosts.search.mockResolvedValue({
+        posts: [],
+        total: 0,
+        hasMore: false,
+      });
+      makeStreamFetch();
+
+      await service.streamChat(
+        { message: '京都の神社の投稿が見たい' },
+        makeRes().res,
+      );
+
+      expect(mockPrisma.$queryRaw).not.toHaveBeenCalled();
+      expect(mockEmbeddings.searchSimilar).toHaveBeenCalled();
+    });
+
+    it('投稿を指す語が無ければ著者指名とみなさない', async () => {
+      mockEmbeddings.searchSimilar.mockResolvedValue([]);
+      mockPosts.search.mockResolvedValue({
+        posts: [],
+        total: 0,
+        hasMore: false,
+      });
+      makeStreamFetch();
+
+      await service.streamChat(
+        { message: '田中さんに教わった京都の店' },
+        makeRes().res,
+      );
+
+      expect(mockPrisma.$queryRaw).not.toHaveBeenCalled();
+    });
+
+    it('複数人を名指しされたら全員の投稿を新しい順に混ぜる', async () => {
+      mockPrisma.$queryRaw.mockResolvedValue([
+        { id: 3, name: 'ジェームズ' },
+        { id: 7, name: 'ピエール' },
+      ]);
+      mockPosts.search
+        .mockResolvedValueOnce({
+          posts: [
+            post(10, '2025-01-01T00:00:00Z', 'ジェームズ'),
+            post(11, '2025-05-01T00:00:00Z', 'ジェームズ'),
+          ],
+          total: 2,
+          hasMore: false,
+        })
+        .mockResolvedValueOnce({
+          posts: [post(20, '2025-09-01T00:00:00Z', 'ピエール')],
+          total: 1,
+          hasMore: false,
+        });
+      makeStreamFetch();
+      const { res, write } = makeRes();
+
+      await service.streamChat(
+        { message: 'ジェームズさんとピエールさんの投稿を見たい' },
+        res,
       );
 
       expect(mockPosts.search).toHaveBeenCalledWith({
@@ -411,6 +532,12 @@ describe('ChatService', () => {
         limit: 5,
         offset: 0,
       });
+      expect(mockPosts.search).toHaveBeenCalledWith({
+        authorId: 7,
+        limit: 5,
+        offset: 0,
+      });
+      expect(relatedPostsFrom(write)?.map((p) => p.id)).toEqual([20, 11, 10]);
     });
 
     // ここで通常の検索へ落とすと、名指しされていない投稿者の投稿が
@@ -436,10 +563,8 @@ describe('ChatService', () => {
       expect(sent.context_posts).toEqual([]);
     });
 
-    it('投稿者名が本文に偶然含まれるだけなら絞り込まない', async () => {
-      // 利用者「築地」が居ても、「築地の投稿」ではなく地名としての用法。
-      mockPrisma.$queryRaw.mockResolvedValue([{ id: 5, name: '築地' }]);
-      mockEmbeddings.searchSimilar.mockResolvedValue([]);
+    it('大小文字が違っても表示名を解決できる', async () => {
+      mockPrisma.$queryRaw.mockResolvedValue([{ id: 4, name: 'Alex Smith' }]);
       mockPosts.search.mockResolvedValue({
         posts: [],
         total: 0,
@@ -448,20 +573,26 @@ describe('ChatService', () => {
       makeStreamFetch();
 
       await service.streamChat(
-        { message: '築地で寿司を食べた投稿' },
+        { message: 'alex smithさんの投稿' },
         makeRes().res,
       );
 
-      expect(mockEmbeddings.searchSimilar).toHaveBeenCalled();
-      expect(mockPosts.search).not.toHaveBeenCalledWith(
-        expect.objectContaining({ authorId: 5 }),
-      );
+      // 小文字化は SQL 側 (lower) で行うため、候補は原文のまま渡る
+      expect(candidatesSentToDb()).toContain('alex smith');
+      expect(mockPosts.search).toHaveBeenCalledWith({
+        authorId: 4,
+        limit: 5,
+        offset: 0,
+      });
     });
 
-    it('同名の別人が居る場合は絞り込まない', async () => {
+    it('名指しが多すぎる場合は絞り込まない', async () => {
+      // 上限超過の検知のため、実装は上限+1件を取得する
       mockPrisma.$queryRaw.mockResolvedValue([
-        { id: 7, name: 'ピエール' },
-        { id: 8, name: 'ピエール' },
+        { id: 1, name: 'あ' },
+        { id: 2, name: 'い' },
+        { id: 3, name: 'う' },
+        { id: 4, name: 'え' },
       ]);
       mockEmbeddings.searchSimilar.mockResolvedValue([]);
       mockPosts.search.mockResolvedValue({
@@ -472,41 +603,11 @@ describe('ChatService', () => {
       makeStreamFetch();
 
       await service.streamChat(
-        { message: 'ピエールさんの投稿' },
+        { message: 'あさんといさんとうさんとえさんの投稿' },
         makeRes().res,
       );
 
       expect(mockEmbeddings.searchSimilar).toHaveBeenCalled();
-      // 著者で絞らず、通常のキーワード検索へ落ちている
-      expect(mockPosts.search).toHaveBeenCalledWith({
-        q: 'ピエールさんの投稿',
-        limit: 5,
-        offset: 0,
-      });
-    });
-
-    it('より長く一致する名前を優先する', async () => {
-      mockPrisma.$queryRaw.mockResolvedValue([
-        { id: 9, name: 'ピエール・デュボワ' },
-        { id: 7, name: 'ピエール' },
-      ]);
-      mockPosts.search.mockResolvedValue({
-        posts: [],
-        total: 0,
-        hasMore: false,
-      });
-      makeStreamFetch();
-
-      await service.streamChat(
-        { message: 'ピエール・デュボワさんの投稿' },
-        makeRes().res,
-      );
-
-      expect(mockPosts.search).toHaveBeenCalledWith({
-        authorId: 9,
-        limit: 5,
-        offset: 0,
-      });
     });
 
     it('投稿者解決が失敗しても通常の検索へフォールバックする', async () => {
