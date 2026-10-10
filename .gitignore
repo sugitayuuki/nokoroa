@@ -55,6 +55,9 @@ terraform/**/*.tfstate.*
 *.tfvars
 !*.tfvars.example
 # .terraform.lock.hcl はプロバイダのバージョンを固定するため意図的にコミットする
+# 停止・再開サイクルの引き継ぎ記録（/infra-teardown が書き /infra-rebuild が読む）。
+# スナップショット名などサイクルごとに変わる運用状態で、レビュー対象ではない
+.infra-cycle/
 
 # Python
 venv/
