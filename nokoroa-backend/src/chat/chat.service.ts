@@ -32,57 +32,6 @@ const AI_STREAM_TIMEOUT_MS = 60_000;
 // 検索ヒット0件時のキーワード分割フォールバックで走査する最大単語数。
 // 上限が無いと1リクエストで単語数ぶんのDB検索が直列実行される。
 const MAX_FALLBACK_KEYWORDS = 5;
-// 関連投稿の絞り込みのために組み立て直す本文の上限。max_output_tokens 由来で
-// 実際はこれより遥かに小さいが、上流が壊れた場合に無制限に積まないための歯止め。
-const MAX_ANSWER_CHARS = 50_000;
-// イベント境界(空行)待ちで保持するバイト列の上限。上流が空行を一度も
-// 送らない壊れ方をすると、これが無いとストリーム全体を抱え込む。
-const MAX_FRAME_BUFFER_CHARS = 100_000;
-// 題名の照合に使う先頭文字数。AIは長い和文題名を省略・言い換えするため、
-// 題名全体の逐語一致を求めると本文が紹介した投稿まで落ちる。
-// 短すぎる題名は本文に偶然現れるので、この長さに満たない題名は照合しない。
-const TITLE_MATCH_PREFIX = 10;
-
-/**
- * SSE の1イベントから、画面に本文として出るテキストを取り出す。
- * 番兵と related_posts イベントは本文ではないので捨てる。
- * 分割規則は nokoroa-frontend/src/hooks/useChatStream.ts と揃えること。
- */
-function answerTextOf(event: string): string {
-  // SSEは1イベントが複数の data: 行を持ちうる。仕様どおり改行で結合する。
-  const dataLines = event
-    .split('\n')
-    .filter((line) => line.startsWith('data: '))
-    .map((line) => line.slice(6));
-  if (dataLines.length === 0) return '';
-
-  const data = dataLines.join('\n');
-  if (data === '[DONE]' || data.startsWith('[ERROR]')) return '';
-
-  // `{` 始まりでも JSON として読めなければ本文。フロントは画面に出すので、
-  // ここで捨てると「画面に出た本文」と照合対象がずれる。
-  if (data.startsWith('{')) {
-    try {
-      const parsed = JSON.parse(data) as { type?: string };
-      if (parsed.type === 'related_posts') return '';
-    } catch {
-      // 本文として扱う
-    }
-  }
-  return data;
-}
-
-/**
- * 題名の照合に使う正規化。全角半角・大小文字・空白のゆれを吸収する。
- * ゼロ幅文字は AI へ渡す前に落とされる(prompt.py の sanitize_context)ので、
- * ここでも落とさないと題名側にだけ残って永久に一致しなくなる。
- */
-function normalizeForMatch(text: string): string {
-  return text
-    .normalize('NFKC')
-    .toLowerCase()
-    .replace(/[\u200b-\u200d\ufeff\s]+/g, '');
-}
 
 @Injectable()
 export class ChatService {
@@ -256,36 +205,6 @@ export class ChatService {
     res.setHeader('Connection', 'keep-alive');
 
     const reader = response.body.getReader();
-    // 関連投稿カードを「AIが実際に触れた投稿」に絞るため、本文を組み立て直す。
-    // SSEの枠(data: 接頭辞・イベント境界)が題名を分断するので、受け取った
-    // チャンクをそのまま連結しただけでは題名が一致しない。
-    const decoder = new TextDecoder();
-    let frameBuffer = '';
-    let answer = '';
-
-    const collectAnswer = (chunk: Uint8Array): void => {
-      if (answer.length >= MAX_ANSWER_CHARS) return;
-      frameBuffer += decoder.decode(chunk, { stream: true });
-      const events = frameBuffer.split('\n\n');
-      frameBuffer = events.pop() ?? '';
-      for (const event of events) answer += answerTextOf(event);
-      // 上流が空行を送らない壊れ方をすると frameBuffer だけが際限なく伸び、
-      // 毎チャンクの split も重くなる。歯止めとして捨てる。
-      if (frameBuffer.length > MAX_FRAME_BUFFER_CHARS) frameBuffer = '';
-    };
-
-    /**
-     * 最後のイベントが空行で閉じないまま切れた場合、本文の末尾
-     * (題名を含みうる1文)が frameBuffer に残る。捨てると絞り込みの根拠が
-     * 欠けるので、残りもイベントとして読む。
-     */
-    const flushAnswer = (): void => {
-      if (answer.length >= MAX_ANSWER_CHARS) return;
-      frameBuffer += decoder.decode();
-      if (frameBuffer.length > 0) answer += answerTextOf(frameBuffer);
-      frameBuffer = '';
-    };
-
     try {
       while (true) {
         const { done, value } = await reader.read();
@@ -293,14 +212,13 @@ export class ChatService {
         // 切断後に write すると ERR_STREAM_DESTROYED になる
         if (res.destroyed) break;
         res.write(Buffer.from(value));
-        collectAnswer(value);
       }
-      flushAnswer();
-
       if (relatedPostsRaw.length > 0 && !res.destroyed) {
-        res.write(
-          `data: ${this.relatedPostsEvent(relatedPostsRaw, answer)}\n\n`,
-        );
+        const relatedPostsEvent = JSON.stringify({
+          type: 'related_posts',
+          posts: relatedPostsRaw,
+        });
+        res.write(`data: ${relatedPostsEvent}\n\n`);
       }
     } catch (err) {
       // 切断・タイムアウトによる中断は異常ではない。ヘッダは送出済みで
@@ -343,43 +261,6 @@ export class ChatService {
       );
       return [];
     }
-  }
-
-  /**
-   * 関連投稿カードとして送る SSE イベントを組み立てる。
-   *
-   * 検索でヒットした投稿をそのまま並べると、本文と食い違う。「ピエールさんの
-   * 投稿が見たい」に対し、AIは渡された候補の中からピエールの投稿だけを選んで
-   * 答えるのに、カードには候補5件(= 別人の投稿を含む)がそのまま出ていた。
-   * そこで、本文が題名に触れた投稿だけをカードにする。
-   *
-   * 照合を全文の逐語一致にすると、AIが題名を少し省略しただけで本文が紹介した
-   * 投稿まで落ちる。題名の原文引用は prompt.py のガイドラインで指示している
-   * が、生成なので崩れうる。先頭 TITLE_MATCH_PREFIX 文字だけで照合して
-   * 揺れを吸収し、判定できない短い題名は落とさない、という二段構えにする。
-   */
-  private relatedPostsEvent(posts: FormattedPost[], answer: string): string {
-    const normalizedAnswer = normalizeForMatch(answer);
-    let mentioned = 0;
-
-    const selected = posts.filter((post) => {
-      const title = normalizeForMatch(post.title);
-      // 短い題名は本文に偶然現れる(「築地」が場所名として出る等)。
-      // 言及の有無を判定できないので、落とさず従来どおり残す。
-      if (title.length < TITLE_MATCH_PREFIX) return true;
-      if (!normalizedAnswer.includes(title.slice(0, TITLE_MATCH_PREFIX))) {
-        return false;
-      }
-      mentioned++;
-      return true;
-    });
-
-    return JSON.stringify({
-      type: 'related_posts',
-      // どの題名にも触れていない = 絞り込む根拠が無い。AIが題名を書かずに
-      // 答えた場合で、ここで減らすと今より情報が少なくなるため全件に戻す。
-      posts: mentioned > 0 ? selected : posts,
-    });
   }
 
   private async searchByVector(

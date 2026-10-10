@@ -28,11 +28,6 @@ def _build_system_prompt(freshness_role: str, freshness_guideline: str) -> str:
         "- マークダウン記法（*、**、#、```など）は一切使わないこと。"
         "プレーンテキストのみで回答する",
         "- 箇条書きには「・」や「→」などの記号を使う",
-        # backend は「本文が題名に触れた投稿」だけを関連投稿カードとして返す
-        # (nokoroa-backend/src/chat/chat.service.ts の relatedPostsEvent)。
-        # 要約・言い換えをされると照合できず、本文と無関係なカードが並ぶ。
-        "- <nokoroa_user_posts> の投稿に触れるときは、その題名を要約も省略もせず"
-        "原文のまま「」で引用する",
     ]
     return "\n".join(
         [
