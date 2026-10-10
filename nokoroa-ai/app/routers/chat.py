@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import unicodedata
 from collections.abc import Iterator
 
 from fastapi import APIRouter, Depends
@@ -26,43 +27,69 @@ DONE_SENTINEL = "[DONE]"
 ERROR_SENTINEL = "[ERROR] chat stream failed"
 
 
-def _sse_event(payload: str) -> str:
+def _sse_event(payload: str, event: str | None = None) -> str:
     """SSEの1イベントとして送出する。
 
     SSEはイベント内の各行に data: を必要とする。生成テキストには改行が含まれる
     ため、そのまま流すとクライアント側のイベント分割で本文が欠落する。
+
+    制御イベントには event 名を付ける。本文は全行に data: が付くので
+    event: 行を作れず、本文が制御イベントを名乗ることが構造的にできなくなる
+    (名前が無いと「本文がたまたま制御イベントと同じ JSON だった」場合に
+    区別できない)。
     """
     body = "\n".join(f"data: {line}" for line in payload.split("\n"))
-    return f"{body}\n\n"
+    if event is None:
+        return f"{body}\n\n"
+    return f"event: {event}\n{body}\n\n"
 
+
+# 申告された id の採用上限。候補は MAX_CONTEXT_POSTS 件なのでそれ以上は壊れた出力。
+MAX_USED_POSTS = 10
+# マーカーの中身として許す長さ。これを超えたら「閉じタグは来ない」と判断して
+# 本文として流す。上限が無いと、書式が少し崩れただけで回答の残りが丸ごと
+# 消える (開きタグ以降を保持し続け、最後に破棄してしまう)。
+MAX_MARKER_BODY = 200
+_MAX_MARKER_SPAN = len(USED_POSTS_OPEN) + MAX_MARKER_BODY + len(USED_POSTS_CLOSE)
 
 # 本文に触れた投稿の id をAIが申告するマーカー (prompt.py のガイドライン)。
 # 本文としては表示しないので、送出前にここで取り除く。
+# 中身を数字限定にしないのは、`[1,2]` や `id:1` のような書式ゆれで一致しなくなると
+# 上の「回答が消える」経路へ落ちるため。数字は後で取り出す。
 _USED_POSTS_RE = re.compile(
-    re.escape(USED_POSTS_OPEN) + r"([0-9,、\s]*)" + re.escape(USED_POSTS_CLOSE)
+    re.escape(USED_POSTS_OPEN)
+    + r"(.{0,"
+    + str(MAX_MARKER_BODY)
+    + r"}?)"
+    + re.escape(USED_POSTS_CLOSE),
+    re.DOTALL,
 )
-# 閉じタグが来ないまま終わった場合の後始末。開きタグ以降は丸ごと捨てる
-# (閉じタグが途中まで届いている `<used_posts>1</used_` のような形も含む)。
-_USED_POSTS_DANGLING_RE = re.compile(re.escape(USED_POSTS_OPEN) + r"[\s\S]*$")
+_DIGITS_RE = re.compile(r"\d+")
+# 単独で残った開きタグ / 閉じタグ。本文として画面に出さない。
+_MARKER_REMNANT_RE = re.compile("|".join(re.escape(t) for t in (USED_POSTS_OPEN, USED_POSTS_CLOSE)))
 # 開きタグの一部だけで終わった場合 (`...本文<used_p`) も本文として出さない。
 # 長い接頭辞から並べるのは、短い方が先に一致して残りが漏れるのを防ぐため。
+# 1 文字 ("<") を含めないのは、不等号で終わる本文の末尾を削ってしまうため。
 _USED_POSTS_PARTIAL_RE = re.compile(
     "(?:"
-    + "|".join(re.escape(USED_POSTS_OPEN[:n]) for n in range(len(USED_POSTS_OPEN) - 1, 0, -1))
+    + "|".join(re.escape(USED_POSTS_OPEN[:n]) for n in range(len(USED_POSTS_OPEN) - 1, 1, -1))
     + ")$"
 )
-# 申告された id の採用上限。MAX_CONTEXT_POSTS より多い申告は壊れた出力とみなす。
-MAX_USED_POSTS = 10
 
 
 def _extract_used_posts(text: str) -> tuple[str, list[int]]:
-    """本文からマーカーを取り除き、申告された id を返す。"""
+    """本文からマーカーを取り除き、申告された id を返す。
+
+    マーカーが複数あれば最後のものだけを採る。投稿本文の復唱などで本文途中に
+    マーカーが現れても、末尾の正規の申告に上書きされるようにするため。
+    """
     ids: list[int] = []
 
     def collect(match: re.Match[str]) -> str:
-        for token in re.split(r"[,、\s]+", match.group(1)):
-            if token.isdigit() and len(ids) < MAX_USED_POSTS:
-                ids.append(int(token))
+        ids.clear()
+        # 全角数字でも拾えるよう NFKC で寄せてから数字列を取り出す
+        normalized = unicodedata.normalize("NFKC", match.group(1))
+        ids.extend(int(n) for n in _DIGITS_RE.findall(normalized)[:MAX_USED_POSTS])
         return ""
 
     return _USED_POSTS_RE.sub(collect, text), ids
@@ -77,16 +104,27 @@ def _safe_emit_length(pending: str) -> int:
     無条件に保持する方式は採らない)。
     """
     # 完全なマーカーは _extract_used_posts が除去済み。ここに残る開きタグは
-    # 閉じタグ待ちなので、そこから先は送らない。
+    # 閉じタグ待ち。ただしマーカーにしては長くなったら、閉じタグは来ないものと
+    # 判断して本文として流す (保持し続けると回答が出なくなる)。
     opened = pending.find(USED_POSTS_OPEN)
     if opened != -1:
-        return opened
+        return opened if len(pending) - opened <= _MAX_MARKER_SPAN else len(pending)
 
     # 開きタグの一部だけが届いている場合も、残りが来るまで送らない。
-    for length in range(min(len(USED_POSTS_OPEN) - 1, len(pending)), 0, -1):
+    for length in range(min(len(USED_POSTS_OPEN) - 1, len(pending)), 1, -1):
         if pending.endswith(USED_POSTS_OPEN[:length]):
             return len(pending) - length
     return len(pending)
+
+
+def _as_body(text: str) -> str:
+    """送出するテキストからマーカーの残骸を落とす。"""
+    # 閉じタグが来ないまま終わった開きタグ。マーカーとして妥当な長さのときだけ
+    # 捨てる (長いものは本文なので残す)。
+    opened = text.find(USED_POSTS_OPEN)
+    if opened != -1 and len(text) - opened <= _MAX_MARKER_SPAN:
+        text = text[:opened]
+    return _USED_POSTS_PARTIAL_RE.sub("", _MARKER_REMNANT_RE.sub("", text))
 
 
 @router.post("/stream")
@@ -105,37 +143,41 @@ async def chat_stream(
             ):
                 pending += chunk
                 pending, ids = _extract_used_posts(pending)
-                used_post_ids.extend(ids)
+                # 申告は最後のものだけを採る (_extract_used_posts と同じ理由)
+                if ids:
+                    used_post_ids = ids
 
                 emit_length = _safe_emit_length(pending)
                 if emit_length > 0:
                     emit, pending = pending[:emit_length], pending[emit_length:]
-                    yield _sse_event(emit)
+                    if body := _as_body(emit):
+                        yield _sse_event(body)
 
             pending, ids = _extract_used_posts(pending)
-            used_post_ids.extend(ids)
-            # 閉じタグが来ないまま終わったマーカーを本文として出さない
-            pending = _USED_POSTS_PARTIAL_RE.sub("", _USED_POSTS_DANGLING_RE.sub("", pending))
-            if pending:
-                yield _sse_event(pending)
+            if ids:
+                used_post_ids = ids
+            if body := _as_body(pending):
+                yield _sse_event(body)
+            # 二重送出を防ぐ。この後に例外が出ても except 節で再度流さない。
+            pending = ""
 
             # backend が関連投稿カードを絞るのに使う。本文ではないので
-            # 専用の type を付けた JSON として送る (frontend は無視する)。
+            # 名前付きイベントとして送る (frontend は表示しない)。
             if used_post_ids:
                 yield _sse_event(
                     json.dumps(
                         {"type": "used_posts", "ids": used_post_ids},
                         ensure_ascii=False,
-                    )
+                    ),
+                    event="used_posts",
                 )
             yield _sse_event(DONE_SENTINEL)
         except Exception:
             # ヘッダは送出済みでステータスを変えられないため、本文でエラーを伝える
             logger.exception("chat stream failed")
             # 送り残しがあれば本文として流しておく (エラー直前までの回答は有効)
-            pending = _USED_POSTS_PARTIAL_RE.sub("", _USED_POSTS_DANGLING_RE.sub("", pending))
-            if pending:
-                yield _sse_event(pending)
+            if body := _as_body(pending):
+                yield _sse_event(body)
             yield _sse_event(ERROR_SENTINEL)
 
     return StreamingResponse(

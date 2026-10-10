@@ -35,29 +35,36 @@ const MAX_FALLBACK_KEYWORDS = 5;
 // イベント境界(空行)待ちで保持する長さの上限。上流が空行を一度も送らない
 // 壊れ方をすると、これが無いとストリーム全体を抱え込む。
 const MAX_FRAME_BUFFER_CHARS = 100_000;
+// 採用する申告 id の上限。候補は5件なので、それ以上は壊れた出力とみなす。
+// 上流が壊れて大量に送ってきても、こちらで抱え込まないための歯止め。
+const MAX_USED_POSTS = 10;
 
 /**
  * AIサービスが「本文で触れた投稿」として申告した id を、SSE の1イベントから
  * 取り出す。形式は nokoroa-ai/app/routers/chat.py の used_posts イベント。
  *
- * 本文のイベントは data 行に生成テキストがそのまま載るため、JSON として
- * 読めない / type が違うものは無視する。
+ * **`event: used_posts` の行を必須にする。** 生成テキストは全行に `data: ` が
+ * 付くため event 行を作れず、本文が申告イベントを名乗ることが構造的にできない。
+ * JSON の中身だけで判定すると、AIが本文として同じ JSON を1行出力しただけで
+ * 正規の申告とバイト列が一致してしまい、カードの選択を本文経由で操作できる。
  */
 function usedPostIdsOf(event: string): number[] {
-  // SSEは1イベントが複数の data: 行を持ちうる。仕様どおり改行で結合する。
-  const dataLines = event
-    .split('\n')
-    .filter((line) => line.startsWith('data: '))
-    .map((line) => line.slice(6));
-  if (dataLines.length === 0) return [];
+  const lines = event.split('\n');
+  if (!lines.some((line) => line === 'event: used_posts')) return [];
 
-  const data = dataLines.join('\n');
-  if (!data.startsWith('{')) return [];
+  // SSEは1イベントが複数の data: 行を持ちうる。仕様どおり改行で結合する。
+  const data = lines
+    .filter((line) => line.startsWith('data: '))
+    .map((line) => line.slice(6))
+    .join('\n');
+  if (data.length === 0) return [];
 
   try {
-    const parsed = JSON.parse(data) as { type?: unknown; ids?: unknown };
-    if (parsed.type !== 'used_posts' || !Array.isArray(parsed.ids)) return [];
-    return parsed.ids.filter((id): id is number => Number.isInteger(id));
+    const parsed = JSON.parse(data) as { ids?: unknown };
+    if (!Array.isArray(parsed.ids)) return [];
+    return parsed.ids
+      .filter((id): id is number => Number.isInteger(id))
+      .slice(0, MAX_USED_POSTS);
   } catch {
     return [];
   }
@@ -249,7 +256,12 @@ export class ChatService {
       frameBuffer += decoder.decode(chunk, { stream: true });
       const events = frameBuffer.split('\n\n');
       frameBuffer = events.pop() ?? '';
-      for (const event of events) usedPostIds.push(...usedPostIdsOf(event));
+      for (const event of events) {
+        const ids = usedPostIdsOf(event);
+        // 申告は最後のものだけを採る。AIサービス側も末尾の申告だけを送るが、
+        // 壊れた上流から複数届いても無制限に積まないようにする。
+        if (ids.length > 0) usedPostIds.splice(0, usedPostIds.length, ...ids);
+      }
       if (frameBuffer.length > MAX_FRAME_BUFFER_CHARS) frameBuffer = '';
     };
 
@@ -264,8 +276,14 @@ export class ChatService {
       }
 
       if (relatedPostsRaw.length > 0 && !res.destroyed) {
+        // 制御イベントには名前を付ける。本文は全行に data: が付くため
+        // event 行を作れず、本文がカード差し替えを名乗れなくなる。
+        // payload の type は、名前を見ない旧 frontend との互換のために残す。
         res.write(
-          `data: ${this.relatedPostsEvent(relatedPostsRaw, usedPostIds)}\n\n`,
+          `event: related_posts\ndata: ${this.relatedPostsEvent(
+            relatedPostsRaw,
+            usedPostIds,
+          )}\n\n`,
         );
       }
     } catch (err) {

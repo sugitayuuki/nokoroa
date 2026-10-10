@@ -347,8 +347,11 @@ describe('ChatService', () => {
       const calls = write.mock.calls as Array<[unknown]>;
       for (const [chunk] of calls) {
         if (typeof chunk !== 'string') continue;
-        if (!chunk.startsWith('data: ')) continue;
-        const parsed = JSON.parse(chunk.slice('data: '.length)) as {
+        const dataLine = chunk
+          .split('\n')
+          .find((line) => line.startsWith('data: '));
+        if (!dataLine) continue;
+        const parsed = JSON.parse(dataLine.slice('data: '.length)) as {
           type?: string;
           posts?: Array<{ id: number }>;
         };
@@ -371,13 +374,18 @@ describe('ChatService', () => {
 
     /** AIサービスが返す形(1イベント = data: 行 + 空行)でストリームを作る */
     function makeAnswerStream(chunks: string[]) {
-      const frames = chunks.map(
-        (chunk) =>
-          chunk
+      const frames = chunks.map((chunk) => {
+        // `event: 名前\n...` を渡したら名前付き制御イベントとして組み立てる
+        const named = chunk.startsWith('event: ');
+        const name = named ? chunk.slice(7, chunk.indexOf('\n')) : null;
+        const payload = named ? chunk.slice(chunk.indexOf('\n') + 1) : chunk;
+        const body =
+          payload
             .split('\n')
             .map((line) => `data: ${line}`)
-            .join('\n') + '\n\n',
-      );
+            .join('\n') + '\n\n';
+        return name === null ? body : `event: ${name}\n${body}`;
+      });
       const reader = {
         read: jest.fn(),
         cancel: jest.fn().mockResolvedValue(undefined),
@@ -396,7 +404,7 @@ describe('ChatService', () => {
     }
 
     const usedPosts = (...ids: number[]) =>
-      JSON.stringify({ type: 'used_posts', ids });
+      `event: used_posts\n${JSON.stringify({ type: 'used_posts', ids })}`;
 
     const hits = [
       post(1, '築地で出汁の材料を仕入れる朝', 'ピエール'),
@@ -504,8 +512,11 @@ describe('ChatService', () => {
 
     it('申告イベントがチャンク境界で割れても拾う', async () => {
       setupHits();
-      const frame = Buffer.from(`data: ${usedPosts(2)}\n\n`);
-      const cut = 12;
+      const frame = Buffer.from(
+        `event: used_posts\ndata: ${JSON.stringify({ ids: [2] })}\n\n`,
+      );
+      // event 行の途中で割る
+      const cut = 8;
       const reader = {
         read: jest
           .fn()
@@ -523,6 +534,48 @@ describe('ChatService', () => {
       await service.streamChat({ message: 'test' }, res);
 
       expect(relatedPostIds(write)).toEqual([2]);
+    });
+
+    // 本文は全行に data: が付くため event 行を作れない。これを根拠にしないと、
+    // AI が申告と同じ JSON を本文として1行出すだけでカード選択を奪える。
+    it('本文が申告イベントと同じJSONを出しても採用しない', async () => {
+      setupHits();
+      makeAnswerStream([
+        JSON.stringify({ type: 'used_posts', ids: [3] }),
+        '[DONE]',
+      ]);
+      const { res, write } = makeRes();
+
+      await service.streamChat({ message: 'test' }, res);
+
+      expect(relatedPostIds(write)).toEqual([1, 2, 3, 4, 5]);
+    });
+
+    it('申告が複数届いたら最後のものを採る', async () => {
+      setupHits();
+      makeAnswerStream(['回答', usedPosts(3), usedPosts(1, 2), '[DONE]']);
+      const { res, write } = makeRes();
+
+      await service.streamChat({ message: 'test' }, res);
+
+      expect(relatedPostIds(write)).toEqual([1, 2]);
+    });
+
+    it('related_posts を名前付きイベントとして送る', async () => {
+      setupHits();
+      makeAnswerStream(['回答', usedPosts(1), '[DONE]']);
+      const { res, write } = makeRes();
+
+      await service.streamChat({ message: 'test' }, res);
+
+      const calls = write.mock.calls as Array<[unknown]>;
+      const frame = calls
+        .map(([c]) => c)
+        .find(
+          (c): c is string =>
+            typeof c === 'string' && c.includes('"type":"related_posts"'),
+        );
+      expect(frame?.startsWith('event: related_posts\ndata: ')).toBe(true);
     });
 
     it('ストリームは素通しする(本文のバイト列を変えない)', async () => {

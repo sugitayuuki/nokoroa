@@ -145,14 +145,23 @@ async function consumeChatStream(
     buffer = events.pop() || '';
 
     for (const event of events) {
+      const lines = event.split('\n');
+      // 制御イベントには event 名が付く。生成テキストは全行に data: が付くため
+      // event 行を作れず、本文が制御イベントを名乗ることができない。
+      const eventName = lines
+        .find((line) => line.startsWith('event: '))
+        ?.slice(7);
+
       // SSEは1イベントが複数の data: 行を持ちうる。仕様どおり改行で結合する
       // (1行目だけ見ると、改行を含む生成テキストの2行目以降が欠落する)
-      const dataLines = event
-        .split('\n')
+      const dataLines = lines
         .filter((line) => line.startsWith('data: '))
         .map((line) => line.slice(6));
 
       if (dataLines.length === 0) continue;
+
+      // AIサービスが backend 向けに送る申告。画面に出す本文ではない。
+      if (eventName === 'used_posts') continue;
 
       const data = dataLines.join('\n');
       if (data === '[DONE]') {
@@ -162,17 +171,17 @@ async function consumeChatStream(
         throw new Error(data);
       }
 
-      if (data.startsWith('{')) {
+      if (eventName === 'related_posts' || data.startsWith('{')) {
         try {
           const parsed = JSON.parse(data);
-          if (parsed.type === 'related_posts' && parsed.posts) {
+          // type も見るのは、event 名を付けない旧 backend との互換のため
+          if (
+            (eventName === 'related_posts' ||
+              parsed.type === 'related_posts') &&
+            parsed.posts
+          ) {
             relatedPosts = parsed.posts as PostData[];
             onRelatedPosts(relatedPosts);
-            continue;
-          }
-          // type を持つイベントは制御用。画面に出す本文ではないので、
-          // 知らない種類でも表示しない (AIサービスの used_posts など)。
-          if (typeof parsed?.type === 'string') {
             continue;
           }
         } catch {}

@@ -93,8 +93,32 @@ AIの回答: {ai_response}
 フォーマット: 質問1|質問2|質問3
 フォーマット以外のテキストは出力しないでください。"""
 
-# 取得した投稿に埋め込まれうる、区切りの偽装やゼロ幅文字による指示の隠蔽を無効化する
-_CONTEXT_STRIP = str.maketrans({"​": "", "‌": "", "‍": "", "﻿": ""})
+# 取得した投稿に埋め込まれうる、区切りの偽装やゼロ幅文字による指示の隠蔽を無効化する。
+# 改行は空白に潰す。build_user_text は候補を 1 行 1 投稿で並べるため、本文に改行を
+# 1 つ入れられるだけで候補行そのものを偽造でき、自分の id に他人の題名・投稿者名を
+# 結び付けられる (関連投稿カードの乗っ取りに直結する)。
+_CONTEXT_STRIP = str.maketrans(
+    {
+        "​": "",
+        "‌": "",
+        "‍": "",
+        "﻿": "",
+        "\n": " ",
+        "\r": " ",
+        " ": " ",
+        " ": " ",
+    }
+)
+# データ柵の偽装に使われうる literal。固定点まで除去する。
+# used_posts 系は「本文で触れた投稿の id」をAIに申告させる制御マーカー
+# (routers/chat.py)。投稿側に書かれたものがそのまま届くと、復唱されたときに
+# 正規の申告として解釈されるため、柵の内側から取り除く。
+_CONTEXT_LITERALS = (
+    "<nokoroa_user_posts>",
+    "</nokoroa_user_posts>",
+    USED_POSTS_OPEN,
+    USED_POSTS_CLOSE,
+)
 
 # プロンプトへ埋め込む投稿本文の長さ。全文を入れるとトークンを食うため要約的に切る。
 CONTEXT_CONTENT_PREVIEW = 600
@@ -112,9 +136,9 @@ def sanitize_context(text: str) -> str:
     """
     sanitized = text.translate(_CONTEXT_STRIP)
     while True:
-        replaced = sanitized.replace("<nokoroa_user_posts>", "").replace(
-            "</nokoroa_user_posts>", ""
-        )
+        replaced = sanitized
+        for literal in _CONTEXT_LITERALS:
+            replaced = replaced.replace(literal, "")
         if replaced == sanitized:
             return sanitized
         sanitized = replaced

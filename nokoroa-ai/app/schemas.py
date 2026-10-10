@@ -39,7 +39,10 @@ class ContextPost(BaseModel):
     # AI がどの投稿に触れたかを返すための識別子。backend はこの id を
     # 自分が送った候補と突き合わせてから関連投稿カードを絞る
     # (chat.service.ts の relatedPostsEvent)。候補外の id は採用しない。
-    id: int
+    # ローリングデプロイで AI サービスが先に入れ替わっても、旧 backend からの
+    # リクエストを 422 で全断させないため既定値を持つ。0 は実在しない id
+    # (autoincrement は 1 始まり) なので、候補との突合でも採用されない。
+    id: int = 0
     title: str
     content: str
     location: str
