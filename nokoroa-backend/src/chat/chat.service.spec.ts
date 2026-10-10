@@ -441,15 +441,113 @@ describe('ChatService', () => {
         { postId: 8, distance: 0.2 },
       ]);
       mockPosts.findManyByIds.mockResolvedValue([
-        post(9, 'Tokyo Cafe めぐり', 'マイケル'),
-        post(8, '別の題名', 'マイケル'),
+        post(9, 'Tokyo Cafe めぐりの記録', 'マイケル'),
+        post(8, '触れられていない別の題名', 'マイケル'),
       ]);
-      makeAnswerStream(['「ＴＯＫＹＯ　ｃａｆｅ めぐり」が参考になります。']);
+      makeAnswerStream([
+        '「ＴＯＫＹＯ　ｃａｆｅ めぐりの記録」が参考になります。',
+      ]);
       const { res, write } = makeRes();
 
       await service.streamChat({ message: 'カフェ' }, res);
 
       expect(relatedPostIds(write)).toEqual([9]);
+    });
+
+    // AIは長い和文題名を要約・省略しがち。全文の逐語一致を求めると、
+    // 本文が紹介している投稿までカードから落ちる。
+    it('題名が少し言い換えられても本文が紹介した投稿を落とさない', async () => {
+      setupHits();
+      makeAnswerStream([
+        '→ 「築地で出汁の材料を仕入れる朝」\n',
+        '→ 金沢で和菓子屋に弟子入りした話の2件です',
+      ]);
+      const { res, write } = makeRes();
+
+      await service.streamChat({ message: 'ピエールさんの投稿' }, res);
+
+      expect(relatedPostIds(write)).toEqual([1, 2]);
+    });
+
+    // 「築地」のような短い題名は、場所名として本文に出ただけで一致してしまう。
+    // 言及の有無を判定できないので落とさず残す(従来どおり出る)。
+    it('短い題名は判定せず残す', async () => {
+      mockEmbeddings.searchSimilar.mockResolvedValue([
+        { postId: 1, distance: 0.1 },
+        { postId: 20, distance: 0.2 },
+        { postId: 21, distance: 0.3 },
+      ]);
+      mockPosts.findManyByIds.mockResolvedValue([
+        post(1, '築地で出汁の材料を仕入れる朝', 'ピエール'),
+        post(20, '築地', 'アレックス'),
+        post(21, '触れられていない長い題名の投稿です', 'マイケル'),
+      ]);
+      makeAnswerStream([
+        '→ 「築地で出汁の材料を仕入れる朝」(場所: 築地場外市場)',
+      ]);
+      const { res, write } = makeRes();
+
+      await service.streamChat({ message: '築地' }, res);
+
+      // 21 は長い題名で本文に出ていないので落ちる
+      expect(relatedPostIds(write)).toEqual([1, 20]);
+    });
+
+    it('場所名として題名の一部が出ただけの投稿はカードにしない', async () => {
+      mockEmbeddings.searchSimilar.mockResolvedValue([
+        { postId: 1, distance: 0.1 },
+        { postId: 3, distance: 0.2 },
+      ]);
+      mockPosts.findManyByIds.mockResolvedValue([
+        post(1, '築地で出汁の材料を仕入れる朝', 'ピエール'),
+        post(3, '築地場外市場の本格寿司体験', 'アレックス'),
+      ]);
+      // 本文はアレックスの投稿に触れていない。「築地場外市場」は場所欄。
+      makeAnswerStream([
+        '→ 「築地で出汁の材料を仕入れる朝」(場所: 築地場外市場)',
+      ]);
+      const { res, write } = makeRes();
+
+      await service.streamChat({ message: 'ピエールさんの投稿' }, res);
+
+      expect(relatedPostIds(write)).toEqual([1]);
+    });
+
+    it('最後のイベントが空行で閉じずに切れても本文の末尾を拾う', async () => {
+      setupHits();
+      const reader = {
+        read: jest
+          .fn()
+          .mockResolvedValueOnce({
+            done: false,
+            value: Buffer.from(
+              'data: 「築地で出汁の材料を仕入れる朝」をご紹介',
+            ),
+          })
+          .mockResolvedValue({ done: true, value: undefined }),
+        cancel: jest.fn().mockResolvedValue(undefined),
+      };
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        body: { getReader: () => reader },
+      }) as unknown as typeof fetch;
+      const { res, write } = makeRes();
+
+      await service.streamChat({ message: '築地' }, res);
+
+      expect(relatedPostIds(write)).toEqual([1]);
+    });
+
+    // フロントは JSON として読めなければ本文として画面に出す。ここで捨てると
+    // 画面に出た本文と照合対象がずれる。
+    it('JSONとして読めない { 始まりの本文も照合に使う', async () => {
+      setupHits();
+      makeAnswerStream(['{これはJSONではない「築地で出汁の材料を仕入れる朝」']);
+      const { res, write } = makeRes();
+
+      await service.streamChat({ message: '築地' }, res);
+
+      expect(relatedPostIds(write)).toEqual([1]);
     });
 
     it('本文がマルチバイトの途中で分割されても題名を取りこぼさない', async () => {
@@ -480,10 +578,10 @@ describe('ChatService', () => {
         { postId: 6, distance: 0.1 },
         { postId: 7, distance: 0.2 },
       ]);
-      // 題名が番兵と同じ投稿があっても、番兵は本文ではない
+      // 題名が番兵を含む投稿があっても、番兵は本文ではない
       mockPosts.findManyByIds.mockResolvedValue([
-        post(6, '[DONE]', 'マイケル'),
-        post(7, '別の題名', 'マイケル'),
+        post(6, '[DONE] と書かれた不思議な看板', 'マイケル'),
+        post(7, '触れられていない長い題名の投稿です', 'マイケル'),
       ]);
       makeAnswerStream(['旅行のご相談ですね。']);
       const { res, write } = makeRes();
