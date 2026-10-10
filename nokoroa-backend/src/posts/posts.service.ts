@@ -38,12 +38,12 @@ const DEFAULT_SEMANTIC_MIN_SIMILARITY = 0.4;
  * 偽のログ行を差し込めてしまうため、型・長さ・先頭の数文字だけに留める。
  */
 function describeBadConfigValue(raw: unknown): string {
-  // 平文化が危ないのは文字列経路だけなので、数値はそのまま出して
-  // 「どの値が弾かれたのか」を運用者に残す。
+  // 数値はそのまま出す(秘密値が数値で紛れ込む余地は無く、どの値が弾かれたかが要る)。
+  // 文字列は型と長さだけ。誤設定の切り分けにはこれで足り、別の秘密値を
+  // 貼り間違えたときに中身がログへ残るのを避けられる。
   if (typeof raw === 'number') return String(raw);
   if (typeof raw !== 'string') return typeof raw;
-  const head = raw.replace(/\s+/g, ' ').slice(0, 16);
-  return `string(len=${raw.length}) "${head}"`;
+  return `string(len=${raw.length})`;
 }
 
 function slugify(text: string): string {
@@ -67,6 +67,10 @@ export class PostsService {
     this.minSimilarity = this.resolveMinSimilarity(
       configService.get('SEMANTIC_MIN_SIMILARITY'),
     );
+    // 本番では tfvars を直して apply しても稼働中タスクには届かない
+    // (ECS の lifecycle.ignore_changes)。実効値を 1 行残しておかないと、
+    // その落とし穴を踏んだかどうかを事後に確かめる手段が無い。
+    this.logger.log(`Semantic search min similarity: ${this.minSimilarity}`);
   }
 
   /**
@@ -387,16 +391,28 @@ export class PostsService {
         const similarity = Math.max(0, 1 - hit.distance);
         return { ...post, similarity };
       })
-      .filter((p): p is NonNullable<typeof p> => p !== null)
-      // ベクトル検索は「一番マシな上位N件」を必ず返すため、関連する投稿が
-      // 一件も無くても無関係な投稿が10件並ぶ。実測では「上野公園だけの投稿を」
-      // の1位が 0.46、10位(無関係なねぶた祭)が 0.33 で、差は 0.13 しかない。
-      // 利用者から見ると全件ハズレに見えるので、ここで足切りする。
-      .filter((p) => p.similarity >= this.minSimilarity);
+      .filter((p): p is NonNullable<typeof p> => p !== null);
+
+    // ベクトル検索は「一番マシな上位N件」を必ず返すため、関連する投稿が
+    // 一件も無くても無関係な投稿が10件並ぶ。実測では「上野公園だけの投稿を」
+    // の1位が 0.46、10位(無関係なねぶた祭)が 0.33 で、差は 0.13 しかない。
+    // 利用者から見ると全件ハズレに見えるので、ここで足切りする。
+    const kept = ranked.filter((p) => p.similarity >= this.minSimilarity);
+
+    if (kept.length < ranked.length) {
+      // 閾値が実データに対して厳しすぎるかどうかは、落とした件数と
+      // 最高類似度が分からないと判断できない。特に全滅したケースは、
+      // ログ上「そもそも投稿が無い」と区別がつかなくなる。
+      // クエリ本文は利用者のデータなので出さない。
+      const best = ranked[0]?.similarity ?? 0;
+      this.logger.log(
+        `Semantic search cut ${ranked.length - kept.length}/${ranked.length} below ${this.minSimilarity} (best=${best.toFixed(2)}${kept.length === 0 ? ', all cut' : ''})`,
+      );
+    }
 
     return {
-      posts: ranked,
-      total: ranked.length,
+      posts: kept,
+      total: kept.length,
       hasMore: false,
       aiAvailable: true,
     };

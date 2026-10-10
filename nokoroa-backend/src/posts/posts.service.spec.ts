@@ -871,6 +871,13 @@ describe('PostsService', () => {
       expect((await runWith(envValue, 0.55)).posts).toHaveLength(1);
     });
 
+    it('未設定時の既定値はちょうど 0.4', async () => {
+      // 本変更の主題そのものの定数。境界の両側を押さえないと、
+      // 既定値が 0.35 や 0.45 へ動いても全テストが緑のまま通る。
+      expect((await runWith(undefined, 0.6)).posts).toHaveLength(1); // 類似度 0.40
+      expect((await runWith(undefined, 0.601)).posts).toEqual([]); // 類似度 0.399
+    });
+
     it('0 を明示指定すると足切りを無効化できる（逃げ道として残す）', async () => {
       const result = await runWith('0', 0.99);
 

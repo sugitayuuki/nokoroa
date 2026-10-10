@@ -201,7 +201,9 @@ export const SearchForm = ({ onSearch, initialFilters }: SearchFormProps) => {
   ) => {
     if (!newMode || newMode === mode) return;
     setMode(newMode);
-    setQuery('');
+    // クエリは持ち越す。どちらのモードも自由文を同じ入力欄で受けており、
+    // 意味検索が 0 件のときは「キーワード検索に切り替えて」と案内するため、
+    // ここで消すと案内に従った利用者が打ち直しになる。
     if (newMode === 'semantic') {
       setTags([]);
       setLocation('');
