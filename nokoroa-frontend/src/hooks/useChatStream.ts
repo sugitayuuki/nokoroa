@@ -170,6 +170,11 @@ async function consumeChatStream(
             onRelatedPosts(relatedPosts);
             continue;
           }
+          // type を持つイベントは制御用。画面に出す本文ではないので、
+          // 知らない種類でも表示しない (AIサービスの used_posts など)。
+          if (typeof parsed?.type === 'string') {
+            continue;
+          }
         } catch {}
       }
 

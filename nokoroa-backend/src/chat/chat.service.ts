@@ -32,6 +32,36 @@ const AI_STREAM_TIMEOUT_MS = 60_000;
 // 検索ヒット0件時のキーワード分割フォールバックで走査する最大単語数。
 // 上限が無いと1リクエストで単語数ぶんのDB検索が直列実行される。
 const MAX_FALLBACK_KEYWORDS = 5;
+// イベント境界(空行)待ちで保持する長さの上限。上流が空行を一度も送らない
+// 壊れ方をすると、これが無いとストリーム全体を抱え込む。
+const MAX_FRAME_BUFFER_CHARS = 100_000;
+
+/**
+ * AIサービスが「本文で触れた投稿」として申告した id を、SSE の1イベントから
+ * 取り出す。形式は nokoroa-ai/app/routers/chat.py の used_posts イベント。
+ *
+ * 本文のイベントは data 行に生成テキストがそのまま載るため、JSON として
+ * 読めない / type が違うものは無視する。
+ */
+function usedPostIdsOf(event: string): number[] {
+  // SSEは1イベントが複数の data: 行を持ちうる。仕様どおり改行で結合する。
+  const dataLines = event
+    .split('\n')
+    .filter((line) => line.startsWith('data: '))
+    .map((line) => line.slice(6));
+  if (dataLines.length === 0) return [];
+
+  const data = dataLines.join('\n');
+  if (!data.startsWith('{')) return [];
+
+  try {
+    const parsed = JSON.parse(data) as { type?: unknown; ids?: unknown };
+    if (parsed.type !== 'used_posts' || !Array.isArray(parsed.ids)) return [];
+    return parsed.ids.filter((id): id is number => Number.isInteger(id));
+  } catch {
+    return [];
+  }
+}
 
 @Injectable()
 export class ChatService {
@@ -96,6 +126,7 @@ export class ChatService {
 
   async streamChat(dto: ChatRequestDto, res: Response): Promise<void> {
     let contextPosts: Array<{
+      id: number;
       title: string;
       content: string;
       location: string;
@@ -153,6 +184,9 @@ export class ChatService {
       if (posts.length > 0) {
         relatedPostsRaw = posts;
         contextPosts = posts.map((post) => ({
+          // AIはこの id で「本文で触れた投稿」を申告する。申告された id は
+          // ここで送った候補と突き合わせてから使う (relatedPostsEvent)。
+          id: post.id,
           title: post.title,
           content: post.content,
           location: post.location ?? '',
@@ -205,6 +239,20 @@ export class ChatService {
     res.setHeader('Connection', 'keep-alive');
 
     const reader = response.body.getReader();
+    // AIが申告した「本文で触れた投稿」の id を拾う。ストリームは素通しのまま
+    // 読むだけで、クライアントへ送るバイト列は変えない。
+    const decoder = new TextDecoder();
+    let frameBuffer = '';
+    const usedPostIds: number[] = [];
+
+    const collectUsedPosts = (chunk: Uint8Array): void => {
+      frameBuffer += decoder.decode(chunk, { stream: true });
+      const events = frameBuffer.split('\n\n');
+      frameBuffer = events.pop() ?? '';
+      for (const event of events) usedPostIds.push(...usedPostIdsOf(event));
+      if (frameBuffer.length > MAX_FRAME_BUFFER_CHARS) frameBuffer = '';
+    };
+
     try {
       while (true) {
         const { done, value } = await reader.read();
@@ -212,13 +260,13 @@ export class ChatService {
         // 切断後に write すると ERR_STREAM_DESTROYED になる
         if (res.destroyed) break;
         res.write(Buffer.from(value));
+        collectUsedPosts(value);
       }
+
       if (relatedPostsRaw.length > 0 && !res.destroyed) {
-        const relatedPostsEvent = JSON.stringify({
-          type: 'related_posts',
-          posts: relatedPostsRaw,
-        });
-        res.write(`data: ${relatedPostsEvent}\n\n`);
+        res.write(
+          `data: ${this.relatedPostsEvent(relatedPostsRaw, usedPostIds)}\n\n`,
+        );
       }
     } catch (err) {
       // 切断・タイムアウトによる中断は異常ではない。ヘッダは送出済みで
@@ -261,6 +309,34 @@ export class ChatService {
       );
       return [];
     }
+  }
+
+  /**
+   * 関連投稿カードとして送る SSE イベントを組み立てる。
+   *
+   * 検索でヒットした投稿をそのまま並べると本文と食い違う。「ピエールさんの
+   * 投稿が見たい」に対し、AIは渡された候補の中からピエールの投稿だけを選んで
+   * 答えるのに、カードには候補5件(= 別人の投稿を含む)がそのまま出ていた。
+   *
+   * 絞り込みの根拠は、AIが申告した id だけを使う。題名や本文の文字列照合に
+   * すると、題名は利用者が自由に決められるため「AIが必ず口にする定型文を
+   * 題名にして、他人の投稿をカードから追い出す」経路ができる。
+   * id は backend が採番したもので、ここで送った候補と突き合わせるため、
+   * 申告をどう細工されても候補集合の外へは出られない。
+   */
+  private relatedPostsEvent(
+    posts: FormattedPost[],
+    usedPostIds: number[],
+  ): string {
+    const used = new Set(usedPostIds);
+    const mentioned = posts.filter((post) => used.has(post.id));
+
+    return JSON.stringify({
+      type: 'related_posts',
+      // 申告が無い / 候補と1件も一致しないのは、AIが投稿に触れずに答えた場合か
+      // 申告が壊れた場合。絞り込む根拠が無いので従来どおり全件返す。
+      posts: mentioned.length > 0 ? mentioned : posts,
+    });
   }
 
   private async searchByVector(

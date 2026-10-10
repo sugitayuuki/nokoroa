@@ -13,7 +13,7 @@ from app.schemas import (
 
 
 def _post(**overrides) -> dict:
-    base = {"title": "t", "content": "c", "location": "l", "author": "a"}
+    base = {"id": 1, "title": "t", "content": "c", "location": "l", "author": "a"}
     return {**base, **overrides}
 
 

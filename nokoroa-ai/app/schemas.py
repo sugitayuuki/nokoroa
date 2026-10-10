@@ -36,6 +36,10 @@ class Message(BaseModel):
 
 
 class ContextPost(BaseModel):
+    # AI がどの投稿に触れたかを返すための識別子。backend はこの id を
+    # 自分が送った候補と突き合わせてから関連投稿カードを絞る
+    # (chat.service.ts の relatedPostsEvent)。候補外の id は採用しない。
+    id: int
     title: str
     content: str
     location: str

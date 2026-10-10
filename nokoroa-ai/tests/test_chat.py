@@ -6,7 +6,7 @@ MAIN_THREAD = threading.current_thread().name
 
 
 def _post(**overrides) -> dict:
-    base = {"title": "t", "content": "c", "location": "l", "author": "a"}
+    base = {"id": 1, "title": "t", "content": "c", "location": "l", "author": "a"}
     return {**base, **overrides}
 
 
@@ -64,3 +64,63 @@ def test_braces_in_user_input_do_not_break_prompt_formatting(client, auth, model
         headers=auth,
     )
     assert response.status_code == 200
+
+
+def test_stream_strips_used_posts_marker_and_emits_event(client, auth, models):
+    """id の申告は本文ではない。画面に出さず、専用イベントとして送る。"""
+    models.stream_chunks = ["ピエールさんの投稿です。", "<used_posts>1,2</used_posts>"]
+    body = client.post(
+        "/api/chat/stream",
+        json={"message": "x", "context_posts": [_post()]},
+        headers=auth,
+    ).text
+
+    assert "used_posts>" not in body  # マーカーが本文として漏れていない
+    assert "data: ピエールさんの投稿です。\n\n" in body
+    assert 'data: {"type": "used_posts", "ids": [1, 2]}\n\n' in body
+
+
+def test_stream_strips_marker_split_across_chunks(client, auth, models):
+    """マーカーは複数チャンクに割れて届く。分割されても本文へ漏らさない。"""
+    models.stream_chunks = ["本文です。", "<used_", "posts>3", "</used_", "posts>"]
+    body = client.post("/api/chat/stream", json={"message": "x"}, headers=auth).text
+
+    assert "used_posts>" not in body
+    assert "data: 本文です。" in body
+    assert '"ids": [3]' in body
+
+
+def test_stream_drops_unclosed_marker(client, auth, models):
+    """閉じタグが来ないまま終わっても、開きタグを本文として出さない。"""
+    models.stream_chunks = ["本文です。", "<used_posts>1,2"]
+    body = client.post("/api/chat/stream", json={"message": "x"}, headers=auth).text
+
+    assert "used_posts" not in body
+    assert "data: 本文です。" in body
+
+
+def test_stream_without_marker_emits_no_used_posts_event(client, auth, models):
+    models.stream_chunks = ["投稿には触れていません。"]
+    body = client.post("/api/chat/stream", json={"message": "x"}, headers=auth).text
+
+    assert "used_posts" not in body
+    assert "data: 投稿には触れていません。" in body
+
+
+def test_stream_keeps_body_containing_angle_bracket(client, auth, models):
+    """マーカー検出のために本文の < を飲み込んではいけない。"""
+    models.stream_chunks = ["価格は<1000円です。", "<used_posts>1</used_posts>"]
+    body = client.post("/api/chat/stream", json={"message": "x"}, headers=auth).text
+
+    assert "data: 価格は<1000円です。" in body
+
+
+def test_context_posts_carry_id_for_citation(client, auth, models):
+    """AI が触れた投稿を申告できるよう、候補には id を添えて渡す。"""
+    client.post(
+        "/api/chat/stream",
+        json={"message": "x", "context_posts": [_post(id=42, title="築地の朝")]},
+        headers=auth,
+    )
+    prompt = "".join(models.prompts)
+    assert "[id:42] 「築地の朝」" in prompt
