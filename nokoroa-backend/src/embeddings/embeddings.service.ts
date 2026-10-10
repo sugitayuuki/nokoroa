@@ -58,34 +58,56 @@ export class EmbeddingsService {
     if (!fullText) return false;
     const text = fullText.slice(0, MAX_TEXT_LEN);
 
-    const vector = await this.embed(text, 'RETRIEVAL_DOCUMENT');
+    // 失敗はどの段で落ちたかが分かる文言でここに残し、そのうえで投げ直す。
+    // 呼び出し側(飲み込む generateForPost)で一括ログにすると、
+    // 旧来の「embed 失敗」「upsert 失敗」という区別が消えてしまう。
+    let vector: number[];
+    try {
+      vector = await this.embed(text, 'RETRIEVAL_DOCUMENT');
+    } catch (err) {
+      this.logger.error(
+        `Failed to embed post ${postId}: ${err instanceof Error ? err.message : 'unknown'}`,
+      );
+      throw err;
+    }
+
     const literal = this.vectorLiteral(vector);
-    await this.prisma.$executeRaw`
-      INSERT INTO post_embedding ("postId", "contentText", embedding, "createdAt", "updatedAt")
-      VALUES (${postId}, ${text}, ${literal}::vector, NOW(), NOW())
-      ON CONFLICT ("postId") DO UPDATE SET
-        "contentText" = EXCLUDED."contentText",
-        embedding = EXCLUDED.embedding,
-        "updatedAt" = NOW()
-    `;
+    try {
+      await this.prisma.$executeRaw`
+        INSERT INTO post_embedding ("postId", "contentText", embedding, "createdAt", "updatedAt")
+        VALUES (${postId}, ${text}, ${literal}::vector, NOW(), NOW())
+        ON CONFLICT ("postId") DO UPDATE SET
+          "contentText" = EXCLUDED."contentText",
+          embedding = EXCLUDED.embedding,
+          "updatedAt" = NOW()
+      `;
+    } catch (err) {
+      this.logger.error(
+        `Failed to upsert embedding for post ${postId}: ${err instanceof Error ? err.message : 'unknown'}`,
+      );
+      throw err;
+    }
     return true;
   }
 
   /**
    * 埋め込みを生成して保存する。失敗はログに残して飲み込む。
    * 投稿の作成・更新を埋め込みの失敗で巻き添えにしない経路はこちらを使う。
+   *
+   * 戻り値の意味は Strict と同じ(実際に書いたか)。失敗した場合も false を返す。
+   * searchSimilar / searchSimilarStrict と同じく、対になる 2 つの違いは
+   * 「例外を投げるか、飲み込むか」だけに揃えている。
+   * 失敗の記録は Strict 側が段ごとに済ませているため、ここでは重ねて出さない。
    */
   async generateForPost(
     postId: number,
     title: string,
     content: string,
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
-      await this.generateForPostStrict(postId, title, content);
-    } catch (err) {
-      this.logger.error(
-        `Failed to generate embedding for post ${postId}: ${err instanceof Error ? err.message : 'unknown'}`,
-      );
+      return await this.generateForPostStrict(postId, title, content);
+    } catch {
+      return false;
     }
   }
 

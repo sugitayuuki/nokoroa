@@ -82,9 +82,10 @@ describe('EmbeddingsService', () => {
         Promise.resolve({ ok: false, status: 500 } as Response),
       ) as unknown as typeof fetch;
 
+      // throw せず、かつ「書けなかった」ことは戻り値で分かる
       await expect(
         service.generateForPost(1, 'タイトル', '本文'),
-      ).resolves.toBeUndefined();
+      ).resolves.toBe(false);
       expect(mockPrisma.$executeRaw).not.toHaveBeenCalled();
     });
 
@@ -120,7 +121,8 @@ describe('EmbeddingsService', () => {
     });
 
     it('DB の upsert 失敗時も throw する', async () => {
-      mockPrisma.$executeRaw.mockRejectedValue(new Error('deadlock'));
+      // Once を付けないと clearAllMocks では実装が戻らず、後続テストへ reject が漏れる
+      mockPrisma.$executeRaw.mockRejectedValueOnce(new Error('deadlock'));
 
       await expect(
         service.generateForPostStrict(1, 'タイトル', '本文'),

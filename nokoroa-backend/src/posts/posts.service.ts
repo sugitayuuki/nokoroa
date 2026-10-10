@@ -27,15 +27,21 @@ import {
 // text-embedding-3-small の日本語では、無関係な文どうしでも 0.3 台が普通に出る。
 // 本番データでの実測は 完全一致クエリ=0.73 / 同じ公園という関連=0.44 /
 // 無関係=0.33〜0.36 で、0.40 が「関連あり」と「地の雑音」の境目にあたる。
-// ★ この値は埋め込みプロバイダに紐付く。EMBEDDING_PROVIDER を gemini へ戻すと
-//   類似度の分布ごと変わるため、同じ 0.4 が「ほぼ全件0件」にも「足切りが実質無効」にも
-//   化けうる。プロバイダを変えたら必ず実測し直すこと。
-// 投稿が増えて分布が変わったら SEMANTIC_MIN_SIMILARITY で調整できる。
-// ただし本番で terraform apply しただけでは反映されない: ECS サービスは
-// lifecycle.ignore_changes = [task_definition] を持つため、apply は新リビジョンを
-// 登録するだけで稼働中のタスクは古い値を使い続ける。apply 後にデプロイを流すこと
-// (手順は terraform/envs/prod/terraform.tfvars.example を参照)。
+// この値は埋め込みプロバイダに紐付く。変更・切替の手順と本番での反映方法は
+// terraform/envs/prod/terraform.tfvars.example の semantic_min_similarity を参照
+// (apply だけでは稼働中のタスクに反映されない)。
 const DEFAULT_SEMANTIC_MIN_SIMILARITY = 0.4;
+
+/**
+ * 不正な設定値をログに出すための表現を作る。
+ * 値をそのまま出すと、別の秘密値を貼り間違えたときに平文で残り、改行を含む値では
+ * 偽のログ行を差し込めてしまうため、型・長さ・先頭の数文字だけに留める。
+ */
+function describeBadConfigValue(raw: unknown): string {
+  if (typeof raw !== 'string') return typeof raw;
+  const head = raw.replace(/\s+/g, ' ').slice(0, 16);
+  return `string(len=${raw.length}) "${head}"`;
+}
 
 function slugify(text: string): string {
   return text
@@ -65,16 +71,26 @@ export class PostsService {
    * 不正値で 0 に落とすと足切りが無言で無効化されるため、既定値へ戻して警告する。
    */
   private resolveMinSimilarity(raw: unknown): number {
-    // get<string>() は型アサーションでしかない。config ローダ次第で数値や
-    // オブジェクトが入りうるので、trim を呼ぶ前に実体を確かめる。
-    const text = typeof raw === 'number' ? String(raw) : raw;
-    if (typeof text !== 'string' || text.trim() === '') {
+    // get<string>() は型アサーションでしかないので、文字列と決めつけない。
+    if (raw === undefined || raw === null) {
       return DEFAULT_SEMANTIC_MIN_SIMILARITY;
     }
-    const parsed = Number(text);
+    if (typeof raw === 'string' && raw.trim() === '') {
+      // 空白だけの値は「未設定」と同じ扱いにする。Number('  ') は 0 になるため、
+      // ここで弾かないと足切りが無効化された状態で起動してしまう。
+      return DEFAULT_SEMANTIC_MIN_SIMILARITY;
+    }
+    const parsed =
+      typeof raw === 'number'
+        ? raw
+        : typeof raw === 'string'
+          ? Number(raw)
+          : NaN;
     if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+      // 値をそのまま出すと、別の秘密値を貼り間違えたときに平文で残り、
+      // 改行を含む値では偽のログ行を差し込めてしまう。
       this.logger.warn(
-        `SEMANTIC_MIN_SIMILARITY=${text} is not a number in [0,1]; falling back to ${DEFAULT_SEMANTIC_MIN_SIMILARITY}`,
+        `SEMANTIC_MIN_SIMILARITY is not a number in [0,1] (got ${describeBadConfigValue(raw)}); falling back to ${DEFAULT_SEMANTIC_MIN_SIMILARITY}`,
       );
       return DEFAULT_SEMANTIC_MIN_SIMILARITY;
     }
