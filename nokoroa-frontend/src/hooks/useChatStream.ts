@@ -178,6 +178,10 @@ export async function consumeChatStream(
       // (運営を騙るカード + 攻撃者ホストの imageUrl で閲覧者の IP/UA が漏れる)。
       // 本文は全行に data: が付くため event 行を作れず、名前を要求すれば
       // 構造的に偽造できなくなる。
+      //
+      // この判定は backend が event 名を付けて送ることが前提。**デプロイは
+      // backend を先に出すこと。** 逆順にすると、その間カードが出ず、
+      // payload が本文として表示される。
       if (eventName === 'related_posts') {
         try {
           const parsed = JSON.parse(data);

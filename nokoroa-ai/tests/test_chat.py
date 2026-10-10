@@ -217,29 +217,65 @@ def test_stream_keeps_short_tail_after_unclosed_marker(client, auth, models):
     models.stream_chunks = ["前半です。", "<used_posts>1 ", "続きの本文です。"]
     body = client.post("/api/chat/stream", json={"message": "x"}, headers=auth).text
 
-    assert "data: 前半です。" in body
-    assert "続きの本文です。" in body
-    assert "used_posts" not in body
+    # 捨てた申告の id が本文に混ざらないことまで見る
+    assert _answer_text(body) == "前半です。続きの本文です。"
 
 
 def test_stream_drops_marker_with_spacing_variants(client, auth, models):
-    """綴りが揺れたタグも本文として画面に出さない。"""
+    """綴りが揺れたタグも、本文へ出さずに申告として読む。
+
+    抽出だけ厳格にすると「タグは消えるが中身の id 列は画面に出る」という
+    一番悪い形になる (本文と区別が付かない数字が残る)。
+    """
     models.stream_chunks = ["本文。", "< used_posts >1,2</ used_posts >"]
     body = client.post("/api/chat/stream", json={"message": "x"}, headers=auth).text
 
-    assert "used_posts" not in body
+    assert _answer_text(body) == "本文。"
+    assert ':used_posts {"ids": [1, 2]}' in body
+
+
+def test_stream_drops_id_list_of_unclosed_marker(client, auth, models):
+    """閉じタグが来なかった申告の id 列を本文に残さない。
+
+    末尾だけを見て捨てると、後ろに本文が続いた場合に `1,2` だけが残り、
+    回答と無関係な数字が画面に出る。
+    """
+    models.stream_chunks = ["回答です。", "<used_posts>1,2", "\nまたどうぞ。"]
+    body = client.post("/api/chat/stream", json={"message": "x"}, headers=auth).text
+
+    assert _answer_text(body) == "回答です。またどうぞ。"
+
+
+def test_stream_does_not_stall_on_unclosed_marker(client, auth, models):
+    """未閉鎖の開きタグで逐次配信を止めない。
+
+    閉じタグを待ち続けると、利用者にはタイピングが固まって見える。
+    中身が id 列として成立しなくなった時点で保留を解く。
+    """
+    models.stream_chunks = ["回答。", "<used_posts>", "本文がここから続きます。"]
+    body = client.post("/api/chat/stream", json={"message": "x"}, headers=auth).text
+
+    # 本文が 1 イベントに固まらず、チャンクごとに出ている
+    assert "data: 回答。\n\n" in body
+    assert "data: 本文がここから続きます。\n\n" in body
 
 
 def test_stream_emits_used_posts_even_on_error(client, auth, models):
-    """途中でエラーになっても申告は送る。
+    """途中でエラーになっても、それまでの本文と申告は送る。
 
     捨てると、途中まで出た本文は特定の投稿だけを語っているのにカードは全件、
     という食い違いになる。
     """
-    models.stream_chunks = ["ピエールさんの投稿です。", "<used_posts>1</used_posts>"]
-    models.stream_error = RuntimeError("boom")
+    models.stream_chunks = [
+        "ピエールさんの投稿です。",
+        "<used_posts>1</used_posts>",
+        "ここには到達しない",
+    ]
+    models.stream_error_after = 2
     body = client.post("/api/chat/stream", json={"message": "x"}, headers=auth).text
 
+    assert "data: ピエールさんの投稿です。" in body
+    assert ':used_posts {"ids": [1]}' in body
     assert "[ERROR]" in body
 
 

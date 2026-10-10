@@ -68,6 +68,8 @@ describe('consumeChatStream', () => {
   // AI 本文に 1 行の JSON を出させるだけでカードを偽造できてはいけない
   // (運営を騙るカード + 攻撃者ホストの imageUrl で閲覧者の IP/UA が漏れる)。
   // 本文は全行に data: が付くので event 行を作れない。
+  // 代償として、event 名を付けない旧 backend からはカードを受け取らない。
+  // デプロイは backend → frontend の順で行うこと (意図した挙動)。
   it('event 名の無い related_posts JSON をカードとして採用しない', async () => {
     const posts = [{ id: 999, title: '【Nokoroa運営】当選のご案内' }];
     const { relatedPosts, onRelatedPosts, fullResponse } = await consume([
