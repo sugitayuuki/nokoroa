@@ -5,7 +5,6 @@ import { Response } from 'express';
 import { ChatService } from './chat.service';
 import { EmbeddingsService } from '../embeddings/embeddings.service';
 import { PostsService } from '../posts/posts.service';
-import { PrismaService } from '../prisma/prisma.service';
 
 describe('ChatService', () => {
   let service: ChatService;
@@ -17,9 +16,6 @@ describe('ChatService', () => {
   };
   const mockEmbeddings = {
     searchSimilar: jest.fn(),
-  };
-  const mockPrisma = {
-    $queryRaw: jest.fn(),
   };
   const mockConfig = {
     get: jest.fn((key: string) => {
@@ -36,14 +32,11 @@ describe('ChatService', () => {
         { provide: PostsService, useValue: mockPosts },
         { provide: EmbeddingsService, useValue: mockEmbeddings },
         { provide: ConfigService, useValue: mockConfig },
-        { provide: PrismaService, useValue: mockPrisma },
       ],
     }).compile();
     service = module.get<ChatService>(ChatService);
 
     jest.clearAllMocks();
-    // 投稿者の名指しが無い既定。名指しのテストだけが上書きする。
-    mockPrisma.$queryRaw.mockResolvedValue([]);
   });
 
   // res をそのまま expect に渡すと Response のメソッド型を unbound で参照して
@@ -345,11 +338,12 @@ describe('ChatService', () => {
     expect(init.headers['Content-Type']).toBe('application/json');
   });
 
-  // 「ピエールさんの投稿が見たい」に対し、本文は正しく2件を答えているのに
-  // 関連投稿カードには別人の投稿が並ぶ、という食い違いを防ぐ。
-  describe('投稿者を名指しした質問', () => {
-    /** related_posts の SSE イベントとして書き出された投稿を取り出す */
-    function relatedPostsFrom(write: jest.Mock): Array<{ id: number }> | null {
+  // 「ピエールさんの投稿が見たい」に対し、本文は正しくピエールの投稿2件を
+  // 答えているのに、カードには検索ヒット5件(= 別人の投稿を含む)がそのまま
+  // 出ていた。本文が触れた投稿だけをカードにすることで食い違いを無くす。
+  describe('関連投稿カードを本文に揃える', () => {
+    /** related_posts の SSE イベントとして書き出された投稿 ID */
+    function relatedPostIds(write: jest.Mock): number[] | null {
       const calls = write.mock.calls as Array<[unknown]>;
       for (const [chunk] of calls) {
         if (typeof chunk !== 'string') continue;
@@ -358,288 +352,146 @@ describe('ChatService', () => {
           type?: string;
           posts?: Array<{ id: number }>;
         };
-        if (parsed.type === 'related_posts') return parsed.posts ?? [];
+        if (parsed.type === 'related_posts') {
+          return (parsed.posts ?? []).map((p) => p.id);
+        }
       }
       return null;
     }
 
-    /**
-     * 表示名の候補として DB へ渡された文字列。SQL 自体はモックなので、
-     * 「どの範囲を名前として切り出したか」はここでしか検証できない。
-     */
-    function candidatesSentToDb(): string[] {
-      const calls = mockPrisma.$queryRaw.mock.calls as Array<
-        [unknown, string[], number]
-      >;
-      return calls[0][1];
-    }
-
-    function post(id: number, createdAt: string, authorName: string) {
+    function post(id: number, title: string, authorName: string) {
       return {
         id,
-        title: `T${id}`,
+        title,
         content: 'C',
         location: '東京',
-        createdAt: new Date(createdAt),
         author: { name: authorName },
       };
     }
 
-    it('名指しされた投稿者の投稿だけに絞り、ベクトル検索を使わない', async () => {
-      mockPrisma.$queryRaw.mockResolvedValue([{ id: 7, name: 'ピエール' }]);
-      mockPosts.search.mockResolvedValue({
-        posts: [post(1, '2025-10-06T17:03:00Z', 'ピエール')],
-        total: 1,
-        hasMore: false,
-      });
-      makeStreamFetch();
-
-      await service.streamChat(
-        { message: 'ピエールさんの投稿が見たい' },
-        makeRes().res,
+    /** AIサービスが返す形(1イベント = data: 行 + 空行)でストリームを作る */
+    function makeAnswerStream(chunks: string[]) {
+      const frames = [...chunks, '[DONE]'].map(
+        (chunk) =>
+          chunk
+            .split('\n')
+            .map((line) => `data: ${line}`)
+            .join('\n') + '\n\n',
       );
-
-      expect(candidatesSentToDb()).toContain('ピエール');
-      expect(mockPosts.search).toHaveBeenCalledWith({
-        authorId: 7,
-        limit: 5,
-        offset: 0,
-      });
-      expect(mockEmbeddings.searchSimilar).not.toHaveBeenCalled();
-    });
-
-    it('名前の手前に文が続いていても名前だけを切り出す', async () => {
-      mockPrisma.$queryRaw.mockResolvedValue([{ id: 7, name: 'ピエール' }]);
-      mockPosts.search.mockResolvedValue({
-        posts: [],
-        total: 0,
-        hasMore: false,
-      });
-      makeStreamFetch();
-
-      await service.streamChat(
-        { message: '今日はピエールさんの投稿が見たい' },
-        makeRes().res,
-      );
-
-      expect(candidatesSentToDb()).toContain('ピエール');
-    });
-
-    it('姓名が空白で割れていても1つの名前として切り出す', async () => {
-      mockPrisma.$queryRaw.mockResolvedValue([{ id: 2, name: '裕貴 杉田' }]);
-      mockPosts.search.mockResolvedValue({
-        posts: [],
-        total: 0,
-        hasMore: false,
-      });
-      makeStreamFetch();
-
-      await service.streamChat(
-        { message: '裕貴 杉田さんの投稿' },
-        makeRes().res,
-      );
-
-      expect(candidatesSentToDb()).toContain('裕貴 杉田');
-    });
-
-    // 部分一致で引くと利用者「太郎」が「健太郎さん」の質問を奪ってしまう。
-    // 本PRが直そうとしている「別人の投稿が並ぶ」症状の再発にあたる。
-    it('他人の名前の一部に含まれる表示名を候補にしない', async () => {
-      mockPrisma.$queryRaw.mockResolvedValue([]);
-      mockEmbeddings.searchSimilar.mockResolvedValue([]);
-      mockPosts.search.mockResolvedValue({
-        posts: [],
-        total: 0,
-        hasMore: false,
-      });
-      makeStreamFetch();
-
-      await service.streamChat(
-        { message: '健太郎さんの投稿が見たい' },
-        makeRes().res,
-      );
-
-      expect(candidatesSentToDb()).toContain('健太郎');
-      expect(candidatesSentToDb()).not.toContain('太郎');
-    });
-
-    // 表示名は一意でも不変でもないため、地名と同じ名前を登録して
-    // 「京都の投稿」のような質問の検索結果を奪えてはいけない。
-    it('敬称が無ければ著者指名とみなさない', async () => {
-      mockEmbeddings.searchSimilar.mockResolvedValue([]);
-      mockPosts.search.mockResolvedValue({
-        posts: [],
-        total: 0,
-        hasMore: false,
-      });
-      makeStreamFetch();
-
-      await service.streamChat(
-        { message: '京都の神社の投稿が見たい' },
-        makeRes().res,
-      );
-
-      expect(mockPrisma.$queryRaw).not.toHaveBeenCalled();
-      expect(mockEmbeddings.searchSimilar).toHaveBeenCalled();
-    });
-
-    it('投稿を指す語が無ければ著者指名とみなさない', async () => {
-      mockEmbeddings.searchSimilar.mockResolvedValue([]);
-      mockPosts.search.mockResolvedValue({
-        posts: [],
-        total: 0,
-        hasMore: false,
-      });
-      makeStreamFetch();
-
-      await service.streamChat(
-        { message: '田中さんに教わった京都の店' },
-        makeRes().res,
-      );
-
-      expect(mockPrisma.$queryRaw).not.toHaveBeenCalled();
-    });
-
-    it('複数人を名指しされたら全員の投稿を新しい順に混ぜる', async () => {
-      mockPrisma.$queryRaw.mockResolvedValue([
-        { id: 3, name: 'ジェームズ' },
-        { id: 7, name: 'ピエール' },
-      ]);
-      mockPosts.search
-        .mockResolvedValueOnce({
-          posts: [
-            post(10, '2025-01-01T00:00:00Z', 'ジェームズ'),
-            post(11, '2025-05-01T00:00:00Z', 'ジェームズ'),
-          ],
-          total: 2,
-          hasMore: false,
-        })
-        .mockResolvedValueOnce({
-          posts: [post(20, '2025-09-01T00:00:00Z', 'ピエール')],
-          total: 1,
-          hasMore: false,
-        });
-      makeStreamFetch();
-      const { res, write } = makeRes();
-
-      await service.streamChat(
-        { message: 'ジェームズさんとピエールさんの投稿を見たい' },
-        res,
-      );
-
-      expect(mockPosts.search).toHaveBeenCalledWith({
-        authorId: 3,
-        limit: 5,
-        offset: 0,
-      });
-      expect(mockPosts.search).toHaveBeenCalledWith({
-        authorId: 7,
-        limit: 5,
-        offset: 0,
-      });
-      expect(relatedPostsFrom(write)?.map((p) => p.id)).toEqual([20, 11, 10]);
-    });
-
-    // ここで通常の検索へ落とすと、名指しされていない投稿者の投稿が
-    // カードに並ぶ(修正前の挙動そのもの)。
-    it('名指しされた投稿者の投稿が0件なら他人の投稿へ落とさない', async () => {
-      mockPrisma.$queryRaw.mockResolvedValue([{ id: 7, name: 'ピエール' }]);
-      mockPosts.search.mockResolvedValue({
-        posts: [],
-        total: 0,
-        hasMore: false,
-      });
-      makeStreamFetch();
-      const { res, write } = makeRes();
-
-      await service.streamChat({ message: 'ピエールさんの投稿' }, res);
-
-      expect(mockPosts.search).toHaveBeenCalledTimes(1);
-      expect(mockEmbeddings.searchSimilar).not.toHaveBeenCalled();
-      expect(relatedPostsFrom(write)).toBeNull();
-      const sent = JSON.parse(findStreamCall()[1].body) as {
-        context_posts: unknown[];
+      const reader = {
+        read: jest.fn(),
+        cancel: jest.fn().mockResolvedValue(undefined),
       };
-      expect(sent.context_posts).toEqual([]);
-    });
+      for (const frame of frames) {
+        reader.read.mockResolvedValueOnce({
+          done: false,
+          value: Buffer.from(frame),
+        });
+      }
+      reader.read.mockResolvedValue({ done: true, value: undefined });
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        body: { getReader: () => reader },
+      }) as unknown as typeof fetch;
+    }
 
-    it('大小文字が違っても表示名を解決できる', async () => {
-      mockPrisma.$queryRaw.mockResolvedValue([{ id: 4, name: 'Alex Smith' }]);
-      mockPosts.search.mockResolvedValue({
-        posts: [],
-        total: 0,
-        hasMore: false,
-      });
-      makeStreamFetch();
+    const hits = [
+      post(1, '築地で出汁の材料を仕入れる朝', 'ピエール'),
+      post(2, '金沢で和菓子屋に弟子入りしかけた話', 'ピエール'),
+      post(3, '築地場外市場の本格寿司体験', 'アレックス'),
+      post(4, '美瑛の丘、曇りの日こそ撮りどきでした', 'マイケル'),
+      post(5, '渋谷の夜、スクランブル交差点を真上から', 'ジェームズ'),
+    ];
 
-      await service.streamChat(
-        { message: 'alex smithさんの投稿' },
-        makeRes().res,
+    function setupHits() {
+      mockEmbeddings.searchSimilar.mockResolvedValue(
+        hits.map((h) => ({ postId: h.id, distance: 0.1 })),
       );
+      mockPosts.findManyByIds.mockResolvedValue(hits);
+    }
 
-      // 小文字化は SQL 側 (lower) で行うため、候補は原文のまま渡る
-      expect(candidatesSentToDb()).toContain('alex smith');
-      expect(mockPosts.search).toHaveBeenCalledWith({
-        authorId: 4,
-        limit: 5,
-        offset: 0,
-      });
-    });
-
-    it('名指しが多すぎる場合は絞り込まない', async () => {
-      // 上限超過の検知のため、実装は上限+1件を取得する
-      mockPrisma.$queryRaw.mockResolvedValue([
-        { id: 1, name: 'あ' },
-        { id: 2, name: 'い' },
-        { id: 3, name: 'う' },
-        { id: 4, name: 'え' },
+    it('本文が題名に触れた投稿だけをカードにする', async () => {
+      setupHits();
+      // 題名が複数チャンクに割れても拾えること(SSEの枠が題名を分断する)
+      makeAnswerStream([
+        'ピエールさんの投稿を2件見つけました。\n\n→ 「築地で出汁の',
+        '材料を仕入れる朝」(場所: 築地場外市場)\n',
+        '→ 「金沢で和菓子屋に弟子入りしかけた話」',
       ]);
-      mockEmbeddings.searchSimilar.mockResolvedValue([]);
-      mockPosts.search.mockResolvedValue({
-        posts: [],
-        total: 0,
-        hasMore: false,
-      });
-      makeStreamFetch();
+      const { res, write } = makeRes();
 
-      await service.streamChat(
-        { message: 'あさんといさんとうさんとえさんの投稿' },
-        makeRes().res,
-      );
+      await service.streamChat({ message: 'ピエールさんの投稿みたい' }, res);
 
-      expect(mockEmbeddings.searchSimilar).toHaveBeenCalled();
+      expect(relatedPostIds(write)).toEqual([1, 2]);
     });
 
-    it('投稿者解決が失敗しても通常の検索へフォールバックする', async () => {
-      mockPrisma.$queryRaw.mockRejectedValue(new Error('db down'));
-      mockEmbeddings.searchSimilar.mockResolvedValue([]);
-      mockPosts.search.mockResolvedValue({
-        posts: [],
-        total: 0,
-        hasMore: false,
-      });
-      makeStreamFetch();
+    it('本文が題名に触れなければヒット全件に戻す', async () => {
+      setupHits();
+      makeAnswerStream(['旅行のご相談ですね。どちらへ行かれますか?']);
+      const { res, write } = makeRes();
 
-      await service.streamChat(
-        { message: 'ピエールさんの投稿' },
-        makeRes().res,
-      );
+      await service.streamChat({ message: 'こんにちは' }, res);
 
-      expect(mockEmbeddings.searchSimilar).toHaveBeenCalled();
+      expect(relatedPostIds(write)).toEqual([1, 2, 3, 4, 5]);
     });
 
-    it('投稿者を名指ししていない質問ではDBへ問い合わせない', async () => {
-      mockEmbeddings.searchSimilar.mockResolvedValue([]);
-      mockPosts.search.mockResolvedValue({
-        posts: [],
-        total: 0,
-        hasMore: false,
-      });
-      makeStreamFetch();
+    it('全角半角や大小文字が違っても題名を照合できる', async () => {
+      mockEmbeddings.searchSimilar.mockResolvedValue([
+        { postId: 9, distance: 0.1 },
+        { postId: 8, distance: 0.2 },
+      ]);
+      mockPosts.findManyByIds.mockResolvedValue([
+        post(9, 'Tokyo Cafe めぐり', 'マイケル'),
+        post(8, '別の題名', 'マイケル'),
+      ]);
+      makeAnswerStream(['「ＴＯＫＹＯ　ｃａｆｅ めぐり」が参考になります。']);
+      const { res, write } = makeRes();
 
-      await service.streamChat({ message: '京都 2泊3日' }, makeRes().res);
+      await service.streamChat({ message: 'カフェ' }, res);
 
-      expect(mockPrisma.$queryRaw).not.toHaveBeenCalled();
+      expect(relatedPostIds(write)).toEqual([9]);
+    });
+
+    it('本文がマルチバイトの途中で分割されても題名を取りこぼさない', async () => {
+      setupHits();
+      const frame = Buffer.from('data: 「築地で出汁の材料を仕入れる朝」\n\n');
+      const cut = 10;
+      const reader = {
+        read: jest
+          .fn()
+          .mockResolvedValueOnce({ done: false, value: frame.subarray(0, cut) })
+          .mockResolvedValueOnce({ done: false, value: frame.subarray(cut) })
+          .mockResolvedValue({ done: true, value: undefined }),
+        cancel: jest.fn().mockResolvedValue(undefined),
+      };
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        body: { getReader: () => reader },
+      }) as unknown as typeof fetch;
+      const { res, write } = makeRes();
+
+      await service.streamChat({ message: '築地' }, res);
+
+      expect(relatedPostIds(write)).toEqual([1]);
+    });
+
+    it('番兵を本文として数えない', async () => {
+      mockEmbeddings.searchSimilar.mockResolvedValue([
+        { postId: 6, distance: 0.1 },
+        { postId: 7, distance: 0.2 },
+      ]);
+      // 題名が番兵と同じ投稿があっても、番兵は本文ではない
+      mockPosts.findManyByIds.mockResolvedValue([
+        post(6, '[DONE]', 'マイケル'),
+        post(7, '別の題名', 'マイケル'),
+      ]);
+      makeAnswerStream(['旅行のご相談ですね。']);
+      const { res, write } = makeRes();
+
+      await service.streamChat({ message: 'test' }, res);
+
+      // どの題名にも触れていないのでヒット全件に戻る
+      expect(relatedPostIds(write)).toEqual([6, 7]);
     });
   });
 

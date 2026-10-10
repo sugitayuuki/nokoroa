@@ -4,7 +4,6 @@ import { Response } from 'express';
 import { EmbeddingsService } from '../embeddings/embeddings.service';
 import { FormattedPost } from '../posts/post-format';
 import { PostsService } from '../posts/posts.service';
-import { PrismaService } from '../prisma/prisma.service';
 import {
   ChatRequestDto,
   MAX_HISTORY_CONTENT_LENGTH,
@@ -33,93 +32,32 @@ const AI_STREAM_TIMEOUT_MS = 60_000;
 // 検索ヒット0件時のキーワード分割フォールバックで走査する最大単語数。
 // 上限が無いと1リクエストで単語数ぶんのDB検索が直列実行される。
 const MAX_FALLBACK_KEYWORDS = 5;
-
-// 投稿を求めている質問かどうかの判定語。敬称付きの名前は依頼文にも出る
-// (「田中さんに教わった京都の店」)ため、投稿を指す語がある場合に限って
-// 著者で絞り込む。
-const AUTHOR_SCOPE_INTENT = /投稿|記事|ポスト/;
-// 名前の直後に置かれる敬称。敬称を必須にすることで、地名や一般名詞と同じ
-// 表示名(name に一意制約は無く本人が自由に変更できる)を登録して
-// 「京都の投稿」のような質問の検索結果を乗っ取る経路を塞ぐ。
-// 代償として敬称の無い「〇〇の投稿」は拾えない(従来どおりの検索に落ちる)。
-const AUTHOR_HONORIFIC = /さん|サン|くん|君|ちゃん|様|さま|氏/g;
-// 敬称の手前から左へ何区切りまで遡って候補を作るか。
-const MAX_NAME_SEGMENTS = 4;
-// 候補として認める名前の長さ。これを超える切り出しは名前ではない。
-const MAX_AUTHOR_NAME_LENGTH = 50;
-// 1メッセージから作る候補の上限。2000文字の長文で候補が際限なく増えるのを防ぐ。
-const MAX_AUTHOR_CANDIDATES = 12;
-// 同時に絞り込む投稿者の上限。「AさんとBさんの投稿」までを想定する。
-const MAX_SCOPED_AUTHORS = 3;
-
-// 名前の切れ目。ここに当たったら候補の延長を止める。
-const NAME_DELIMITER = /[\s\u3000、。,.!?！？「」『』【】()（）[\]:：;；"'`]/;
-const SPACE = /[\s\u3000]/;
-const KANJI = /[々一-鿿]/;
-// 「ー」「・」はカタカナ名の一部なのでカタカナ側に含める。
-const KATAKANA = /[ァ-ヺ・ー]/;
-const HIRAGANA = /[ぁ-ゖ]/;
-const ALNUM = /[0-9A-Za-z０-９Ａ-Ｚａ-ｚ]/;
-
-function scriptOf(char: string): string {
-  if (KANJI.test(char)) return 'kanji';
-  if (KATAKANA.test(char)) return 'katakana';
-  if (HIRAGANA.test(char)) return 'hiragana';
-  if (ALNUM.test(char)) return 'alnum';
-  return 'other';
-}
-
-/** text.slice(0, end) の末尾にある区切りの開始位置を返す */
-function segmentStart(text: string, end: number): number {
-  const last = text[end - 1];
-
-  if (NAME_DELIMITER.test(last)) {
-    // 「裕貴 杉田さん」のように姓名が空白で割れている場合だけ空白を飲み込む。
-    // 句読点や括弧は名前の外なのでそこで打ち切る。
-    if (!SPACE.test(last)) return end;
-    let i = end - 1;
-    while (i > 0 && SPACE.test(text[i - 1])) i--;
-    return i;
-  }
-
-  const script = scriptOf(last);
-  let i = end - 1;
-  while (i > 0 && scriptOf(text[i - 1]) === script) i--;
-  return i;
-}
+// 関連投稿の絞り込みのために組み立て直す本文の上限。max_output_tokens 由来で
+// 実際はこれより遥かに小さいが、上流が壊れた場合に無制限に積まないための歯止め。
+const MAX_ANSWER_CHARS = 50_000;
 
 /**
- * 敬称の直前から左へ遡って表示名の候補を切り出す。
- *
- * 文字種(漢字 / カタカナ / ひらがな / 英数)が変わる位置を名前の切れ目と
- * みなす。「今日はピエールさん」なら「ピエール」、「健太郎さん」なら
- * 「健太郎」が得られる。候補は後段で表示名と**完全一致**したものだけを
- * 採用するため、これは「利用者名がメッセージに含まれるか」を部分一致で
- * 見た場合の誤爆(「健太郎さん」が利用者「太郎」に解決される)を防ぐ
- * 境界判定を兼ねている。
+ * SSE の1イベントから、画面に本文として出るテキストを取り出す。
+ * 番兵と JSON イベント(related_posts)は本文ではないので捨てる。
+ * 分割規則は nokoroa-frontend/src/hooks/useChatStream.ts と揃えること。
  */
-function authorNameCandidates(message: string): string[] {
-  const candidates = new Set<string>();
+function answerTextOf(event: string): string {
+  // SSEは1イベントが複数の data: 行を持ちうる。仕様どおり改行で結合する。
+  const dataLines = event
+    .split('\n')
+    .filter((line) => line.startsWith('data: '))
+    .map((line) => line.slice(6));
+  if (dataLines.length === 0) return '';
 
-  for (const match of message.matchAll(AUTHOR_HONORIFIC)) {
-    if (candidates.size >= MAX_AUTHOR_CANDIDATES) break;
+  const data = dataLines.join('\n');
+  if (data === '[DONE]' || data.startsWith('[ERROR]')) return '';
+  if (data.startsWith('{')) return '';
+  return data;
+}
 
-    const head = message.slice(0, match.index);
-    let start = head.length;
-
-    for (let segment = 0; segment < MAX_NAME_SEGMENTS && start > 0; segment++) {
-      const next = segmentStart(head, start);
-      if (next === start) break;
-      start = next;
-
-      const candidate = head.slice(start).trim();
-      if (candidate.length === 0) continue;
-      if (candidate.length > MAX_AUTHOR_NAME_LENGTH) break;
-      candidates.add(candidate);
-    }
-  }
-
-  return [...candidates];
+/** 題名の照合に使う正規化。全角半角・大小文字・空白のゆれを吸収する */
+function normalizeForMatch(text: string): string {
+  return text.normalize('NFKC').toLowerCase().replace(/\s+/g, '');
 }
 
 @Injectable()
@@ -132,7 +70,6 @@ export class ChatService {
     private configService: ConfigService,
     private postsService: PostsService,
     private embeddingsService: EmbeddingsService,
-    private prisma: PrismaService,
   ) {
     this.aiServiceUrl =
       this.configService.get<string>('AI_SERVICE_URL') ||
@@ -194,85 +131,50 @@ export class ChatService {
     let relatedPostsRaw: FormattedPost[] = [];
 
     try {
+      // ベクトル検索だけは外部の埋め込みAPIに依存する。ここの失敗を
+      // 外へ投げると、外部APIを一切使わない下のDB検索まで巻き添えで
+      // 飛ばされ、プロバイダ障害時に関連投稿が完全に出なくなる。
+      // ヒット0件と同じ扱いにしてフォールバックへ進ませる。
       let posts: FormattedPost[] = [];
-
-      // 「〇〇さんの投稿」と名指しされた場合は、その投稿者だけに絞る。
-      // 著者解決に失敗しても通常の検索は動くので、絞り込みなしで続行する。
-      let scopedAuthors: Array<{ id: number; name: string }> = [];
       try {
-        scopedAuthors = await this.resolveScopedAuthors(dto.message);
+        posts = await this.searchByVector(dto.message, 5);
       } catch (error) {
         this.logger.warn(
-          `Author scope resolution failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          `Vector search unavailable, falling back to keyword search: ${error instanceof Error ? error.message : 'Unknown error'}`,
         );
       }
 
-      if (scopedAuthors.length > 0) {
-        // ヒット0件でも下の検索へ落とさない。落とすと、名指しされていない
-        // 投稿者の投稿が関連投稿カードに並び、名指しの意図を裏切る。
+      if (posts.length === 0) {
+        const searchResult = await this.postsService.search({
+          q: dto.message,
+          limit: 5,
+          offset: 0,
+        });
+        posts.push(...searchResult.posts);
+      }
+
+      if (posts.length === 0) {
+        const allWords = dto.message
+          .split(/[\s\u3000,、。のはがをでにへともより]+/)
+          .filter((w) => w.length >= 2);
+        // 重複を除いたうえで上限まで。入力語数に比例してDB検索が増えるのを防ぐ。
+        const words = [...new Set(allWords)].slice(0, MAX_FALLBACK_KEYWORDS);
         const seen = new Set<number>();
-        for (const author of scopedAuthors) {
-          const byAuthor = await this.postsService.search({
-            authorId: author.id,
+        for (const word of words) {
+          const wordResult = await this.postsService.search({
+            q: word,
             limit: 5,
             offset: 0,
           });
-          for (const p of byAuthor.posts) {
+          for (const p of wordResult.posts) {
             if (!seen.has(p.id)) {
               seen.add(p.id);
               posts.push(p);
             }
           }
+          if (posts.length >= 5) break;
         }
-        // 複数人を名指しされた場合、1人目だけで5件を埋めてしまわないよう
-        // 全員ぶんを新しい順に並べ直してから切り詰める。
-        posts.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
         if (posts.length > 5) posts.length = 5;
-      } else {
-        // ベクトル検索だけは外部の埋め込みAPIに依存する。ここの失敗を
-        // 外へ投げると、外部APIを一切使わない下のDB検索まで巻き添えで
-        // 飛ばされ、プロバイダ障害時に関連投稿が完全に出なくなる。
-        // ヒット0件と同じ扱いにしてフォールバックへ進ませる。
-        try {
-          posts = await this.searchByVector(dto.message, 5);
-        } catch (error) {
-          this.logger.warn(
-            `Vector search unavailable, falling back to keyword search: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          );
-        }
-
-        if (posts.length === 0) {
-          const searchResult = await this.postsService.search({
-            q: dto.message,
-            limit: 5,
-            offset: 0,
-          });
-          posts.push(...searchResult.posts);
-        }
-
-        if (posts.length === 0) {
-          const allWords = dto.message
-            .split(/[\s\u3000,、。のはがをでにへともより]+/)
-            .filter((w) => w.length >= 2);
-          // 重複を除いたうえで上限まで。入力語数に比例してDB検索が増えるのを防ぐ。
-          const words = [...new Set(allWords)].slice(0, MAX_FALLBACK_KEYWORDS);
-          const seen = new Set<number>();
-          for (const word of words) {
-            const wordResult = await this.postsService.search({
-              q: word,
-              limit: 5,
-              offset: 0,
-            });
-            for (const p of wordResult.posts) {
-              if (!seen.has(p.id)) {
-                seen.add(p.id);
-                posts.push(p);
-              }
-            }
-            if (posts.length >= 5) break;
-          }
-          if (posts.length > 5) posts.length = 5;
-        }
       }
 
       if (posts.length > 0) {
@@ -330,6 +232,21 @@ export class ChatService {
     res.setHeader('Connection', 'keep-alive');
 
     const reader = response.body.getReader();
+    // 関連投稿カードを「AIが実際に触れた投稿」に絞るため、本文を組み立て直す。
+    // SSEの枠(data: 接頭辞・イベント境界)が題名を分断するので、受け取った
+    // チャンクをそのまま連結しただけでは題名が一致しない。
+    const decoder = new TextDecoder();
+    let frameBuffer = '';
+    let answer = '';
+
+    const collectAnswer = (chunk: Uint8Array | undefined): void => {
+      if (answer.length >= MAX_ANSWER_CHARS) return;
+      frameBuffer += decoder.decode(chunk, { stream: chunk !== undefined });
+      const events = frameBuffer.split('\n\n');
+      frameBuffer = events.pop() ?? '';
+      for (const event of events) answer += answerTextOf(event);
+    };
+
     try {
       while (true) {
         const { done, value } = await reader.read();
@@ -337,13 +254,14 @@ export class ChatService {
         // 切断後に write すると ERR_STREAM_DESTROYED になる
         if (res.destroyed) break;
         res.write(Buffer.from(value));
+        collectAnswer(value);
       }
+      collectAnswer(undefined);
+
       if (relatedPostsRaw.length > 0 && !res.destroyed) {
-        const relatedPostsEvent = JSON.stringify({
-          type: 'related_posts',
-          posts: relatedPostsRaw,
-        });
-        res.write(`data: ${relatedPostsEvent}\n\n`);
+        res.write(
+          `data: ${this.relatedPostsEvent(relatedPostsRaw, answer)}\n\n`,
+        );
       }
     } catch (err) {
       // 切断・タイムアウトによる中断は異常ではない。ヘッダは送出済みで
@@ -389,50 +307,28 @@ export class ChatService {
   }
 
   /**
-   * 「ピエールさんの投稿が見たい」のように投稿者を名指しした質問から、
-   * その投稿者を特定する。該当しなければ null(通常の検索へ戻す)。
+   * 関連投稿カードとして送る SSE イベントを組み立てる。
    *
-   * メッセージ全文を q として渡す既存の検索では author.name の部分一致が
-   * 成立しない(name contains 'ピエールさんの投稿が見たい' になる)。
-   * そのためここでは文から名前を切り出すのではなく、登録済みの name が
-   * メッセージに含まれるかをDB側で判定する(敬称の有無に依存しない)。
+   * 検索でヒットした投稿をそのまま並べると、本文と食い違う。「ピエールさんの
+   * 投稿が見たい」に対し、AIは渡された候補の中からピエールの投稿だけを選んで
+   * 答えるのに、カードには候補5件(= 別人の投稿を含む)がそのまま出ていた。
+   * そこで、本文が題名に触れた投稿だけをカードにする。
+   *
+   * 1件も一致しないのは、AIが題名を言い換えた / 投稿に触れずに答えた場合。
+   * ここで0件にすると今より情報が減るので、ヒット全件に戻す。
    */
-  private async resolveScopedAuthors(
-    message: string,
-  ): Promise<Array<{ id: number; name: string }>> {
-    if (!AUTHOR_SCOPE_INTENT.test(message)) return [];
+  private relatedPostsEvent(posts: FormattedPost[], answer: string): string {
+    const normalizedAnswer = normalizeForMatch(answer);
+    const mentioned = posts.filter((post) => {
+      const title = normalizeForMatch(post.title);
+      // 空の題名は includes('') が常に真になり、全件が「言及された」になる
+      return title.length > 0 && normalizedAnswer.includes(title);
+    });
 
-    const candidates = authorNameCandidates(message);
-    if (candidates.length === 0) return [];
-
-    // 公開投稿を持つ利用者だけを候補にする。これが無いと「公開投稿が0件の
-    // 利用者がその表示名で登録されているか」を応答の差(関連投稿が出るか
-    // 出ないか)から判別でき、在籍確認の手段になる。
-    //
-    // name は候補との完全一致で引くが、等価比較に使える索引は無いので
-    // user の全件走査になる(user_name_trgm_idx は ILIKE 用で等価には
-    // 効かない)。候補は十数件の短い文字列なので、走査は行数のみに比例する。
-    const authors = await this.prisma.$queryRaw<
-      Array<{ id: number; name: string }>
-    >`
-      SELECT u.id, u.name
-      FROM "user" u
-      WHERE EXISTS (
-              SELECT 1
-              FROM unnest(${candidates}::text[]) AS candidate(value)
-              WHERE lower(u.name) = lower(candidate.value)
-            )
-        AND EXISTS (
-              SELECT 1 FROM "post" p
-              WHERE p."authorId" = u.id AND p."isPublic" = true
-            )
-      ORDER BY u.id
-      LIMIT ${MAX_SCOPED_AUTHORS + 1}
-    `;
-
-    // 対象が広がりすぎた場合は名指しとして扱わない(通常の検索の方が
-    // 意図に近い)。1件多く取っているのは、超過を検知するため。
-    return authors.length > MAX_SCOPED_AUTHORS ? [] : authors;
+    return JSON.stringify({
+      type: 'related_posts',
+      posts: mentioned.length > 0 ? mentioned : posts,
+    });
   }
 
   private async searchByVector(
