@@ -134,16 +134,19 @@ def _safe_emit_length(pending: str) -> int:
     # 代償は「未閉鎖の開きタグが出たとき最大 _MAX_MARKER_SPAN 文字ぶん
     # 逐次配信が遅れる」ことだが、漏れより軽いのでこちらに倒す。
     opening = re.search(USED_POSTS_OPEN_PATTERN, pending)
-    if opening is not None:
-        after = pending[opening.end() :]
-        return opening.start() if len(after) <= _MAX_MARKER_SPAN else len(pending)
+    if opening is not None and len(pending) - opening.end() <= _MAX_MARKER_SPAN:
+        return opening.start()
 
-    # タグの一部だけが届いている場合も、残りが来るまで送らない。
+    # タグの一部だけが届いている場合は、残りが来るまで送らない。上の分岐で
+    # 「長すぎるので本文として流す」と判断した場合もここを通す。全部出すと
+    # 末尾のタグ断片が _as_body に消され、直後に届く本物のマーカーを
+    # 組み立てられなくなる (マーカーが画面に漏れ、申告も失われる)。
+    #
     # **1 文字の "<" も保留する。** 本番の claude 経路はトークン単位で delta を
     # 返すため "<" が単独チャンクになるのは普通に起きる。ここで送ってしまうと
-    # 開きタグが本文として確定し、後続の "used_posts>1,2" が画面に漏れたうえ
-    # 申告も失われる。「末尾の < を本文として残す」要件は、保留を解く最終
-    # フラッシュ側 (_as_body) だけで満たす。
+    # 開きタグが本文として確定し、後続の "used_posts>1,2" が画面に漏れる。
+    # 「末尾の < を本文として残す」要件は、保留を解く最終フラッシュ側
+    # (_as_body) だけで満たす。
     prefix = _MARKER_PREFIX_RE.search(pending)
     return prefix.start() if prefix is not None else len(pending)
 

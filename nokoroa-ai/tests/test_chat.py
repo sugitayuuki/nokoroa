@@ -475,3 +475,23 @@ def test_stream_keeps_body_with_many_angle_brackets(client, auth, models):
     body = client.post("/api/chat/stream", json={"message": "x"}, headers=auth).text
 
     assert _answer_text(body) == source
+
+
+def test_marker_after_overlong_unclosed_marker_is_still_read(client, auth, models):
+    """未閉鎖の開きタグが長引いた後に本物の申告が来ても取りこぼさない。
+
+    長すぎるので本文として流す分岐で末尾のタグ断片まで出してしまうと、
+    その断片が本文整形で消され、直後に届く本物のマーカーを組み立てられない。
+    """
+    models.stream_chunks = [
+        "回答。",
+        "<used_posts>",
+        "あ" * 220,
+        "<used_p",
+        "osts>1,2</used_posts>",
+    ]
+    body = client.post("/api/chat/stream", json={"message": "x"}, headers=auth).text
+
+    assert "used_posts" not in _answer_text(body)
+    assert "osts>" not in _answer_text(body)
+    assert ':used_posts {"ids": [1, 2]}' in body
