@@ -495,3 +495,34 @@ def test_marker_after_overlong_unclosed_marker_is_still_read(client, auth, model
     assert "used_posts" not in _answer_text(body)
     assert "osts>" not in _answer_text(body)
     assert ':used_posts {"ids": [1, 2]}' in body
+
+
+def test_stream_does_not_stall_on_angle_bracket_with_spaces(client, auth, models):
+    """`<` の後ろに長い空白列が続いても逐次配信を止めない。
+
+    保留判定の量指定子が無上限だと、この入力が常に「タグの断片かもしれない」
+    に一致し続けて配信が止まり、照合も入力長の 2 乗になる。
+    """
+    models.stream_chunks = ["回答です。", "<", *[" " * 50] * 40, "続きの本文"]
+    body = client.post("/api/chat/stream", json={"message": "x"}, headers=auth).text
+
+    assert _answer_text(body) == "回答です。<" + " " * 2000 + "続きの本文"
+    # 1 イベントに固まっていない (= 逐次配信が生きている)
+    assert body.count("data: ") > 3
+
+
+def test_sanitize_terminates_on_deeply_nested_tags(client, auth, models):
+    """入れ子で柵の除去を繰り返させても、打ち切ったうえでタグを残さない。
+
+    1 パスで 1 段しか解けないため、上限が無いと投稿 1 件で入力長の 2 乗の
+    CPU を使わせられる。
+    """
+    evil = _post(content="<used_posts" * 900 + ">" * 900)
+    client.post(
+        "/api/chat/stream",
+        json={"message": "x", "context_posts": [evil]},
+        headers=auth,
+    )
+    prompt = "".join(models.prompts)
+
+    assert "used_posts>" not in prompt

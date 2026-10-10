@@ -21,8 +21,10 @@ USED_POSTS_CLOSE = "</used_posts>"
 # sanitize_context の除去で**同じものを使う**。抽出だけを緩めると、投稿側に
 # 書かれた緩い綴りのタグが無害化を素通りし、復唱されたときに正規の申告として
 # 採用される (= 制御マーカーの密輸)。許容度は常にサニタイズ >= 抽出に保つ。
-USED_POSTS_OPEN_PATTERN = r"<[\s]*used_posts[\s]*>"
-USED_POSTS_CLOSE_PATTERN = r"<[\s]*/[\s]*used_posts[\s]*>"
+# 量指定子は有界にする。無上限だと、送出前の保留判定 (routers/chat.py の
+# _MARKER_PREFIX_RE) で `<` + 長い空白列が常に一致し続け、逐次配信が止まる。
+USED_POSTS_OPEN_PATTERN = r"<[\s]{0,8}used_posts[\s]{0,8}>"
+USED_POSTS_CLOSE_PATTERN = r"<[\s]{0,8}/[\s]{0,8}used_posts[\s]{0,8}>"
 
 
 def _build_system_prompt(freshness_role: str, freshness_guideline: str) -> str:
@@ -123,6 +125,10 @@ _CONTEXT_FENCE_RE = re.compile(
     )
 )
 
+# 柵の除去を繰り返す上限。入れ子の細工は 1 パスで 1 段しか解けないため、
+# 上限が無いと投稿 1 件で入力長の 2 乗の CPU を使わせられる。
+_MAX_SANITIZE_PASSES = 8
+
 # プロンプトへ埋め込む投稿本文の長さ。全文を入れるとトークンを食うため要約的に切る。
 CONTEXT_CONTENT_PREVIEW = 600
 
@@ -155,11 +161,15 @@ def sanitize_context(text: str) -> str:
     # splitlines は \n \r \v \f \x1c \x1d \x1e \x85 U+2028 U+2029 を境界として扱う。
     # 個別に列挙すると漏れた文字から同じ偽造が成立するため、ここに委ねる。
     sanitized = " ".join(_strip_invisible(text).splitlines())
-    while True:
+    for _ in range(_MAX_SANITIZE_PASSES):
         replaced = _CONTEXT_FENCE_RE.sub("", sanitized)
         if replaced == sanitized:
             return sanitized
         sanitized = replaced
+    # ここに来るのは `<used_posts<used_posts>>` を何重にも入れ子にした
+    # 細工だけ。1 パスで 1 段しか解けないため入力長の 2 乗になる。
+    # 打ち切って `<` を落とせば、どのタグも二度と組み立てられない。
+    return sanitized.replace("<", " ")
 
 
 def build_user_text(message: str, context_posts: list[ContextPost] | None = None) -> str:
