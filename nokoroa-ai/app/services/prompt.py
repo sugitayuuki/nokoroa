@@ -5,6 +5,8 @@ Gemini / Claude の双方がここを参照する。特に `sanitize_context` �
 複製しない。複製すると片方だけ修正が漏れ、その経路から境界を破られる。
 """
 
+import unicodedata
+
 from app.schemas import ContextPost
 
 # AI に「本文で触れた投稿の id」を申告させるマーカー。本文としては表示しないので、
@@ -96,8 +98,6 @@ AIの回答: {ai_response}
 フォーマット: 質問1|質問2|質問3
 フォーマット以外のテキストは出力しないでください。"""
 
-# 取得した投稿に埋め込まれうる、ゼロ幅文字による指示の隠蔽を無効化する
-_CONTEXT_STRIP = str.maketrans({"\u200b": "", "\u200c": "", "\u200d": "", "\ufeff": ""})
 # データ柵の偽装に使われうる literal。固定点まで除去する。
 # used_posts 系は「本文で触れた投稿の id」をAIに申告させる制御マーカー
 # (routers/chat.py)。投稿側に書かれたものがそのまま届くと、復唱されたときに
@@ -111,6 +111,18 @@ _CONTEXT_LITERALS = (
 
 # プロンプトへ埋め込む投稿本文の長さ。全文を入れるとトークンを食うため要約的に切る。
 CONTEXT_CONTENT_PREVIEW = 600
+
+
+def _strip_invisible(text: str) -> str:
+    """不可視の書式文字 (Unicode カテゴリ Cf) を落とす。
+
+    ゼロ幅文字を個別に列挙すると漏れる。特に Tags ブロック (U+E0000-E007F) は
+    任意の ASCII を符号化でき、投稿画面でもモデレーション画面でも**完全に
+    不可視**のままプロンプトへ届く。soft hyphen を 1 文字ずつ挟む手も、
+    人間の目にも grep にも連続文字列に見える。
+    行区切りに効く Cc は splitlines 側で処理するので、ここでは扱わない。
+    """
+    return "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
 
 
 def sanitize_context(text: str) -> str:
@@ -128,7 +140,7 @@ def sanitize_context(text: str) -> str:
     # 他人の題名・投稿者名を結び付けられる (関連投稿カードの乗っ取りに直結する)。
     # splitlines は \n \r \v \f \x1c \x1d \x1e \x85 U+2028 U+2029 を境界として扱う。
     # 個別に列挙すると漏れた文字から同じ偽造が成立するため、ここに委ねる。
-    sanitized = " ".join(text.translate(_CONTEXT_STRIP).splitlines())
+    sanitized = " ".join(_strip_invisible(text).splitlines())
     while True:
         replaced = sanitized
         for literal in _CONTEXT_LITERALS:

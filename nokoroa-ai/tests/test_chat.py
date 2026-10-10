@@ -370,3 +370,46 @@ def test_stream_never_leaks_marker_however_it_is_split(client, auth, models, chu
     assert "used_posts>" not in body.split(":used_posts ")[0]
     assert "data: 回答です。" in body
     assert ':used_posts {"ids": [1, 2]}' in body
+
+
+@pytest.mark.parametrize(
+    ("name", "hidden"),
+    [
+        ("zero width space", "​"),
+        ("soft hyphen", "­"),
+        ("word joiner", "⁠"),
+        ("bidi override", "‮"),
+        # Tags ブロックは任意の ASCII を符号化でき、投稿画面でも
+        # モデレーション画面でも完全に不可視のままプロンプトへ届く
+        ("unicode tag", "\U000e0041"),
+    ],
+)
+def test_invisible_characters_are_stripped_from_context(client, auth, models, name, hidden):
+    """不可視の書式文字で注入文を隠せてはいけない。
+
+    個別列挙では漏れる (実測で 166 文字が素通ししていた) ため、
+    Unicode カテゴリ Cf で落としている。
+    """
+    evil = _post(content=f"ふつうの本文{hidden}です")
+    client.post(
+        "/api/chat/stream",
+        json={"message": "x", "context_posts": [evil]},
+        headers=auth,
+    )
+    prompt = "".join(models.prompts)
+
+    assert hidden not in prompt
+    assert "ふつうの本文です" in prompt
+
+
+def test_visible_text_survives_sanitizing(client, auth, models):
+    """無害化で通常の本文・絵文字を壊さない。"""
+    evil = _post(title="築地で出汁 🗼 Cafe", content="本文です")
+    client.post(
+        "/api/chat/stream",
+        json={"message": "x", "context_posts": [evil]},
+        headers=auth,
+    )
+    prompt = "".join(models.prompts)
+
+    assert "築地で出汁 🗼 Cafe" in prompt
