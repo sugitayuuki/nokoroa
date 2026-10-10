@@ -5,6 +5,7 @@ import { Response } from 'express';
 import { ChatService } from './chat.service';
 import { EmbeddingsService } from '../embeddings/embeddings.service';
 import { PostsService } from '../posts/posts.service';
+import { PrismaService } from '../prisma/prisma.service';
 
 describe('ChatService', () => {
   let service: ChatService;
@@ -16,6 +17,9 @@ describe('ChatService', () => {
   };
   const mockEmbeddings = {
     searchSimilar: jest.fn(),
+  };
+  const mockPrisma = {
+    $queryRaw: jest.fn(),
   };
   const mockConfig = {
     get: jest.fn((key: string) => {
@@ -32,11 +36,14 @@ describe('ChatService', () => {
         { provide: PostsService, useValue: mockPosts },
         { provide: EmbeddingsService, useValue: mockEmbeddings },
         { provide: ConfigService, useValue: mockConfig },
+        { provide: PrismaService, useValue: mockPrisma },
       ],
     }).compile();
     service = module.get<ChatService>(ChatService);
 
     jest.clearAllMocks();
+    // 投稿者の名指しが無い既定。名指しのテストだけが上書きする。
+    mockPrisma.$queryRaw.mockResolvedValue([]);
   });
 
   // res をそのまま expect に渡すと Response のメソッド型を unbound で参照して
@@ -336,6 +343,203 @@ describe('ChatService', () => {
     const init = chatStreamCall[1];
     expect(init.headers['X-Internal-Token']).toBe('test-token');
     expect(init.headers['Content-Type']).toBe('application/json');
+  });
+
+  // 「ピエールさんの投稿が見たい」に対し、本文は正しく2件を答えているのに
+  // 関連投稿カードには別人の投稿が並ぶ、という食い違いを防ぐ。
+  describe('投稿者を名指しした質問', () => {
+    /** related_posts の SSE イベントとして書き出された投稿を取り出す */
+    function relatedPostsFrom(write: jest.Mock): unknown[] | null {
+      for (const [chunk] of write.mock.calls) {
+        if (typeof chunk !== 'string') continue;
+        if (!chunk.startsWith('data: ')) continue;
+        const parsed = JSON.parse(chunk.slice('data: '.length)) as {
+          type?: string;
+          posts?: unknown[];
+        };
+        if (parsed.type === 'related_posts') return parsed.posts ?? [];
+      }
+      return null;
+    }
+
+    it('名指しされた投稿者の投稿だけに絞り、ベクトル検索を使わない', async () => {
+      mockPrisma.$queryRaw.mockResolvedValue([{ id: 7, name: 'ピエール' }]);
+      mockPosts.search.mockResolvedValue({
+        posts: [
+          {
+            id: 1,
+            title: '築地で出汁の材料を仕入れる朝',
+            content: 'C',
+            location: '築地場外市場',
+            author: { name: 'ピエール' },
+          },
+        ],
+        total: 1,
+        hasMore: false,
+      });
+      makeStreamFetch();
+
+      await service.streamChat(
+        { message: 'ピエールさんの投稿が見たい' },
+        makeRes().res,
+      );
+
+      expect(mockPosts.search).toHaveBeenCalledWith({
+        authorId: 7,
+        limit: 5,
+        offset: 0,
+      });
+      expect(mockEmbeddings.searchSimilar).not.toHaveBeenCalled();
+    });
+
+    it('敬称が無くても「〇〇の投稿」なら絞り込む', async () => {
+      mockPrisma.$queryRaw.mockResolvedValue([{ id: 3, name: 'アレックス' }]);
+      mockPosts.search.mockResolvedValue({
+        posts: [],
+        total: 0,
+        hasMore: false,
+      });
+      makeStreamFetch();
+
+      await service.streamChat(
+        { message: 'アレックスの投稿を教えて' },
+        makeRes().res,
+      );
+
+      expect(mockPosts.search).toHaveBeenCalledWith({
+        authorId: 3,
+        limit: 5,
+        offset: 0,
+      });
+    });
+
+    // ここで通常の検索へ落とすと、名指しされていない投稿者の投稿が
+    // カードに並ぶ(修正前の挙動そのもの)。
+    it('名指しされた投稿者の投稿が0件なら他人の投稿へ落とさない', async () => {
+      mockPrisma.$queryRaw.mockResolvedValue([{ id: 7, name: 'ピエール' }]);
+      mockPosts.search.mockResolvedValue({
+        posts: [],
+        total: 0,
+        hasMore: false,
+      });
+      makeStreamFetch();
+      const { res, write } = makeRes();
+
+      await service.streamChat({ message: 'ピエールさんの投稿' }, res);
+
+      expect(mockPosts.search).toHaveBeenCalledTimes(1);
+      expect(mockEmbeddings.searchSimilar).not.toHaveBeenCalled();
+      expect(relatedPostsFrom(write)).toBeNull();
+      const sent = JSON.parse(findStreamCall()[1].body) as {
+        context_posts: unknown[];
+      };
+      expect(sent.context_posts).toEqual([]);
+    });
+
+    it('投稿者名が本文に偶然含まれるだけなら絞り込まない', async () => {
+      // 利用者「築地」が居ても、「築地の投稿」ではなく地名としての用法。
+      mockPrisma.$queryRaw.mockResolvedValue([{ id: 5, name: '築地' }]);
+      mockEmbeddings.searchSimilar.mockResolvedValue([]);
+      mockPosts.search.mockResolvedValue({
+        posts: [],
+        total: 0,
+        hasMore: false,
+      });
+      makeStreamFetch();
+
+      await service.streamChat(
+        { message: '築地で寿司を食べた投稿' },
+        makeRes().res,
+      );
+
+      expect(mockEmbeddings.searchSimilar).toHaveBeenCalled();
+      expect(mockPosts.search).not.toHaveBeenCalledWith(
+        expect.objectContaining({ authorId: 5 }),
+      );
+    });
+
+    it('同名の別人が居る場合は絞り込まない', async () => {
+      mockPrisma.$queryRaw.mockResolvedValue([
+        { id: 7, name: 'ピエール' },
+        { id: 8, name: 'ピエール' },
+      ]);
+      mockEmbeddings.searchSimilar.mockResolvedValue([]);
+      mockPosts.search.mockResolvedValue({
+        posts: [],
+        total: 0,
+        hasMore: false,
+      });
+      makeStreamFetch();
+
+      await service.streamChat(
+        { message: 'ピエールさんの投稿' },
+        makeRes().res,
+      );
+
+      expect(mockEmbeddings.searchSimilar).toHaveBeenCalled();
+      // 著者で絞らず、通常のキーワード検索へ落ちている
+      expect(mockPosts.search).toHaveBeenCalledWith({
+        q: 'ピエールさんの投稿',
+        limit: 5,
+        offset: 0,
+      });
+    });
+
+    it('より長く一致する名前を優先する', async () => {
+      mockPrisma.$queryRaw.mockResolvedValue([
+        { id: 9, name: 'ピエール・デュボワ' },
+        { id: 7, name: 'ピエール' },
+      ]);
+      mockPosts.search.mockResolvedValue({
+        posts: [],
+        total: 0,
+        hasMore: false,
+      });
+      makeStreamFetch();
+
+      await service.streamChat(
+        { message: 'ピエール・デュボワさんの投稿' },
+        makeRes().res,
+      );
+
+      expect(mockPosts.search).toHaveBeenCalledWith({
+        authorId: 9,
+        limit: 5,
+        offset: 0,
+      });
+    });
+
+    it('投稿者解決が失敗しても通常の検索へフォールバックする', async () => {
+      mockPrisma.$queryRaw.mockRejectedValue(new Error('db down'));
+      mockEmbeddings.searchSimilar.mockResolvedValue([]);
+      mockPosts.search.mockResolvedValue({
+        posts: [],
+        total: 0,
+        hasMore: false,
+      });
+      makeStreamFetch();
+
+      await service.streamChat(
+        { message: 'ピエールさんの投稿' },
+        makeRes().res,
+      );
+
+      expect(mockEmbeddings.searchSimilar).toHaveBeenCalled();
+    });
+
+    it('投稿者を名指ししていない質問ではDBへ問い合わせない', async () => {
+      mockEmbeddings.searchSimilar.mockResolvedValue([]);
+      mockPosts.search.mockResolvedValue({
+        posts: [],
+        total: 0,
+        hasMore: false,
+      });
+      makeStreamFetch();
+
+      await service.streamChat({ message: '京都 2泊3日' }, makeRes().res);
+
+      expect(mockPrisma.$queryRaw).not.toHaveBeenCalled();
+    });
   });
 
   describe('クライアント切断時の後始末', () => {

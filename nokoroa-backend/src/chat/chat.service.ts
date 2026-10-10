@@ -4,6 +4,7 @@ import { Response } from 'express';
 import { EmbeddingsService } from '../embeddings/embeddings.service';
 import { FormattedPost } from '../posts/post-format';
 import { PostsService } from '../posts/posts.service';
+import { PrismaService } from '../prisma/prisma.service';
 import {
   ChatRequestDto,
   MAX_HISTORY_CONTENT_LENGTH,
@@ -33,6 +34,38 @@ const AI_STREAM_TIMEOUT_MS = 60_000;
 // 上限が無いと1リクエストで単語数ぶんのDB検索が直列実行される。
 const MAX_FALLBACK_KEYWORDS = 5;
 
+// 投稿者を名指しした質問かどうかの判定語。これが無い文でも利用者名は
+// 偶然含まれうる(地名と同じ名前など)ため、意図が明示されている場合に限って
+// 著者で絞り込む。
+const AUTHOR_SCOPE_INTENT = /投稿|記事|ポスト/;
+// 著者名の直後に来る語。「ピエールさんの投稿」の「さん」、
+// 「アレックスの投稿」の「の」にあたる。
+const AUTHOR_NAME_FOLLOWER = /^(?:さん|サン|くん|君|ちゃん|様|さま|氏|の)/;
+// 1文字の名前はどんな文にも偶然含まれるため、著者解決の対象から外す。
+const MIN_AUTHOR_NAME_LENGTH = 2;
+// メッセージに部分一致する利用者をDBから取り出す上限。
+const AUTHOR_CANDIDATE_LIMIT = 10;
+
+/**
+ * message 中に name が現れ、その直後が敬称または「の」であるかを判定する。
+ * 大小文字を無視するため、添字がずれないよう小文字化した側だけで走査する。
+ */
+function isAuthorReference(message: string, name: string): boolean {
+  const haystack = message.toLowerCase();
+  const needle = name.toLowerCase();
+  if (needle.length === 0) return false;
+
+  for (let from = 0; from <= haystack.length; ) {
+    const at = haystack.indexOf(needle, from);
+    if (at === -1) return false;
+    if (AUTHOR_NAME_FOLLOWER.test(haystack.slice(at + needle.length))) {
+      return true;
+    }
+    from = at + 1;
+  }
+  return false;
+}
+
 @Injectable()
 export class ChatService {
   private readonly logger = new Logger(ChatService.name);
@@ -43,6 +76,7 @@ export class ChatService {
     private configService: ConfigService,
     private postsService: PostsService,
     private embeddingsService: EmbeddingsService,
+    private prisma: PrismaService,
   ) {
     this.aiServiceUrl =
       this.configService.get<string>('AI_SERVICE_URL') ||
@@ -104,50 +138,73 @@ export class ChatService {
     let relatedPostsRaw: FormattedPost[] = [];
 
     try {
-      // ベクトル検索だけは外部の埋め込みAPIに依存する。ここの失敗を
-      // 外へ投げると、外部APIを一切使わない下のDB検索まで巻き添えで
-      // 飛ばされ、プロバイダ障害時に関連投稿が完全に出なくなる。
-      // ヒット0件と同じ扱いにしてフォールバックへ進ませる。
       let posts: FormattedPost[] = [];
+
+      // 「〇〇さんの投稿」と名指しされた場合は、その投稿者だけに絞る。
+      // 著者解決に失敗しても通常の検索は動くので、絞り込みなしで続行する。
+      let authorScope: { id: number; name: string } | null = null;
       try {
-        posts = await this.searchByVector(dto.message, 5);
+        authorScope = await this.resolveAuthorScope(dto.message);
       } catch (error) {
         this.logger.warn(
-          `Vector search unavailable, falling back to keyword search: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          `Author scope resolution failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
         );
       }
 
-      if (posts.length === 0) {
-        const searchResult = await this.postsService.search({
-          q: dto.message,
+      if (authorScope) {
+        // ヒット0件でも下の検索へ落とさない。落とすと、名指しされていない
+        // 投稿者の投稿が関連投稿カードに並び、名指しの意図を裏切る。
+        const byAuthor = await this.postsService.search({
+          authorId: authorScope.id,
           limit: 5,
           offset: 0,
         });
-        posts.push(...searchResult.posts);
-      }
+        posts = byAuthor.posts;
+      } else {
+        // ベクトル検索だけは外部の埋め込みAPIに依存する。ここの失敗を
+        // 外へ投げると、外部APIを一切使わない下のDB検索まで巻き添えで
+        // 飛ばされ、プロバイダ障害時に関連投稿が完全に出なくなる。
+        // ヒット0件と同じ扱いにしてフォールバックへ進ませる。
+        try {
+          posts = await this.searchByVector(dto.message, 5);
+        } catch (error) {
+          this.logger.warn(
+            `Vector search unavailable, falling back to keyword search: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          );
+        }
 
-      if (posts.length === 0) {
-        const allWords = dto.message
-          .split(/[\s\u3000,、。のはがをでにへともより]+/)
-          .filter((w) => w.length >= 2);
-        // 重複を除いたうえで上限まで。入力語数に比例してDB検索が増えるのを防ぐ。
-        const words = [...new Set(allWords)].slice(0, MAX_FALLBACK_KEYWORDS);
-        const seen = new Set<number>();
-        for (const word of words) {
-          const wordResult = await this.postsService.search({
-            q: word,
+        if (posts.length === 0) {
+          const searchResult = await this.postsService.search({
+            q: dto.message,
             limit: 5,
             offset: 0,
           });
-          for (const p of wordResult.posts) {
-            if (!seen.has(p.id)) {
-              seen.add(p.id);
-              posts.push(p);
-            }
-          }
-          if (posts.length >= 5) break;
+          posts.push(...searchResult.posts);
         }
-        if (posts.length > 5) posts.length = 5;
+
+        if (posts.length === 0) {
+          const allWords = dto.message
+            .split(/[\s\u3000,、。のはがをでにへともより]+/)
+            .filter((w) => w.length >= 2);
+          // 重複を除いたうえで上限まで。入力語数に比例してDB検索が増えるのを防ぐ。
+          const words = [...new Set(allWords)].slice(0, MAX_FALLBACK_KEYWORDS);
+          const seen = new Set<number>();
+          for (const word of words) {
+            const wordResult = await this.postsService.search({
+              q: word,
+              limit: 5,
+              offset: 0,
+            });
+            for (const p of wordResult.posts) {
+              if (!seen.has(p.id)) {
+                seen.add(p.id);
+                posts.push(p);
+              }
+            }
+            if (posts.length >= 5) break;
+          }
+          if (posts.length > 5) posts.length = 5;
+        }
       }
 
       if (posts.length > 0) {
@@ -261,6 +318,46 @@ export class ChatService {
       );
       return [];
     }
+  }
+
+  /**
+   * 「ピエールさんの投稿が見たい」のように投稿者を名指しした質問から、
+   * その投稿者を特定する。該当しなければ null(通常の検索へ戻す)。
+   *
+   * メッセージ全文を q として渡す既存の検索では author.name の部分一致が
+   * 成立しない(name contains 'ピエールさんの投稿が見たい' になる)。
+   * そのためここでは文から名前を切り出すのではなく、登録済みの name が
+   * メッセージに含まれるかをDB側で判定する(敬称の有無に依存しない)。
+   */
+  private async resolveAuthorScope(
+    message: string,
+  ): Promise<{ id: number; name: string } | null> {
+    if (!AUTHOR_SCOPE_INTENT.test(message)) return null;
+
+    // name は索引が無く %LIKE% も使えないため position() で走査する。
+    // message は DTO 側で 2000 文字に制限済み。
+    const candidates = await this.prisma.$queryRaw<
+      Array<{ id: number; name: string }>
+    >`
+      SELECT id, name FROM "user"
+      WHERE char_length(name) >= ${MIN_AUTHOR_NAME_LENGTH}
+        AND position(lower(name) in lower(${message})) > 0
+      ORDER BY char_length(name) DESC
+      LIMIT ${AUTHOR_CANDIDATE_LIMIT}
+    `;
+
+    const named = candidates.filter((user) =>
+      isAuthorReference(message, user.name),
+    );
+    if (named.length === 0) return null;
+
+    // 「ピエール」と「ピエール・デュボワ」が両方一致する場合は長い方が意図に近い。
+    const longest = Math.max(...named.map((user) => user.name.length));
+    const top = named.filter((user) => user.name.length === longest);
+
+    // 同名の別人が居る場合はどちらか決められない。誤った1人に絞るより、
+    // 絞り込みを諦めて通常の検索へ戻す方が害が小さい。
+    return top.length === 1 ? top[0] : null;
   }
 
   private async searchByVector(
