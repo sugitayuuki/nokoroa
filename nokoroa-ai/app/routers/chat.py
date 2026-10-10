@@ -13,7 +13,12 @@ from app.schemas import (
     FollowUpRequest,
     SuggestionsResponse,
 )
-from app.services.prompt import USED_POSTS_CLOSE, USED_POSTS_OPEN
+from app.services.prompt import (
+    USED_POSTS_CLOSE,
+    USED_POSTS_CLOSE_PATTERN,
+    USED_POSTS_OPEN,
+    USED_POSTS_OPEN_PATTERN,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -60,31 +65,26 @@ MAX_USED_POSTS = 10
 MAX_MARKER_BODY = 200
 _MAX_MARKER_SPAN = len(USED_POSTS_OPEN) + MAX_MARKER_BODY + len(USED_POSTS_CLOSE)
 
-# タグは空白混じり (`< used_posts >`) も許容する。抽出だけ厳格にすると、
-# 綴りが揺れたときに「タグは消えるが中身の id 列は本文として画面に出る」
-# という一番悪い形になる。
-_OPEN_PATTERN = r"<\s*used_posts\s*>"
-_CLOSE_PATTERN = r"<\s*/\s*used_posts\s*>"
-
 # 本文に触れた投稿の id をAIが申告するマーカー (prompt.py のガイドライン)。
 # 本文としては表示しないので、送出前にここで取り除く。
 # 中身を数字限定にしないのは、`[1,2]` や `id:1` のような書式ゆれで一致しなくなると
 # 上の「回答が消える」経路へ落ちるため。数字は後で取り出す。
 _USED_POSTS_RE = re.compile(
-    _OPEN_PATTERN + r"(.{0," + str(MAX_MARKER_BODY) + r"}?)" + _CLOSE_PATTERN,
+    USED_POSTS_OPEN_PATTERN + r"(.{0," + str(MAX_MARKER_BODY) + r"}?)" + USED_POSTS_CLOSE_PATTERN,
     re.DOTALL,
 )
 _DIGITS_RE = re.compile(r"\d+")
-# 閉じタグが来なかった申告。中身が id 列らしい範囲だけ捨てる。末尾に限定しない:
-# 限定すると `<used_posts>1,2` の後ろに本文が続いた場合に `1,2` だけが残り、
-# 回答に無関係な数字が画面に出る。
-_MARKER_IDS_RE = re.compile(_OPEN_PATTERN + r"[\d,、，\s]{0,40}")
+# 閉じタグが来なかった申告。中身が id 列らしい場合だけ、末尾のものを捨てる。
+# 末尾に限定するのは、`<used_posts>` の後ろが `2024年の話` のように数字で
+# 始まる本文だと、限定しないと本文を食ってしまうため。数字が少し残る見栄えより
+# 本文が黙って消える方が害が大きい。
+_MARKER_IDS_RE = re.compile(USED_POSTS_OPEN_PATTERN + r"[\d,、，\s]{0,40}$")
 # 単独で残った開きタグ / 閉じタグ。本文として画面に出さない。
-_MARKER_REMNANT_RE = re.compile(_OPEN_PATTERN + "|" + _CLOSE_PATTERN)
-# 開きタグの後ろが「まだ申告になりうる」形か。id 列、またはその後に続く
-# 閉じタグの断片だけを許す。これ以外が来たらマーカーではないので保留を解く
-# (解かないと、未閉鎖の開きタグ1つで以降の逐次配信が数百文字ぶん止まる)。
-_MARKER_PENDING_RE = re.compile(r"^[\d,、，\s]*(?:<[^>]{0,20}>?)?$")
+_MARKER_REMNANT_RE = re.compile(USED_POSTS_OPEN_PATTERN + "|" + USED_POSTS_CLOSE_PATTERN)
+# タグの一部だけが届いた状態 (`...本文<used_p` / `< used_po` / `</ used_p`)。
+# 表記ゆれを許容するパターンに合わせる。literal の接頭辞だけを見ると、空白入りの
+# タグが分割されて届いたときに吸収できず、マーカー全体が画面に漏れる。
+_MARKER_PREFIX_RE = re.compile(r"<[\s/]*[a-z_]{0,11}\s*$")
 # 開きタグの一部だけで終わった場合 (`...本文<used_p`) も本文として出さない。
 # 長い接頭辞から並べるのは、短い方が先に一致して残りが漏れるのを防ぐため。
 # 1 文字 ("<") を含めないのは、不等号で終わる本文の末尾を削ってしまうため。
@@ -125,26 +125,27 @@ def _safe_emit_length(pending: str) -> int:
     無条件に保持する方式は採らない)。
     """
     # 完全なマーカーは _extract_used_posts が除去済み。ここに残る開きタグは
-    # 閉じタグ待ち。ただし「中身が id 列として成立しなくなった」または
-    # 「マーカーにしては長くなった」時点で、閉じタグは来ないものと判断して
-    # 本文として流す (保持し続けると回答が出ず、逐次配信も止まる)。
-    opening = re.search(_OPEN_PATTERN, pending)
+    # 閉じタグ待ち。マーカーにしては長くなった時点で、閉じタグは来ないものと
+    # 判断して本文として流す (保持し続けると回答が出なくなる)。
+    #
+    # 中身の文字種では打ち切らない。打ち切ると `[1,2]` や `id:1` のような
+    # 書式ゆれで保留が早く解け、後から分割して届く閉じタグを再構成できず
+    # マーカー全体が画面に漏れる (実測で分割の 77% が破綻した)。
+    # 代償は「未閉鎖の開きタグが出たとき最大 _MAX_MARKER_SPAN 文字ぶん
+    # 逐次配信が遅れる」ことだが、漏れより軽いのでこちらに倒す。
+    opening = re.search(USED_POSTS_OPEN_PATTERN, pending)
     if opening is not None:
         after = pending[opening.end() :]
-        if len(after) <= _MAX_MARKER_SPAN and _MARKER_PENDING_RE.match(after):
-            return opening.start()
-        return len(pending)
+        return opening.start() if len(after) <= _MAX_MARKER_SPAN else len(pending)
 
-    # 開きタグの一部だけが届いている場合も、残りが来るまで送らない。
+    # タグの一部だけが届いている場合も、残りが来るまで送らない。
     # **1 文字の "<" も保留する。** 本番の claude 経路はトークン単位で delta を
     # 返すため "<" が単独チャンクになるのは普通に起きる。ここで送ってしまうと
     # 開きタグが本文として確定し、後続の "used_posts>1,2" が画面に漏れたうえ
     # 申告も失われる。「末尾の < を本文として残す」要件は、保留を解く最終
     # フラッシュ側 (_as_body) だけで満たす。
-    for length in range(min(len(USED_POSTS_OPEN) - 1, len(pending)), 0, -1):
-        if pending.endswith(USED_POSTS_OPEN[:length]):
-            return len(pending) - length
-    return len(pending)
+    prefix = _MARKER_PREFIX_RE.search(pending)
+    return prefix.start() if prefix is not None else len(pending)
 
 
 def _as_body(text: str) -> str:

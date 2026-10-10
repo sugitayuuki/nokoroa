@@ -5,6 +5,7 @@ Gemini / Claude の双方がここを参照する。特に `sanitize_context` �
 複製しない。複製すると片方だけ修正が漏れ、その経路から境界を破られる。
 """
 
+import re
 import unicodedata
 
 from app.schemas import ContextPost
@@ -15,6 +16,13 @@ from app.schemas import ContextPost
 # 同時に変更すること。
 USED_POSTS_OPEN = "<used_posts>"
 USED_POSTS_CLOSE = "</used_posts>"
+
+# タグの表記ゆれ (`< used_posts >`) を許容するパターン。routers/chat.py の抽出と
+# sanitize_context の除去で**同じものを使う**。抽出だけを緩めると、投稿側に
+# 書かれた緩い綴りのタグが無害化を素通りし、復唱されたときに正規の申告として
+# 採用される (= 制御マーカーの密輸)。許容度は常にサニタイズ >= 抽出に保つ。
+USED_POSTS_OPEN_PATTERN = r"<[\s]*used_posts[\s]*>"
+USED_POSTS_CLOSE_PATTERN = r"<[\s]*/[\s]*used_posts[\s]*>"
 
 
 def _build_system_prompt(freshness_role: str, freshness_guideline: str) -> str:
@@ -98,15 +106,21 @@ AIの回答: {ai_response}
 フォーマット: 質問1|質問2|質問3
 フォーマット以外のテキストは出力しないでください。"""
 
-# データ柵の偽装に使われうる literal。固定点まで除去する。
+# データ柵の偽装に使われうる文字列。固定点まで除去する。
 # used_posts 系は「本文で触れた投稿の id」をAIに申告させる制御マーカー
 # (routers/chat.py)。投稿側に書かれたものがそのまま届くと、復唱されたときに
 # 正規の申告として解釈されるため、柵の内側から取り除く。
-_CONTEXT_LITERALS = (
-    "<nokoroa_user_posts>",
-    "</nokoroa_user_posts>",
-    USED_POSTS_OPEN,
-    USED_POSTS_CLOSE,
+# マーカーは抽出側と同じパターンで消す (厳密 literal だけだと、緩い綴りが
+# 素通りして抽出側に拾われる)。
+_CONTEXT_FENCE_RE = re.compile(
+    "|".join(
+        (
+            re.escape("<nokoroa_user_posts>"),
+            re.escape("</nokoroa_user_posts>"),
+            USED_POSTS_OPEN_PATTERN,
+            USED_POSTS_CLOSE_PATTERN,
+        )
+    )
 )
 
 # プロンプトへ埋め込む投稿本文の長さ。全文を入れるとトークンを食うため要約的に切る。
@@ -142,9 +156,7 @@ def sanitize_context(text: str) -> str:
     # 個別に列挙すると漏れた文字から同じ偽造が成立するため、ここに委ねる。
     sanitized = " ".join(_strip_invisible(text).splitlines())
     while True:
-        replaced = sanitized
-        for literal in _CONTEXT_LITERALS:
-            replaced = replaced.replace(literal, "")
+        replaced = _CONTEXT_FENCE_RE.sub("", sanitized)
         if replaced == sanitized:
             return sanitized
         sanitized = replaced
