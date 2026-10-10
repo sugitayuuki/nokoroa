@@ -207,7 +207,21 @@ aws ecs describe-services --cluster nokoroa-prod-cluster \
 ## 既知の注意点
 
 - **アーキテクチャ**: ECSタスク定義はARM64。`--platform linux/amd64` でビルドすると起動しない
-- **フロントエンドヘルスチェック**: コンテナヘルスチェックは除去済み（ALBヘルスチェックのみ使用）
+- **フロントエンドヘルスチェック**: コンテナヘルスチェック（`curl -f http://localhost:3000/api/health`）は**存在する**。ALB のものと併用しており、除去はされていない
+- **`HOSTNAME` を frontend のタスク定義に必ず入れる**: Next.js standalone の `server.js` は bind アドレスに `process.env.HOSTNAME` をそのまま使う。Fargate はコンテナの `HOSTNAME` をタスクの内部 DNS 名（`ip-10-0-1-217.ap-northeast-1.compute.internal`）で埋めるため、**Dockerfile の `ENV HOSTNAME="0.0.0.0"` は上書きされて効かない**。すると ENI の IP にしか bind されず `127.0.0.1` では待ち受けないので、**ALB のヘルスチェック（タスク IP 宛）は通るのにコンテナのヘルスチェック（localhost 宛）だけが必ず失敗し、タスクが 2 分ごとに kill され続ける**。サイトは一応見えるため気づきにくい。切り分けはログの bind 先を見るのが速い:
+
+  ```bash
+  aws logs tail /ecs/nokoroa-prod/frontend --region ap-northeast-1 --since 10m --format short | grep -E 'Local:|Network:'
+  # 正常: http://0.0.0.0:3000 / 異常: http://ip-10-0-x-x.ap-northeast-1.compute.internal:3000
+  ```
+
+- **`ignore_changes = [task_definition]` のため Terraform の apply だけでは反映されない**: ECS サービスには `lifecycle { ignore_changes = [task_definition] }` が入っている。Terraform でタスク定義（環境変数・CPU/メモリ等）を変えると新リビジョンは登録されるが、**サービスは古いリビジョンを指したまま**になる。反映には明示的な更新が要る:
+
+  ```bash
+  aws ecs update-service --cluster nokoroa-prod-cluster --service nokoroa-prod-frontend \
+    --task-definition nokoroa-prod-frontend:<新リビジョン> --region ap-northeast-1
+  ```
+
 - **force-new-deployment だけでは不十分**: タスク定義のイメージタグが古い場合、新リビジョンを登録してからサービスを更新する必要がある
 
 ---
@@ -216,22 +230,21 @@ aws ecs describe-services --cluster nokoroa-prod-cluster \
 
 RAG機能のEmbeddingテーブルを使うには pgvector 拡張が必要。**初回のみ**以下の手順:
 
-### 1. パラメータグループ更新（Terraform 適用済みなら反映済み）
-```bash
-# shared_preload_libraries に "vector" 含まれているか確認
-aws rds describe-db-parameters \
-  --db-parameter-group-name nokoroa-prod-pg15-params \
-  --region ap-northeast-1 \
-  --query "Parameters[?ParameterName=='shared_preload_libraries']"
+### 1. パラメータグループの確認は不要（`vector` のプリロードは要らない）
+
+**`shared_preload_libraries` に `vector` を入れてはいけない。** pgvector は共有メモリもバックグラウンドワーカーも使わない通常の拡張で、プリロードせずに `CREATE EXTENSION vector;` だけで有効になる。RDS は許可リスト外の値を `ModifyDBParameterGroup` で拒否する（`InvalidParameterValue`）ため、指定すると**パラメータグループは作れるのに設定だけ失敗し、`terraform apply` が RDS の手前で止まる**。
+
+許可される値は次のとおり（`vector` は含まれない）:
+
+```
+auto_explain, orafce, pgaudit, pglogical, pg_bigm, pg_cron, pg_hint_plan,
+pg_prewarm, pg_similarity, pg_stat_statements, pg_tle, pg_transport,
+plprofiler, plrust
 ```
 
-### 2. RDS 再起動（pending-reboot 反映）
-```bash
-aws rds reboot-db-instance \
-  --db-instance-identifier nokoroa-prod-postgres \
-  --region ap-northeast-1
-# available 状態になるまで待機
-```
+### 2. RDS 再起動も不要
+
+プリロードを変更しないので `pending-reboot` の反映待ちは発生しない。
 
 ### 3. CREATE EXTENSION 実行
 RDS のマスターユーザーで実行（migration内では実行できないことがあるため）:

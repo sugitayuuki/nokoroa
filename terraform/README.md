@@ -51,10 +51,21 @@ CI が毎コミットで `terraform fmt -check` / `init` / `validate` を実行�
 | RDS の保持バックアップ | 下記参照 | `delete_automated_backups = false` のため、削除後も自動バックアップが保持期間ぶん残る |
 | VPC・サブネット・SG・IGW | $0 | NAT を置いていないため無料。消す理由がない |
 
-> **この表は新しい設計で「残すことにしたもの」であり、いま AWS 上に実在するものの一覧ではありません。**
-> 前回の停止はこの設計より前に行われたため、実際に残っているのは **ECR・S3・Secrets Manager の 3 つだけ**です（「既知の課題」参照）。VPC 一式は旧手順の `-target=module.vpc` で削除済み、最終スナップショットも当時は作られていません。したがって:
+> **この表は新しい設計で「残すことにしたもの」であり、いま AWS 上に実在するものの一覧とは一致しません。**
+> 2026-10-10 時点で AWS 上に実在するのは次のとおりです（実測）。VPC 一式は削除されておらず残っています:
 >
-> - **初回の再開は空の DB になります**（`db_snapshot_identifier` に渡せるスナップショットが存在しない）
+> - **VPC・サブネット 6・IGW・ルートテーブル・SG 3**（NAT と EIP は元から未作成）
+> - **ECR 2**（`nokoroa-backend` / `nokoroa-frontend`。`nokoroa-ai` だけ無かったので再作成した）
+> - **S3** `nokoroa-prod-uploads`、**DynamoDB** `terraform-state-lock`
+> - **Secrets Manager 2 件のみ**（`jwt-secret` / `db-password`。残り 5 件は存在せず、削除待ちも無い）
+> - **IAM ロール 2**、**ECS クラスタ**（サービスは 0）、**CloudWatch ロググループ 2**
+> - **Route 53 ホストゾーン**、**ACM 証明書**（ISSUED）、A レコード 2（削除済み ALB を指したまま残っていた）
+> - **RDS 最終スナップショット** `nokoroa-prod-postgres-final-20260510-1635`
+>
+> 一方 **RDS インスタンス・ALB・ECS サービスは存在しません**。したがって:
+>
+> - 復元元のスナップショットは**存在します**が、2026-05-10 のもので 14 件のマイグレーションより前の時点です。そのまま復元する場合は `prisma migrate deploy` で追いつかせる必要があります
+> - 保持自動バックアップは 0 件で、2026-09〜10 のサイクルのデータは残っていません
 > - 現在の実際の請求は、保持しているシークレットが 7 件に満たないため $5〜6 より低くなります
 
 `module "secrets"` と `module "s3"` に `count` を付けていないのは意図的です。シークレットを destroy すると `recovery_window_in_days` 既定の 30 日間削除待ちに入り、**同名のシークレットを 30 日間作り直せない = 次の再開ができなくなる**ためです。月 $2.80 を払って残す方が安く済みます。
@@ -149,7 +160,9 @@ DB パスワード・JWT シークレット・OAuth クライアントシーク�
 - Docker
 - ドメインが Route 53 で管理されている
 - Google OAuth のクライアント ID / シークレットを取得済み
-- Gemini API キーを取得済み
+- 使う AI プロバイダの API キーを取得済み（`chat_provider` / `embedding_provider` で選んだ分だけ。
+  既定の `gemini` なら Gemini、`claude` + `openai` の組み合わせなら Anthropic と OpenAI の 2 つ。
+  使わない鍵は空のままでよく、空にした分のシークレットは作成されない）
 
 ## 再構築の手順
 
@@ -163,16 +176,46 @@ DB パスワード・JWT シークレット・OAuth クライアントシーク�
 
 ### import する
 
-未 import のまま `apply` すると**確実に名前衝突で落ちるのは 14 件**です。これだけは先に取り込んでください。
+2026-10-10 の復旧で実際に取り込んだのは **35 件**です。**実在するものだけを import してください**（存在しないものを import しようとしても落ちるだけです）。下の表は実測値で、`-var runtime_enabled` の値がアドレスによって変わる点に注意してください。
+
+**`-var runtime_enabled=false` で取り込める分（26 件）**
 
 | state アドレス | 物理 ID |
 |---|---|
+| `aws_acm_certificate.main` | 証明書 ARN |
 | `aws_ecr_repository.backend` / `.frontend` / `.ai` | リポジトリ名（`nokoroa-backend` 等） |
+| `aws_ecr_lifecycle_policy.backend` / `.frontend` / `.ai` | リポジトリ名（同上） |
+| `aws_route53_record.cert_validation["nokoroa.com"]` / `["*.nokoroa.com"]` | `<zone>__<検証名>.nokoroa.com._CNAME`。**2 つとも同じ ID**（ACM が apex と wildcard に同一の検証レコードを返すため） |
 | `module.s3.aws_s3_bucket.uploads` | `nokoroa-prod-uploads` |
 | `module.s3.aws_s3_bucket.terraform_state[0]` | `nokoroa-terraform-state` |
 | `module.s3.aws_dynamodb_table.terraform_state_lock[0]` | `terraform-state-lock` |
 | `module.secrets.aws_secretsmanager_secret.{db_password,jwt_secret,database_url,google_client_id,google_client_secret,gemini_api_key,internal_api_key}` | **シークレット ARN**（末尾 6 文字のランダムサフィックス込み）。アドレスのリソース名は**アンダースコア**で、AWS 側の名前（`nokoroa-prod-db-password` 等）とは区切り文字が違う |
 | `module.secrets.aws_iam_policy.secrets_read` | `arn:aws:iam::<acct>:policy/nokoroa-prod-secrets-read` |
+| `module.vpc.aws_vpc.main` | `vpc-...` |
+| `module.vpc.aws_internet_gateway.main` | `igw-...` |
+| `module.vpc.aws_route_table.public` | `rtb-...`（メインルートテーブルではない方） |
+| `module.vpc.aws_subnet.public[0]` / `[1]`、`.private[0]` / `[1]`、`.database[0]` / `[1]` | `subnet-...`。**インデックスは CIDR の若い順**（public=10.0.0/1、private=10.0.10/11、database=10.0.20/21） |
+| `module.vpc.aws_route_table_association.public[0]` / `[1]` | `<subnet-id>/<rtb-id>` |
+| `module.vpc.aws_security_group.alb` / `.ecs` / `.rds` | `sg-...` |
+
+**`-var runtime_enabled=true` が必要な分（9 件、`[0]` 付き）**
+
+| state アドレス | 物理 ID |
+|---|---|
+| `module.rds[0].aws_db_subnet_group.main` | `nokoroa-prod-db-subnet-group` |
+| `module.rds[0].aws_db_parameter_group.main` | `nokoroa-prod-pg15-params` |
+| `module.ecs[0].aws_ecs_cluster.main` | `nokoroa-prod-cluster` |
+| `module.ecs[0].aws_cloudwatch_log_group.backend` / `.frontend` / `.ai` | `/ecs/nokoroa-prod/backend` 等 |
+| `module.ecs[0].aws_iam_role.ecs_task_execution` / `.ecs_task` | `nokoroa-prod-ecs-task-execution` / `nokoroa-prod-ecs-task` |
+| `aws_route53_record.alb[0]` / `.www[0]` | `<zone>_nokoroa.com_A` / `<zone>_www.nokoroa.com_A` |
+
+> **`[0]` 付きを import したら、以後 `-var runtime_enabled=false` の apply は打てません。** `module.ecs[0]` / `module.rds[0]` が構成から消えるため、取り込んだ ECS クラスタ・IAM ロール・ロググループ・DB サブネットグループ・パラメータグループ・A レコードが**まとめて destroy 対象になります**。
+>
+> このため「[2. インフラを作成する](#2-インフラを作成する)」の「1 回目は `false`」は、`[0]` 付きを import したあとには**そのまま使えません**。イメージの push 先さえ揃えばよいので、足りない ECR だけを対象指定で作り、残りは `runtime_enabled=true` の apply で一度に収束させてください。
+>
+> ```bash
+> terraform apply -var runtime_enabled=false -target=aws_ecr_repository.ai -target=aws_ecr_lifecycle_policy.ai
+> ```
 
 シークレットの ARN は名前からは組み立てられません。上の一覧コマンドに `ARN` を足して取得してください。
 
@@ -272,19 +315,40 @@ terraform apply -var runtime_enabled=false
 
 タスク定義は 2 つです。backend タスクが `backend` と `ai` の 2 コンテナ（AI をサイドカーとして同居）、frontend タスクが 1 コンテナという構成です。backend コンテナは `ai` コンテナが healthy になるまで起動しないため、**AI イメージの push は必須**です。
 
+**このブロックは `bash` で実行してください。** zsh は `"$URL:latest"` の `:l` を「小文字化」の修飾子として解釈するため、タグが `nokoroa-backendatest` のような別名になります。ビルドもプッシュも成功してしまい、気づくのは ECS が `:latest` を引けずに `CannotPullContainerError` を出したときです。
+
 ```bash
 REGION=ap-northeast-1
 REGISTRY=$(terraform output -raw ecr_backend_repository_url | cut -d/ -f1)
 aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "$REGISTRY"
 
-for svc in backend frontend ai; do
+# NEXT_PUBLIC_* は frontend だけに渡す。値は .github/workflows/deploy.yml と揃えること。
+FE_ARGS=(
+  --build-arg "NEXT_PUBLIC_API_URL=https://nokoroa.com"
+  --build-arg "NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=${GOOGLE_MAPS_API_KEY:?Maps キーを環境変数で渡すこと}"
+)
+
+for svc in backend ai frontend; do
   URL=$(terraform output -raw "ecr_${svc}_repository_url")
-  docker build --platform linux/arm64 -t "$URL:latest" "../../../nokoroa-${svc}"
-  docker push "$URL:latest"
+  if [ "$svc" = frontend ]; then
+    docker build --platform linux/arm64 "${FE_ARGS[@]}" -t "${URL}:latest" "../../../nokoroa-${svc}"
+  else
+    docker build --platform linux/arm64 -t "${URL}:latest" "../../../nokoroa-${svc}"
+  fi
+  docker push "${URL}:latest"
 done
 ```
 
 ECS タスクは ARM64（Fargate Graviton）で動くため、`--platform linux/arm64` を指定します。
+
+> **frontend の `--build-arg` は省略できません。** `NEXT_PUBLIC_*` は Next.js が**ビルド時にバンドルへ埋め込む**ので、ECS のタスク定義に環境変数を足しても上書きできません（だから Terraform 側は意図的に持っていません）。渡さずにビルドすると `src/lib/apiConfig.ts` のフォールバックが効き、**本番のブラウザが `http://localhost:4000/api` を叩くフロントエンド**が出来上がります。ALB も ECS も healthy のまま通るため、plan にもログにも出ません。
+>
+> 焼き込まれたか確認するには、イメージの中を直接見ます。
+>
+> ```bash
+> docker run --rm --entrypoint sh "${URL}:latest" -c \
+>   "grep -rhoE 'https://nokoroa\.com' .next/static | head -1"
+> ```
 
 ### 4. イメージを指定して再度 apply する
 
@@ -597,7 +661,18 @@ aws rds delete-db-snapshot --db-snapshot-identifier <古い名前>
 
 ## 既知の課題
 
-- **state が S3 に置かれていない**: `versions.tf` の S3 backend がコメントアウトされたままで、state はローカル管理です。保管先のバケットと DynamoDB ロックテーブルは `modules/s3` に定義済みですが、state を置くバケット自身を同じ設定で作る循環があるため、ブートストラップを分ける必要があります。
-- **残しているリソースが state に載っていない**: AWS 上に実在する ECR・S3・Secrets Manager が、現在の state には記録されていません。このため今のまま `terraform apply` を実行すると、ECR・S3・Secrets Manager が既存と衝突します。再構築の前に `terraform import` で state に取り込む必要があります。Secrets Manager は削除待ち中のものが混ざりうるため、`import` の前に `list-secrets --include-planned-deletion` で状態を確認してください（削除待ちのものは `import` できず、`restore-secret` か待機満了が必要です）。
+- **state バケットのブートストラップが手作業**: `versions.tf` の S3 backend は有効ですが、参照先の `nokoroa-terraform-state` を作るのは `modules/s3` 自身で、state を置くバケットを state 管理下で作る循環があります。バケットが無い状態では `terraform init` が通らないため、**先に CLI でバケットを作ってから `init` → `import` する**必要があります（2026-10-10 にこの手順で復旧しました。DynamoDB ロックテーブルは残っていたので作成不要でした）。
+
+  ```bash
+  B=nokoroa-terraform-state; R=ap-northeast-1
+  aws s3api create-bucket --bucket $B --region $R --create-bucket-configuration LocationConstraint=$R
+  aws s3api put-bucket-versioning --bucket $B --versioning-configuration Status=Enabled
+  aws s3api put-bucket-encryption --bucket $B --server-side-encryption-configuration \
+    '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
+  aws s3api put-public-access-block --bucket $B --public-access-block-configuration \
+    BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+  ```
+
+- **残しているリソースが state に載っていない**: 停止中も AWS に残るリソースは state に記録されません。このまま `terraform apply` すると名前の衝突で落ちるため、再構築の前に `terraform import` が必要です。実測した全量は「[import する](#import-する)」の表を参照してください。Secrets Manager は削除待ち中のものが混ざりうるため、`import` の前に `list-secrets --include-planned-deletion` で状態を確認してください（削除待ちのものは `import` できず、`restore-secret` か待機満了が必要です）。
 - **変数の `validation` がほぼ未設定**: 101 個の変数すべてに `description` と `type` はありますが、値域の検証が入っているのは `final_snapshot_identifier`（AWS の識別子規則）の 1 個だけです。
 - **`import` 後に周辺設定が残る**: 「[import する](#import-する)」に必須 14 件の対応表を載せていますが、`modules/s3` の周辺設定（バージョニング・暗号化・CORS・ポリシー）は任意扱いで、`import` せず apply で上書きさせる前提です。state とクラウドの対応が完全に一致した状態にはなりません。
