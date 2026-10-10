@@ -176,23 +176,46 @@ curl -sfI https://nokoroa.example.com/ | head -1
 
 ---
 
-## ECS起動・停止
+## 本番の停止・再開
 
-### 起動（desired count を 1 に）
+**コスト削減が目的なら `/infra-teardown` と `/infra-rebuild` を使う。このスキルではない。**
+
+| やりたいこと | 使うもの |
+|---|---|
+| 課金を止める（使わない期間） | **`/infra-teardown`** |
+| 止めた環境を戻す | **`/infra-rebuild`** |
+| 稼働中にコードを反映する | このスキルの Phase 1〜8 |
+
+実体は Terraform の `runtime_enabled` 1 変数で、ALB・ECS・RDS・A レコードをまとめて落とす。
+手順・落とし穴・サイクル変数の扱いは `terraform/README.md` の「停止と再開」にある。
 
 ```bash
-aws ecs update-service --cluster nokoroa-prod-cluster --service nokoroa-prod-backend --desired-count 1 --force-new-deployment --region ap-northeast-1
-aws ecs update-service --cluster nokoroa-prod-cluster --service nokoroa-prod-frontend --desired-count 1 --force-new-deployment --region ap-northeast-1
+cd terraform/envs/prod
+terraform apply -var runtime_enabled=false   # 停止（最終スナップショットは自動取得）
+terraform apply -var runtime_enabled=true    # 再開
 ```
 
-### 停止（desired count を 0 に）
+素で叩かず `/infra-teardown` 経由にするのは、退避経路の確認（**config ではなく state を見る**）、
+スナップショット名の衝突回避、削除待ち 30 日に入ると次の再開ができなくなるシークレットの除外、
+引き継ぎ記録の作成を、このスキルが持っていないため。
+
+### ⚠️ `--desired-count 0` は「停止」ではない
+
+かつてここに desired count を 0 にする手順を載せていたが、**コスト削減にはならない**。
+
+- 消えるのは Fargate のタスクだけで、**ALB と RDS は課金され続ける**
+  （1 日 $2.70 のうち止まるのは約 $0.89。残り $1.3 前後 = 月 $40 前後が継続する）
+- **最終スナップショットが取られない**ので、サイクル運用の前提が成立しない
+- ECS サービス・タスク定義・ロググループは残るため、`runtime_enabled=false` との併用も意味がない
+
+タスクだけ一時的に落としたい場合（デバッグ等）に限って使う。
 
 ```bash
 aws ecs update-service --cluster nokoroa-prod-cluster --service nokoroa-prod-backend --desired-count 0 --region ap-northeast-1
 aws ecs update-service --cluster nokoroa-prod-cluster --service nokoroa-prod-frontend --desired-count 0 --region ap-northeast-1
 ```
 
-### 停止確認
+### 状態確認
 
 ```bash
 aws ecs list-tasks --cluster nokoroa-prod-cluster --region ap-northeast-1
@@ -201,6 +224,9 @@ aws ecs describe-services --cluster nokoroa-prod-cluster \
   --region ap-northeast-1 \
   --query 'services[*].{name:serviceName,running:runningCount,desired:desiredCount}'
 ```
+
+停止中はクラスタごと存在しないため、上のコマンドは `ClusterNotFoundException` になる。
+これは異常ではなく「完全に停止できている」ことの確認になる。
 
 ---
 
