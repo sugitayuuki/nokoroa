@@ -74,7 +74,17 @@ CI が毎コミットで `terraform fmt -check` / `init` / `validate` を実行�
 
 **保持バックアップは停止のたびに積み上がります。** `delete_automated_backups = false` にしているため、インスタンス削除後も自動バックアップが「retained automated backup」として `backup_retention_period`（現在 **14 日**）ぶん残ります。バックアップストレージの無料枠は**稼働中のインスタンスのプロビジョンドストレージ**に基づくため、インスタンスを削除した停止中は無料枠が効かず、保持バックアップも最終スナップショットも 1GB 目から $0.095/GB 月で課金されます。頻繁に停止・再開するとサイクルごとの保持分が重なるため、**サイクルを回す運用では `backup_retention_period` を 1〜7 に落とす方が合理的です**（1 日稼働では 14 日分の保持がそもそも成立しません）。リージョンあたりの保持バックアップ数にも上限があります。
 
-この表に載っていない課金もあります。`enabled_cloudwatch_logs_exports` によって AWS が作る `/aws/rds/instance/nokoroa-prod-postgres/postgresql` は Terraform の管理外・保持期間無期限で、停止しても残り続けます。
+この表に載っていない課金もあります。`enabled_cloudwatch_logs_exports` によって AWS が作る `/aws/rds/instance/nokoroa-prod-postgres/postgresql` は **Terraform の管理外**で、停止しても残り続けます。既定では保持期間が無期限なので、サイクルを回すたびに積み上がります。
+
+2026-10-10 に **30 日**へ設定しました（ECS のロググループと同じ）。ロググループを削除しない限り設定は残るため、RDS を作り直しても再設定は不要です。逆に**ロググループごと消すと、次に AWS が作り直したとき無期限へ戻ります**。
+
+```bash
+aws logs put-retention-policy \
+  --log-group-name /aws/rds/instance/nokoroa-prod-postgres/postgresql \
+  --retention-in-days 30 --region ap-northeast-1
+```
+
+同じ理由で `/aws/rds/instance/nokoroa-dev-postgres/postgresql` が孤児として残っていました（`envs/dev` は未実装で、インスタンスは既に存在しない）。2026-10-10 に削除済みです。
 
 `modules/secrets` が定義しているシークレットは **7 件**です（`db-password`(現在アプリからは未消費。接続は `database-url` を使用) / `jwt-secret` / `database-url` / `google-client-id` / `google-client-secret` / `gemini-api-key` / `internal-api-key`）。**過去の停止（`-target=module.rds` を指定した destroy）は、依存側としてこの 7 件を巻き込んで削除しました。** `recovery_window_in_days` を明示していないため既定の **30 日間の削除待ち**に入り、待機中も課金対象として残ります。請求上「2 件分」しか見えていないのは、残りが削除待ち期間を終えて消えた後の状態と考えられます（AWS 上の実数は未確認）。`runtime_enabled` を導入した現在はシークレットを destroy 対象に含めないため、この巻き込みは再発しません。
 
