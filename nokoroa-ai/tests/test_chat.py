@@ -4,6 +4,8 @@ import threading
 
 import pytest
 
+from app.routers.chat import DONE_SENTINEL
+
 MAIN_THREAD = threading.current_thread().name
 
 
@@ -166,12 +168,28 @@ def test_stream_keeps_body_when_marker_is_never_closed(client, auth, models):
     assert "used_posts>" not in body
 
 
+def _answer_text(body: str) -> str:
+    """SSE の本文イベントを連結して、画面に出る文字列を組み立てる。
+
+    開きタグになりうる末尾は保留されるため、1 つの文が複数イベントに割れる。
+    フレーム単位で assert すると、本文が保たれていても落ちる。
+    """
+    text = ""
+    for frame in body.split("\n\n"):
+        data = "\n".join(
+            line[len("data: ") :] for line in frame.split("\n") if line.startswith("data: ")
+        )
+        if data and data != DONE_SENTINEL and not data.startswith("[ERROR]"):
+            text += data
+    return text
+
+
 def test_stream_keeps_trailing_angle_bracket(client, auth, models):
     """不等号で終わる本文の末尾を、マーカー断片と誤認して削らない。"""
     models.stream_chunks = ["不等号の説明: a <"]
     body = client.post("/api/chat/stream", json={"message": "x"}, headers=auth).text
 
-    assert "data: 不等号の説明: a <" in body
+    assert _answer_text(body) == "不等号の説明: a <"
 
 
 def test_stream_uses_last_marker_only(client, auth, models):
@@ -296,3 +314,23 @@ def test_candidate_row_cannot_be_split_by_any_line_separator(client, auth, model
 
     candidate_lines = [line for line in prompt.splitlines() if line.startswith("- [id:")]
     assert len(candidate_lines) == 1
+
+
+@pytest.mark.parametrize(
+    "chunks",
+    [
+        # 本番の claude 経路はトークン単位で delta を返すので、開きタグが
+        # 1 文字ずつ割れて届くのは普通に起きる
+        ["回答です。", "<", "used", "_posts", ">", "1", ",", "2", "</", "used", "_posts", ">"],
+        ["回答です。<", "used_posts>1,2</used_posts>"],
+        ["回答です。<u", "sed_posts>1,2</used_posts>"],
+        ["回答です。", "<used_posts>1,2</used_posts>"],
+    ],
+)
+def test_stream_never_leaks_marker_however_it_is_split(client, auth, models, chunks):
+    models.stream_chunks = chunks
+    body = client.post("/api/chat/stream", json={"message": "x"}, headers=auth).text
+
+    assert "used_posts>" not in body.split(":used_posts ")[0]
+    assert "data: 回答です。" in body
+    assert ':used_posts {"ids": [1, 2]}' in body

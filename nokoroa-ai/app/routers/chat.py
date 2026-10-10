@@ -125,7 +125,12 @@ def _safe_emit_length(pending: str) -> int:
         return opened if len(pending) - opened <= _MAX_MARKER_SPAN else len(pending)
 
     # 開きタグの一部だけが届いている場合も、残りが来るまで送らない。
-    for length in range(min(len(USED_POSTS_OPEN) - 1, len(pending)), 1, -1):
+    # **1 文字の "<" も保留する。** 本番の claude 経路はトークン単位で delta を
+    # 返すため "<" が単独チャンクになるのは普通に起きる。ここで送ってしまうと
+    # 開きタグが本文として確定し、後続の "used_posts>1,2" が画面に漏れたうえ
+    # 申告も失われる。「末尾の < を本文として残す」要件は、保留を解く最終
+    # フラッシュ側 (_as_body) だけで満たす。
+    for length in range(min(len(USED_POSTS_OPEN) - 1, len(pending)), 0, -1):
         if pending.endswith(USED_POSTS_OPEN[:length]):
             return len(pending) - length
     return len(pending)

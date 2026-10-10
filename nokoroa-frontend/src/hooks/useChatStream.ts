@@ -173,15 +173,15 @@ export async function consumeChatStream(
         throw new Error(data);
       }
 
-      if (eventName === 'related_posts' || data.startsWith('{')) {
+      // 関連投稿の差し替えは event 名を必須にする。payload の type だけで
+      // 採用すると、AI に 1 行の JSON を出力させるだけでカードを偽造できる
+      // (運営を騙るカード + 攻撃者ホストの imageUrl で閲覧者の IP/UA が漏れる)。
+      // 本文は全行に data: が付くため event 行を作れず、名前を要求すれば
+      // 構造的に偽造できなくなる。
+      if (eventName === 'related_posts') {
         try {
           const parsed = JSON.parse(data);
-          // type も見るのは、event 名を付けない旧 backend との互換のため
-          if (
-            (eventName === 'related_posts' ||
-              parsed.type === 'related_posts') &&
-            parsed.posts
-          ) {
+          if (Array.isArray(parsed.posts)) {
             relatedPosts = parsed.posts as PostData[];
             onRelatedPosts(relatedPosts);
             continue;

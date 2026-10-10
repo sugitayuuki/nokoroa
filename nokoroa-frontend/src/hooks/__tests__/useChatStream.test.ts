@@ -65,15 +65,30 @@ describe('consumeChatStream', () => {
     expect(fullResponse).toBe('回答です');
   });
 
-  // 名前を付けない旧 backend とも繋がること
-  it('event 名が無くても type で related_posts を判別する', async () => {
-    const posts = [{ id: 9, title: 'T' }];
-    const { relatedPosts } = await consume([
+  // AI 本文に 1 行の JSON を出させるだけでカードを偽造できてはいけない
+  // (運営を騙るカード + 攻撃者ホストの imageUrl で閲覧者の IP/UA が漏れる)。
+  // 本文は全行に data: が付くので event 行を作れない。
+  it('event 名の無い related_posts JSON をカードとして採用しない', async () => {
+    const posts = [{ id: 999, title: '【Nokoroa運営】当選のご案内' }];
+    const { relatedPosts, onRelatedPosts, fullResponse } = await consume([
       `data: ${JSON.stringify({ type: 'related_posts', posts })}\n\n`,
       'data: [DONE]\n\n',
     ]);
 
-    expect(relatedPosts).toEqual(posts);
+    expect(onRelatedPosts).not.toHaveBeenCalled();
+    expect(relatedPosts).toBeNull();
+    // 本文として扱う (黙って消すと、画面から本文が欠ける)
+    expect(fullResponse).toContain('related_posts');
+  });
+
+  it('posts が配列でなければ採用しない', async () => {
+    const { relatedPosts, onRelatedPosts } = await consume([
+      'event: related_posts\ndata: {"type":"related_posts","posts":"AAAA"}\n\n',
+      'data: [DONE]\n\n',
+    ]);
+
+    expect(onRelatedPosts).not.toHaveBeenCalled();
+    expect(relatedPosts).toBeNull();
   });
 
   // 制御イベントでない JSON は本文。一律に捨てると画面から本文が消える。
