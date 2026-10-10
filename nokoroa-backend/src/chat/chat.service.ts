@@ -39,28 +39,30 @@ const MAX_FRAME_BUFFER_CHARS = 100_000;
 // 上流が壊れて大量に送ってきても、こちらで抱え込まないための歯止め。
 const MAX_USED_POSTS = 10;
 
+// AIサービスが「本文で触れた投稿」を申告するコメント行。
+// 値を変える場合は nokoroa-ai/app/routers/chat.py と同時に変更すること。
+const USED_POSTS_COMMENT = ':used_posts ';
+
 /**
- * AIサービスが「本文で触れた投稿」として申告した id を、SSE の1イベントから
- * 取り出す。形式は nokoroa-ai/app/routers/chat.py の used_posts イベント。
+ * AIサービスが申告した id を、SSE の1イベントから取り出す。
  *
- * **`event: used_posts` の行を必須にする。** 生成テキストは全行に `data: ` が
- * 付くため event 行を作れず、本文が申告イベントを名乗ることが構造的にできない。
- * JSON の中身だけで判定すると、AIが本文として同じ JSON を1行出力しただけで
- * 正規の申告とバイト列が一致してしまい、カードの選択を本文経由で操作できる。
+ * 申告は**コメント行**(`:` 始まり)で届く。生成テキストは全行に `data: ` が
+ * 付くため、本文が申告を名乗ることが構造的にできない。`data:` に載せて
+ * JSON の中身だけで判定すると、AIが本文として同じ JSON を1行出しただけで
+ * 正規の申告とバイト列が一致し、カードの選択を本文経由で操作できてしまう。
+ * コメント行はどのクライアントも本文として扱わないため、旧い frontend にも
+ * 生の JSON が表示されない。
  */
 function usedPostIdsOf(event: string): number[] {
-  const lines = event.split('\n');
-  if (!lines.some((line) => line === 'event: used_posts')) return [];
-
-  // SSEは1イベントが複数の data: 行を持ちうる。仕様どおり改行で結合する。
-  const data = lines
-    .filter((line) => line.startsWith('data: '))
-    .map((line) => line.slice(6))
-    .join('\n');
-  if (data.length === 0) return [];
+  const line = event
+    .split('\n')
+    .find((candidate) => candidate.startsWith(USED_POSTS_COMMENT));
+  if (line === undefined) return [];
 
   try {
-    const parsed = JSON.parse(data) as { ids?: unknown };
+    const parsed = JSON.parse(line.slice(USED_POSTS_COMMENT.length)) as {
+      ids?: unknown;
+    };
     if (!Array.isArray(parsed.ids)) return [];
     return parsed.ids
       .filter((id): id is number => Number.isInteger(id))
@@ -273,6 +275,13 @@ export class ChatService {
         if (res.destroyed) break;
         res.write(Buffer.from(value));
         collectUsedPosts(value);
+      }
+      // 最後のイベントが空行で閉じずに終わった場合 (接続断など) の取りこぼし。
+      // 捨てると、本文は特定の投稿だけを語っているのにカードは全件、という
+      // 食い違いになる。
+      const lastIds = usedPostIdsOf(frameBuffer + decoder.decode());
+      if (lastIds.length > 0) {
+        usedPostIds.splice(0, usedPostIds.length, ...lastIds);
       }
 
       if (relatedPostsRaw.length > 0 && !res.destroyed) {

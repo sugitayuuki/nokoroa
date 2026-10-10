@@ -26,22 +26,30 @@ router = APIRouter(dependencies=[Depends(verify_internal_token)])
 DONE_SENTINEL = "[DONE]"
 ERROR_SENTINEL = "[ERROR] chat stream failed"
 
+# backend が関連投稿カードを絞るのに使うコメント行の名前。
+# 値を変える場合は nokoroa-backend/src/chat/chat.service.ts と同時に変更すること。
+USED_POSTS_COMMENT = "used_posts"
 
-def _sse_event(payload: str, event: str | None = None) -> str:
+
+def _sse_event(payload: str) -> str:
     """SSEの1イベントとして送出する。
 
     SSEはイベント内の各行に data: を必要とする。生成テキストには改行が含まれる
     ため、そのまま流すとクライアント側のイベント分割で本文が欠落する。
-
-    制御イベントには event 名を付ける。本文は全行に data: が付くので
-    event: 行を作れず、本文が制御イベントを名乗ることが構造的にできなくなる
-    (名前が無いと「本文がたまたま制御イベントと同じ JSON だった」場合に
-    区別できない)。
     """
     body = "\n".join(f"data: {line}" for line in payload.split("\n"))
-    if event is None:
-        return f"{body}\n\n"
-    return f"event: {event}\n{body}\n\n"
+    return f"{body}\n\n"
+
+
+def _sse_comment(name: str, payload: str) -> str:
+    """backend 向けの制御情報を、SSE のコメント行として送出する。
+
+    コメント行 (`:` 始まり) は data 行を持たないので、仕様上どのクライアントも
+    本文として扱わない。これにより (1) 旧い frontend にも生の JSON が表示されず、
+    (2) 生成テキストは全行に `data: ` が付くため、本文が制御情報を名乗ることが
+    構造的に不可能になる。
+    """
+    return f":{name} {payload}\n\n"
 
 
 # 申告された id の採用上限。候補は MAX_CONTEXT_POSTS 件なのでそれ以上は壊れた出力。
@@ -65,8 +73,11 @@ _USED_POSTS_RE = re.compile(
     re.DOTALL,
 )
 _DIGITS_RE = re.compile(r"\d+")
+# 末尾に残った、閉じタグの来なかった申告。中身が id 列らしい場合だけ捨てる。
+_MARKER_TAIL_RE = re.compile(re.escape(USED_POSTS_OPEN) + r"[\d,、，\s]{0,40}$")
 # 単独で残った開きタグ / 閉じタグ。本文として画面に出さない。
-_MARKER_REMNANT_RE = re.compile("|".join(re.escape(t) for t in (USED_POSTS_OPEN, USED_POSTS_CLOSE)))
+# 空白混じり (`< used_posts >`) も拾う。綴りが揺れた分だけ漏れるのを防ぐ。
+_MARKER_REMNANT_RE = re.compile(r"<\s*/?\s*used_posts\s*>")
 # 開きタグの一部だけで終わった場合 (`...本文<used_p`) も本文として出さない。
 # 長い接頭辞から並べるのは、短い方が先に一致して残りが漏れるのを防ぐため。
 # 1 文字 ("<") を含めないのは、不等号で終わる本文の末尾を削ってしまうため。
@@ -77,22 +88,25 @@ _USED_POSTS_PARTIAL_RE = re.compile(
 )
 
 
-def _extract_used_posts(text: str) -> tuple[str, list[int]]:
+def _extract_used_posts(text: str) -> tuple[str, list[int] | None]:
     """本文からマーカーを取り除き、申告された id を返す。
+
+    マーカーが無ければ None。「マーカーはあったが id が無い」(= 該当なしの申告)と
+    区別できないと、途中の申告を末尾で撤回できなくなる。
 
     マーカーが複数あれば最後のものだけを採る。投稿本文の復唱などで本文途中に
     マーカーが現れても、末尾の正規の申告に上書きされるようにするため。
     """
-    ids: list[int] = []
+    declared: list[int] | None = None
 
     def collect(match: re.Match[str]) -> str:
-        ids.clear()
+        nonlocal declared
         # 全角数字でも拾えるよう NFKC で寄せてから数字列を取り出す
         normalized = unicodedata.normalize("NFKC", match.group(1))
-        ids.extend(int(n) for n in _DIGITS_RE.findall(normalized)[:MAX_USED_POSTS])
+        declared = [int(n) for n in _DIGITS_RE.findall(normalized)[:MAX_USED_POSTS]]
         return ""
 
-    return _USED_POSTS_RE.sub(collect, text), ids
+    return _USED_POSTS_RE.sub(collect, text), declared
 
 
 def _safe_emit_length(pending: str) -> int:
@@ -118,13 +132,14 @@ def _safe_emit_length(pending: str) -> int:
 
 
 def _as_body(text: str) -> str:
-    """送出するテキストからマーカーの残骸を落とす。"""
-    # 閉じタグが来ないまま終わった開きタグ。マーカーとして妥当な長さのときだけ
-    # 捨てる (長いものは本文なので残す)。
-    opened = text.find(USED_POSTS_OPEN)
-    if opened != -1 and len(text) - opened <= _MAX_MARKER_SPAN:
-        text = text[:opened]
-    return _USED_POSTS_PARTIAL_RE.sub("", _MARKER_REMNANT_RE.sub("", text))
+    """送出するテキストからマーカーの残骸を落とす。
+
+    捨てるのは「末尾に残った、閉じタグの来なかった申告」だけにする。開きタグ以降を
+    一律に捨てると、閉じタグが落ちた(max_tokens での打ち切り・上流切断)ときに
+    回答の残りが丸ごと消え、利用者には理由不明の尻切れに見える。
+    タグの文字列は隠し、中身は本文として残す側に倒す。
+    """
+    return _USED_POSTS_PARTIAL_RE.sub("", _MARKER_REMNANT_RE.sub("", _MARKER_TAIL_RE.sub("", text)))
 
 
 @router.post("/stream")
@@ -135,6 +150,15 @@ async def chat_stream(
     def generate() -> Iterator[str]:
         used_post_ids: list[int] = []
         pending = ""
+
+        def used_posts_comment() -> str | None:
+            if not used_post_ids:
+                return None
+            return _sse_comment(
+                USED_POSTS_COMMENT,
+                json.dumps({"ids": used_post_ids}, ensure_ascii=False),
+            )
+
         try:
             for chunk in ai.chat_stream(
                 message=request.message,
@@ -142,10 +166,11 @@ async def chat_stream(
                 context_posts=request.context_posts,
             ):
                 pending += chunk
-                pending, ids = _extract_used_posts(pending)
-                # 申告は最後のものだけを採る (_extract_used_posts と同じ理由)
-                if ids:
-                    used_post_ids = ids
+                pending, declared = _extract_used_posts(pending)
+                # 申告は最後のものだけを採る (_extract_used_posts と同じ理由)。
+                # 空の申告 = 「該当なし」なので、直前の申告を撤回できる。
+                if declared is not None:
+                    used_post_ids = declared
 
                 emit_length = _safe_emit_length(pending)
                 if emit_length > 0:
@@ -153,31 +178,27 @@ async def chat_stream(
                     if body := _as_body(emit):
                         yield _sse_event(body)
 
-            pending, ids = _extract_used_posts(pending)
-            if ids:
-                used_post_ids = ids
+            pending, declared = _extract_used_posts(pending)
+            if declared is not None:
+                used_post_ids = declared
             if body := _as_body(pending):
                 yield _sse_event(body)
             # 二重送出を防ぐ。この後に例外が出ても except 節で再度流さない。
             pending = ""
 
-            # backend が関連投稿カードを絞るのに使う。本文ではないので
-            # 名前付きイベントとして送る (frontend は表示しない)。
-            if used_post_ids:
-                yield _sse_event(
-                    json.dumps(
-                        {"type": "used_posts", "ids": used_post_ids},
-                        ensure_ascii=False,
-                    ),
-                    event="used_posts",
-                )
+            if comment := used_posts_comment():
+                yield comment
             yield _sse_event(DONE_SENTINEL)
         except Exception:
             # ヘッダは送出済みでステータスを変えられないため、本文でエラーを伝える
             logger.exception("chat stream failed")
-            # 送り残しがあれば本文として流しておく (エラー直前までの回答は有効)
+            # 送り残しがあれば本文として流しておく (エラー直前までの回答は有効)。
+            # 申告も同じ理由で送る。捨てると、途中まで出た本文は特定の投稿だけを
+            # 語っているのにカードは全件、という食い違いになる。
             if body := _as_body(pending):
                 yield _sse_event(body)
+            if comment := used_posts_comment():
+                yield comment
             yield _sse_event(ERROR_SENTINEL)
 
     return StreamingResponse(

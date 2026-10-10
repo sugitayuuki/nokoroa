@@ -125,8 +125,11 @@ async function requestChatStream(
 /**
  * SSE のレスポンスを最後まで読み切り、本文と関連投稿を返す。
  * テキストは届いた順に onText へ渡してタイピング表示に供給する。
+ *
+ * export しているのはテストから直接叩くため (フック経由では SSE の
+ * イベント種別ごとの分岐を網羅しづらい)。
  */
-async function consumeChatStream(
+export async function consumeChatStream(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   onText: (data: string) => void,
   onRelatedPosts: (posts: PostData[]) => void,
@@ -148,6 +151,8 @@ async function consumeChatStream(
       const lines = event.split('\n');
       // 制御イベントには event 名が付く。生成テキストは全行に data: が付くため
       // event 行を作れず、本文が制御イベントを名乗ることができない。
+      // AIサービスが backend 向けに送る申告はコメント行 (`:` 始まり) なので、
+      // data 行を持たず下の判定で自然に無視される。
       const eventName = lines
         .find((line) => line.startsWith('event: '))
         ?.slice(7);
@@ -159,9 +164,6 @@ async function consumeChatStream(
         .map((line) => line.slice(6));
 
       if (dataLines.length === 0) continue;
-
-      // AIサービスが backend 向けに送る申告。画面に出す本文ではない。
-      if (eventName === 'used_posts') continue;
 
       const data = dataLines.join('\n');
       if (data === '[DONE]') {

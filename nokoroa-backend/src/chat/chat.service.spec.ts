@@ -375,16 +375,16 @@ describe('ChatService', () => {
     /** AIサービスが返す形(1イベント = data: 行 + 空行)でストリームを作る */
     function makeAnswerStream(chunks: string[]) {
       const frames = chunks.map((chunk) => {
-        // `event: 名前\n...` を渡したら名前付き制御イベントとして組み立てる
-        const named = chunk.startsWith('event: ');
-        const name = named ? chunk.slice(7, chunk.indexOf('\n')) : null;
-        const payload = named ? chunk.slice(chunk.indexOf('\n') + 1) : chunk;
-        const body =
-          payload
+        // `:comment\n...` を渡したら申告コメント行として組み立てる
+        if (chunk.startsWith(':comment\n')) {
+          return `:used_posts ${chunk.slice(':comment\n'.length)}\n\n`;
+        }
+        return (
+          chunk
             .split('\n')
             .map((line) => `data: ${line}`)
-            .join('\n') + '\n\n';
-        return name === null ? body : `event: ${name}\n${body}`;
+            .join('\n') + '\n\n'
+        );
       });
       const reader = {
         read: jest.fn(),
@@ -403,8 +403,9 @@ describe('ChatService', () => {
       }) as unknown as typeof fetch;
     }
 
+    /** AIサービスが送る申告コメント行 (`:` 始まりなので data 行を持たない) */
     const usedPosts = (...ids: number[]) =>
-      `event: used_posts\n${JSON.stringify({ type: 'used_posts', ids })}`;
+      `:comment\n${JSON.stringify({ ids })}`;
 
     const hits = [
       post(1, '築地で出汁の材料を仕入れる朝', 'ピエール'),
@@ -513,9 +514,9 @@ describe('ChatService', () => {
     it('申告イベントがチャンク境界で割れても拾う', async () => {
       setupHits();
       const frame = Buffer.from(
-        `event: used_posts\ndata: ${JSON.stringify({ ids: [2] })}\n\n`,
+        `:used_posts ${JSON.stringify({ ids: [2] })}\n\n`,
       );
-      // event 行の途中で割る
+      // コメント行の途中で割る
       const cut = 8;
       const reader = {
         read: jest
@@ -542,6 +543,7 @@ describe('ChatService', () => {
       setupHits();
       makeAnswerStream([
         JSON.stringify({ type: 'used_posts', ids: [3] }),
+        ':used_posts is not a data line',
         '[DONE]',
       ]);
       const { res, write } = makeRes();
@@ -561,7 +563,7 @@ describe('ChatService', () => {
       expect(relatedPostIds(write)).toEqual([1, 2]);
     });
 
-    it('related_posts を名前付きイベントとして送る', async () => {
+    it('related_posts は名前付きイベントとして送る', async () => {
       setupHits();
       makeAnswerStream(['回答', usedPosts(1), '[DONE]']);
       const { res, write } = makeRes();
@@ -576,6 +578,33 @@ describe('ChatService', () => {
             typeof c === 'string' && c.includes('"type":"related_posts"'),
         );
       expect(frame?.startsWith('event: related_posts\ndata: ')).toBe(true);
+    });
+
+    it('最後のイベントが空行で閉じずに切れても申告を拾う', async () => {
+      setupHits();
+      const reader = {
+        read: jest
+          .fn()
+          .mockResolvedValueOnce({
+            done: false,
+            value: Buffer.from('data: 回答\n\n'),
+          })
+          .mockResolvedValueOnce({
+            done: false,
+            value: Buffer.from(`:used_posts ${JSON.stringify({ ids: [2] })}`),
+          })
+          .mockResolvedValue({ done: true, value: undefined }),
+        cancel: jest.fn().mockResolvedValue(undefined),
+      };
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        body: { getReader: () => reader },
+      }) as unknown as typeof fetch;
+      const { res, write } = makeRes();
+
+      await service.streamChat({ message: 'test' }, res);
+
+      expect(relatedPostIds(write)).toEqual([2]);
     });
 
     it('ストリームは素通しする(本文のバイト列を変えない)', async () => {
