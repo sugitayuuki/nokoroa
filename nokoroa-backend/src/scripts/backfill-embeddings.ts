@@ -42,17 +42,14 @@ async function main() {
 
     for (const post of posts) {
       try {
-        // generateForPost ではなく Strict を使う。前者は失敗をログに出して
-        // 正常 return するため、全件失敗しても failed=0 と報告してしまう。
-        // このスクリプトはプロバイダ切替時の唯一の復旧手段(README 参照)なので、
-        // 成否を取り違えると「直したつもり」で壊れたまま運用が続く。
+        // 飲み込む側ではなく Strict を使う。このスクリプトはプロバイダ切替時の
+        // 唯一の復旧手段(README 参照)で、成否を取り違えると
+        // 「直したつもり」で壊れたまま運用が続く。
         const embedded = await embeddings.generateForPostStrict(
           post.id,
           post.title,
           post.content,
         );
-        // 本文が空の投稿は埋め込みを書かずに false が返る。成功に混ぜると
-        // 「埋め込みが無いのに success」になるため別勘定にする。
         if (embedded) {
           success += 1;
         } else {

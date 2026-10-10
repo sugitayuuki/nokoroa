@@ -45,9 +45,10 @@ export class EmbeddingsService {
    * 埋め込みを生成して保存する。失敗時は例外を投げる。
    * 成否を呼び出し側が知る必要がある経路(backfill スクリプト)はこちらを使う。
    *
-   * 戻り値は「実際に埋め込みを書いたか」。本文が空の投稿は書かずに false を返す。
-   * これを成功と区別しないと、埋め込みが作られていないのに backfill が
-   * success に数えて終了コード 0 で終わってしまう。
+   * 戻り値は「実際に埋め込みを書いたか」。タイトルも本文も空の投稿は書かずに
+   * false を返す。これを成功と区別しないと、埋め込みが作られていないのに
+   * backfill が success に数えて終了コード 0 で終わってしまう。
+   * 失敗はどの段で落ちたかが分かるよう、投げ直す前にここで記録する。
    */
   async generateForPostStrict(
     postId: number,
@@ -58,9 +59,6 @@ export class EmbeddingsService {
     if (!fullText) return false;
     const text = fullText.slice(0, MAX_TEXT_LEN);
 
-    // 失敗はどの段で落ちたかが分かる文言でここに残し、そのうえで投げ直す。
-    // 呼び出し側(飲み込む generateForPost)で一括ログにすると、
-    // 旧来の「embed 失敗」「upsert 失敗」という区別が消えてしまう。
     let vector: number[];
     try {
       vector = await this.embed(text, 'RETRIEVAL_DOCUMENT');
@@ -94,10 +92,14 @@ export class EmbeddingsService {
    * 埋め込みを生成して保存する。失敗はログに残して飲み込む。
    * 投稿の作成・更新を埋め込みの失敗で巻き添えにしない経路はこちらを使う。
    *
-   * 戻り値の意味は Strict と同じ(実際に書いたか)。失敗した場合も false を返す。
    * searchSimilar / searchSimilarStrict と同じく、対になる 2 つの違いは
-   * 「例外を投げるか、飲み込むか」だけに揃えている。
-   * 失敗の記録は Strict 側が段ごとに済ませているため、ここでは重ねて出さない。
+   * 呼び出し側から見て「例外を投げるか、飲み込むか」だけ。
+   * ただしログの置き場所は検索側と逆で、どの段で落ちたかを残すために
+   * Strict が書く(ここで重ねて出すと二重記録になる)。
+   *
+   * 戻り値は Strict と同じ「実際に書いたか」だが、false は
+   * 「対象外(タイトルも本文も空)」と「失敗」の両方を意味する。
+   * 戻り値で集計したい呼び出し側は、両者を区別できる Strict を使うこと。
    */
   async generateForPost(
     postId: number,

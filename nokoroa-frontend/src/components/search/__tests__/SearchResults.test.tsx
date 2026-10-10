@@ -75,3 +75,26 @@ describe('SearchResults の 0 件表示', () => {
     ).toBeTruthy();
   });
 });
+
+describe('SearchResults の結果あり表示', () => {
+  const withPosts = {
+    ...baseProps,
+    posts: [{ id: 1 }, { id: 2 }] as never,
+    total: 2,
+  };
+
+  it('意味検索では、上位のみ・関連の薄い投稿を除いたことを明示する', () => {
+    // 旧文言は「類似度が高い上位 N 件のみ表示」で、足切り後の 38% 台も
+    // 「類似度が高い」と称していた。件数の上限と足切りの両方に触れること。
+    render(<SearchResults {...withPosts} mode="semantic" aiAvailable />);
+
+    expect(screen.getByText(/関連度の高い順に上位のみを表示/)).toBeTruthy();
+    expect(screen.getByText(/関連の薄い投稿は除いています/)).toBeTruthy();
+  });
+
+  it('キーワード検索では意味検索の注記を出さない', () => {
+    render(<SearchResults {...withPosts} mode="keyword" />);
+
+    expect(screen.queryByText(/関連度の高い順/)).toBeNull();
+  });
+});

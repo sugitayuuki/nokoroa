@@ -38,6 +38,9 @@ const DEFAULT_SEMANTIC_MIN_SIMILARITY = 0.4;
  * 偽のログ行を差し込めてしまうため、型・長さ・先頭の数文字だけに留める。
  */
 function describeBadConfigValue(raw: unknown): string {
+  // 平文化が危ないのは文字列経路だけなので、数値はそのまま出して
+  // 「どの値が弾かれたのか」を運用者に残す。
+  if (typeof raw === 'number') return String(raw);
   if (typeof raw !== 'string') return typeof raw;
   const head = raw.replace(/\s+/g, ' ').slice(0, 16);
   return `string(len=${raw.length}) "${head}"`;
@@ -87,8 +90,6 @@ export class PostsService {
           ? Number(raw)
           : NaN;
     if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
-      // 値をそのまま出すと、別の秘密値を貼り間違えたときに平文で残り、
-      // 改行を含む値では偽のログ行を差し込めてしまう。
       this.logger.warn(
         `SEMANTIC_MIN_SIMILARITY is not a number in [0,1] (got ${describeBadConfigValue(raw)}); falling back to ${DEFAULT_SEMANTIC_MIN_SIMILARITY}`,
       );

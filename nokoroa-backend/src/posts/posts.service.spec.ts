@@ -835,6 +835,20 @@ describe('PostsService', () => {
       expect((await runWith('0.6', 0.35)).posts).toHaveLength(1);
     });
 
+    it('数値型で渡されても文字列と同じに扱う', async () => {
+      // ConfigService の get は string を謳うが実体は unknown。
+      // 数値経路を落として既定値に倒す実装でも気づけるよう、両側を見る。
+      expect((await runWith(0.6, 0.5)).posts).toEqual([]);
+      expect((await runWith(0.6, 0.35)).posts).toHaveLength(1);
+    });
+
+    it('1 を指定すると完全一致に近いものしか残らない', async () => {
+      // 範囲の上端。1 を「範囲外」として弾くと既定値 0.4 に落ち、
+      // 類似度 0.5 の投稿が残ってしまう。
+      expect((await runWith('1', 0.5)).posts).toEqual([]);
+      expect((await runWith('1', 0)).posts).toHaveLength(1);
+    });
+
     it('読み出すキーは SEMANTIC_MIN_SIMILARITY である', async () => {
       // キーを無視するモックだと名前の打ち間違いを検出できず、
       // .env.example / Terraform が渡す名前との結線が未検証のままになる。
