@@ -2,7 +2,7 @@
 
 import { CircularProgress, Container, Typography } from '@mui/material';
 import { useRouter } from 'next/navigation';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { toast } from 'react-toastify';
 
 import { useAuth } from '@/providers/AuthProvider';
@@ -22,10 +22,37 @@ export default function AuthCallbackPage() {
   const router = useRouter();
   const { isLoading, isAuthenticated, user } = useAuth();
 
+  /**
+   * 着地処理(トースト + 遷移)を済ませたか。
+   *
+   * 観測された不具合: `next dev` で着地すると歓迎トーストが 2 個出る。
+   * dev は StrictMode が既定で有効(App Router)なので mount effect が
+   * setup→cleanup→setup で 2 回走る。Layout は isLoading の間 children を
+   * 描画せず、このページは認証確定後にマウントされるため、その 2 回が
+   * そのまま 2 回の着地になる。
+   *
+   * 発生源はもう一つある。StrictMode は AuthProvider の復元 effect も
+   * 二重に走らせるので `/auth/me` が 2 本飛ぶ。後から解決した方が 200 と
+   * 想定どおりの形を返せば setUser に新しいオブジェクトが渡り、下の user
+   * 依存が変わって着地がもう一度走る(ガード無しだと実測で計 3 回。5xx 等で
+   * user が差し替わらなければ 2 回)。
+   *
+   * ref は StrictMode の擬似 remount をまたいで保持されるので両方を塞げる。
+   * 依存配列は exhaustive-deps を満たすための形で、実行回数はこのフラグが
+   * 1 回に固定する。
+   *
+   * ref はこのインスタンス限りなので、本物の remount(新しいドキュメントでの
+   * 再ログイン等)では初期化される。別の着地には別のトーストが要るのでそれでよい。
+   */
+  const hasLandedRef = useRef(false);
+
   useEffect(() => {
-    if (isLoading) {
+    // isLoading 判定は現状 Layout のゲートに守られて到達しないが、
+    // このページ自身の契約として残す(ゲートの有無に依存させない)。
+    if (isLoading || hasLandedRef.current) {
       return;
     }
+    hasLandedRef.current = true;
 
     if (!isAuthenticated) {
       toast.error('認証に失敗しました');
