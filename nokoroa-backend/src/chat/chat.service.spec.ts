@@ -148,6 +148,75 @@ describe('ChatService', () => {
     expect(mockPosts.search).not.toHaveBeenCalled();
   });
 
+  describe('ベクトル候補の類似度による足切り', () => {
+    /** 類似度 1-distance の投稿 1 件だけがベクトル検索で返る状態にする */
+    const vectorHitWith = (distance: number) => {
+      mockEmbeddings.searchSimilar.mockResolvedValue([{ postId: 1, distance }]);
+      mockPosts.findManyByIds.mockResolvedValue([
+        {
+          id: 1,
+          title: '無関係な投稿',
+          content: 'C',
+          location: '東京',
+          author: { name: 'u' },
+        },
+      ]);
+    };
+
+    it('下限未満のヒットしか無ければキーワード検索へ進む', async () => {
+      // これが本件の不具合。ベクトル検索は関連ゼロでも上位N件を必ず返すため、
+      // 候補が非空になり後段のフォールバックへ永久に到達しなかった。
+      // 「ピエールの投稿」は単語分割まで進めば著者名で拾えるのに、
+      // 無関係な投稿が返るせいで AI には「該当なし」として渡っていた。
+      vectorHitWith(0.7); // 類似度 0.30
+      mockPosts.search.mockResolvedValue({
+        posts: [
+          {
+            id: 9,
+            title: 'ピエールの投稿',
+            content: 'C',
+            location: '奈良',
+            author: { name: 'ピエール' },
+          },
+        ],
+        total: 1,
+        hasMore: false,
+      });
+      makeStreamFetch();
+
+      await service.streamChat({ message: 'ピエールの投稿' }, makeRes().res);
+
+      expect(mockPosts.search).toHaveBeenCalled();
+    });
+
+    it('下限以上のヒットがあればキーワード検索は呼ばない', async () => {
+      vectorHitWith(0.55); // 類似度 0.45
+      makeStreamFetch();
+
+      await service.streamChat({ message: 'test' }, makeRes().res);
+
+      expect(mockPosts.search).not.toHaveBeenCalled();
+    });
+
+    it('他の手段も全滅なら、下限未満のヒットを最後の手がかりに使う', async () => {
+      // 足切りを入れたせいで、以前なら渡っていた文脈が減るのは避ける。
+      vectorHitWith(0.7);
+      mockPosts.search.mockResolvedValue({
+        posts: [],
+        total: 0,
+        hasMore: false,
+      });
+      makeStreamFetch();
+
+      await service.streamChat({ message: 'なにもない' }, makeRes().res);
+
+      const sent = JSON.parse(findStreamCall()[1].body) as {
+        context_posts: Array<{ id: number }>;
+      };
+      expect(sent.context_posts.map((p) => p.id)).toEqual([1]);
+    });
+  });
+
   it('AIへ送る履歴は件数と本文長を上限まで切り詰める', async () => {
     mockEmbeddings.searchSimilar.mockResolvedValue([]);
     mockPosts.search.mockResolvedValue({ posts: [], total: 0, hasMore: false });

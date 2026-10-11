@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Response } from 'express';
 import { EmbeddingsService } from '../embeddings/embeddings.service';
+import { resolveSemanticMinSimilarity } from '../embeddings/semantic-threshold';
 import { FormattedPost } from '../posts/post-format';
 import { PostsService } from '../posts/posts.service';
 import {
@@ -77,6 +78,8 @@ export class ChatService {
   private readonly logger = new Logger(ChatService.name);
   private readonly aiServiceUrl: string;
   private readonly internalToken: string;
+  /** RAG の候補を「関連あり」とみなす下限。意味検索と同じ値を使う */
+  private readonly minSimilarity: number;
 
   constructor(
     private configService: ConfigService,
@@ -86,6 +89,10 @@ export class ChatService {
     this.aiServiceUrl =
       this.configService.get<string>('AI_SERVICE_URL') ||
       'http://localhost:8000';
+    this.minSimilarity = resolveSemanticMinSimilarity(
+      this.configService.get('SEMANTIC_MIN_SIMILARITY'),
+      this.logger,
+    );
     this.internalToken =
       this.configService.get<string>('INTERNAL_AI_TOKEN') || '';
     if (!this.internalToken) {
@@ -149,8 +156,12 @@ export class ChatService {
       // 飛ばされ、プロバイダ障害時に関連投稿が完全に出なくなる。
       // ヒット0件と同じ扱いにしてフォールバックへ進ませる。
       let posts: FormattedPost[] = [];
+      // 下限に届かなかったベクトル候補。他の手段が全て空振りしたときだけ使う。
+      let weakVectorHits: FormattedPost[] = [];
       try {
-        posts = await this.searchByVector(dto.message, 5);
+        const vector = await this.searchByVector(dto.message, 5);
+        posts = vector.related;
+        weakVectorHits = vector.weak;
       } catch (error) {
         this.logger.warn(
           `Vector search unavailable, falling back to keyword search: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -188,6 +199,12 @@ export class ChatService {
           if (posts.length >= 5) break;
         }
         if (posts.length > 5) posts.length = 5;
+      }
+
+      if (posts.length === 0 && weakVectorHits.length > 0) {
+        // どの手段でも見つからなかったときの最後の手がかり。
+        // 下限を入れたことで、以前なら渡っていた文脈が減るのは避ける。
+        posts = weakVectorHits;
       }
 
       if (posts.length > 0) {
@@ -366,22 +383,43 @@ export class ChatService {
     });
   }
 
+  /**
+   * ベクトル検索の結果を、類似度の下限で 2 つに分けて返す。
+   *
+   * ベクトル検索は関連する投稿が一件も無くても「一番マシな上位N件」を必ず返す。
+   * それをそのまま候補にすると、後段のキーワード検索・単語分割検索へ永久に
+   * 到達しなくなる。実際「ピエールの投稿」は単語分割まで進めば著者名で
+   * ヒットするのに、無関係な投稿が 2 件返るせいで AI には「該当なし」として
+   * 渡っていた(著者名は埋め込み対象の本文に含まれないため、ベクトル検索だけでは
+   * 構造的に拾えない)。
+   */
   private async searchByVector(
     query: string,
     limit: number,
-  ): Promise<FormattedPost[]> {
+  ): Promise<{ related: FormattedPost[]; weak: FormattedPost[] }> {
     const hits = await this.embeddingsService.searchSimilar(query, limit);
-    if (hits.length === 0) return [];
+    if (hits.length === 0) return { related: [], weak: [] };
 
     const ids = hits.map((h) => h.postId);
     const posts = await this.postsService.findManyByIds(ids);
     const byId = new Map(posts.map((p) => [p.id, p]));
 
-    const found: FormattedPost[] = [];
+    const related: FormattedPost[] = [];
+    const weak: FormattedPost[] = [];
     for (const hit of hits) {
       const post = byId.get(hit.postId);
-      if (post) found.push(post);
+      if (!post) continue;
+      const similarity = Math.max(0, 1 - hit.distance);
+      (similarity >= this.minSimilarity ? related : weak).push(post);
     }
-    return found;
+
+    if (weak.length > 0) {
+      // 閾値が実データに対して厳しすぎないかは、落とした件数が分からないと
+      // 判断できない。クエリ本文は利用者のデータなので出さない。
+      this.logger.log(
+        `Chat vector search cut ${weak.length}/${hits.length} below ${this.minSimilarity}`,
+      );
+    }
+    return { related, weak };
   }
 }
