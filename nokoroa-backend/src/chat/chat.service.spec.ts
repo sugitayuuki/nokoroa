@@ -261,6 +261,89 @@ describe('ChatService', () => {
       expect(mockPosts.search).not.toHaveBeenCalled();
     });
 
+    /** 下限未満の候補を id 順に並べる(全件 weak になる距離を使う) */
+    const weakHits = (ids: number[]) => {
+      mockEmbeddings.searchSimilar.mockResolvedValue(
+        ids.map((id) => ({ postId: id, distance: 0.8 })),
+      );
+      mockPosts.findManyByIds.mockResolvedValue(
+        ids.map((id) => ({
+          id,
+          title: `weak${id}`,
+          content: 'C',
+          location: '',
+          author: { name: 'u' },
+        })),
+      );
+    };
+
+    const contextIds = () =>
+      (
+        JSON.parse(findStreamCall()[1].body) as {
+          context_posts: Array<{ id: number }>;
+        }
+      ).context_posts.map((p) => p.id);
+
+    it('埋め草は重複を除き、上限 5 件で打ち切る', async () => {
+      weakHits([1, 2, 3, 9, 4]);
+      mockPosts.search.mockResolvedValue({
+        posts: [
+          {
+            id: 9,
+            title: 'kw',
+            content: 'C',
+            location: '',
+            author: { name: 'u' },
+          },
+        ],
+        total: 1,
+        hasMore: false,
+      });
+      makeStreamFetch();
+
+      await service.streamChat({ message: 'test' }, makeRes().res);
+
+      // 後段の 9 が先頭。weak 側の 9 は重複として落ち、合計は 5 件で止まる
+      expect(contextIds()).toEqual([9, 1, 2, 3, 4]);
+    });
+
+    it('単語分割まで進んだ場合も、余った枠を埋め草で埋める', async () => {
+      weakHits([1, 2, 3, 4, 5]);
+      mockPosts.search
+        // 1 回目(メッセージ全体)は空振り → 単語分割へ進む
+        .mockResolvedValueOnce({ posts: [], total: 0, hasMore: false })
+        .mockResolvedValue({
+          posts: [
+            {
+              id: 10,
+              title: 'word',
+              content: 'C',
+              location: '',
+              author: { name: 'u' },
+            },
+          ],
+          total: 1,
+          hasMore: false,
+        });
+      makeStreamFetch();
+
+      await service.streamChat({ message: '京都の紅葉' }, makeRes().res);
+
+      expect(contextIds()).toEqual([10, 1, 2, 3, 4]);
+    });
+
+    it('後段の DB 検索が落ちても埋め草は残す', async () => {
+      // 候補の変数を try の外へ出していないと、ここで拾えていた weak ごと
+      // 捨てられ、AI へ渡る文脈が 0 件になる。
+      weakHits([1, 2]);
+      mockPosts.search.mockRejectedValue(new Error('db down'));
+      makeStreamFetch();
+
+      await service.streamChat({ message: 'test' }, makeRes().res);
+
+      expect(contextIds()).toEqual([1, 2]);
+    });
+
     it('SEMANTIC_MIN_SIMILARITY で下限を上書きできる', async () => {
       // 設定を読まず既定値に固定する実装でも、キー名を打ち間違えても
       // 気づけるよう、既定(0.4)なら残る類似度 0.45 が落ちる値を与える。

@@ -453,8 +453,10 @@ export class ChatService {
       // 最高類似度の分布が分からないと判断できない。一部だけ落ちたケースは
       // 候補が残るので鳴らさず、全部落ちたときだけ残す。
       // クエリ本文は利用者のデータなので出さない。
+      // 件数は実際に比べた数を使う。hits には非公開化・削除で引けなかった分が
+      // 混じるため、そちらを出すとログと判定がずれる。
       this.logger.log(
-        `Chat vector search: none of ${hits.length} reached ${this.minSimilarity} (best=${best.toFixed(2)})`,
+        `Chat vector search: none of ${weak.length} reached ${this.minSimilarity} (best=${best.toFixed(2)})`,
       );
     }
     return { related, weak };
