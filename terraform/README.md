@@ -561,19 +561,43 @@ aws ecs run-task --cluster nokoroa-prod-cluster --task-definition nokoroa-prod-b
 # デモデータ投入（空から始めた場合のみ。上が終わってから）
 aws ecs run-task --cluster nokoroa-prod-cluster --task-definition nokoroa-prod-backend \
   --launch-type FARGATE --network-configuration "$NET" \
-  --overrides '{"containerOverrides":[{"name":"backend","command":["npm","run","seed"]}]}'
+  --overrides '{"containerOverrides":[{"name":"backend","command":["node","dist/prisma/seed.js"]}]}'
 ```
+
+> **`npm run seed` はこのイメージでは動きません。** 中身は `ts-node prisma/seed.ts` ですが、
+> Dockerfile の runner ステージが COPY するのは `node_modules` / `dist` / `prisma` /
+> `package.json` の 4 つだけで **`tsconfig.json` が入っていません**。そのため Node 22 の
+> ネイティブ type-stripping が働き、`seed.ts` が ES モジュールとして再解釈されて
+> `SyntaxError: Named export 'Post' not found`（`@prisma/client` は CommonJS）で
+> 1 行目から落ちます。
+>
+> 代わりに `node dist/prisma/seed.js` を使います。`tsconfig.json` の `include` に
+> `prisma/**/*` が入っているため `nest build` がこれを生成し、runner は `dist` を
+> COPY しているのでイメージに入っています。コンパイル済みなので ts-node も
+> tsconfig も要りません。
+>
+> 根治するなら runner に `COPY --from=builder /app/tsconfig.json ./` を 1 行足します。
+> 同じ理由で `npm run backfill:embeddings` も動かないので、そちらは
+> `node dist/src/scripts/backfill-embeddings.js` を使います。
 
 seed は利用者 5 名・地点 32 件・投稿 40 件を入れます。**投稿が 1 件でもある DB では何もせずに正常終了します**（投稿は upsert ではなく作成なので、素通しすると二度目の実行で投稿がそのまま倍に増えるため）。復元した DB に追加したい場合だけ `SEED_FORCE=1` を付けてください。その場合は投稿が重複します。
 
 ```bash
 # 中身のある DB へ重複を承知で追加する場合のみ
-  --overrides '{"containerOverrides":[{"name":"backend","command":["npm","run","seed"],"environment":[{"name":"SEED_FORCE","value":"1"}]}]}'
+  --overrides '{"containerOverrides":[{"name":"backend","command":["node","dist/prisma/seed.js"],"environment":[{"name":"SEED_FORCE","value":"1"}]}]}'
 ```
 
 **seed はコンテナイメージに焼かれています。** `prisma/seed.ts` を変更しても、deploy.yml を実行して ECR を更新するまで本番には入りません。
 
-**seed した投稿には埋め込みが作られません。** 埋め込みは API 経由の投稿作成時にのみ生成されるため、seed 投稿はキーワード検索には出ますが、ベクトル検索と AI チャットの関連投稿には出てきません。
+**seed した投稿には埋め込みが作られません。** 埋め込みは API 経由の投稿作成時にのみ生成されるため、seed 直後はキーワード検索にしか出ず、ベクトル検索と AI チャットの関連投稿には出てきません。見せるならバックフィルを流します（埋め込み API の課金が発生します。40 件で $0.01 未満）。
+
+```bash
+aws ecs run-task --cluster nokoroa-prod-cluster --task-definition nokoroa-prod-backend \
+  --launch-type FARGATE --network-configuration "$NET" \
+  --overrides '{"containerOverrides":[{"name":"backend","command":["node","dist/src/scripts/backfill-embeddings.js"]}]}'
+```
+
+このスクリプトは Nest のアプリコンテキストを起動して AI サービス経由で埋め込みを作るため、**ai サイドカーが同居する backend タスクでしか動きません**（`AI_SERVICE_URL` が未設定だと自分で中止します）。2026-10-11 に 40 件で実行し `success=40, failed=0` を確認しています。
 
 **アプリのコードは「最後に deploy.yml を手動実行した時点のイメージ」です。** deploy.yml は `workflow_dispatch` のみなので、main にマージされたコミットは誰かが実行するまで ECR に載りません。最新の main を見せたい場合は、再開 apply のあとに deploy.yml を流してください。
 
