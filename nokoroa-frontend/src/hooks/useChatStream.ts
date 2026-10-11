@@ -125,8 +125,11 @@ async function requestChatStream(
 /**
  * SSE のレスポンスを最後まで読み切り、本文と関連投稿を返す。
  * テキストは届いた順に onText へ渡してタイピング表示に供給する。
+ *
+ * export しているのはテストから直接叩くため (フック経由では SSE の
+ * イベント種別ごとの分岐を網羅しづらい)。
  */
-async function consumeChatStream(
+export async function consumeChatStream(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   onText: (data: string) => void,
   onRelatedPosts: (posts: PostData[]) => void,
@@ -145,10 +148,18 @@ async function consumeChatStream(
     buffer = events.pop() || '';
 
     for (const event of events) {
+      const lines = event.split('\n');
+      // 制御イベントには event 名が付く。生成テキストは全行に data: が付くため
+      // event 行を作れず、本文が制御イベントを名乗ることができない。
+      // AIサービスが backend 向けに送る申告はコメント行 (`:` 始まり) なので、
+      // data 行を持たず下の判定で自然に無視される。
+      const eventName = lines
+        .find((line) => line.startsWith('event: '))
+        ?.slice(7);
+
       // SSEは1イベントが複数の data: 行を持ちうる。仕様どおり改行で結合する
       // (1行目だけ見ると、改行を含む生成テキストの2行目以降が欠落する)
-      const dataLines = event
-        .split('\n')
+      const dataLines = lines
         .filter((line) => line.startsWith('data: '))
         .map((line) => line.slice(6));
 
@@ -162,10 +173,19 @@ async function consumeChatStream(
         throw new Error(data);
       }
 
-      if (data.startsWith('{')) {
+      // 関連投稿の差し替えは event 名を必須にする。payload の type だけで
+      // 採用すると、AI に 1 行の JSON を出力させるだけでカードを偽造できる
+      // (運営を騙るカード + 攻撃者ホストの imageUrl で閲覧者の IP/UA が漏れる)。
+      // 本文は全行に data: が付くため event 行を作れず、名前を要求すれば
+      // 構造的に偽造できなくなる。
+      //
+      // この判定は backend が event 名を付けて送ることが前提。**デプロイは
+      // backend を先に出すこと。** 逆順にすると、その間カードが出ず、
+      // payload が本文として表示される。
+      if (eventName === 'related_posts') {
         try {
           const parsed = JSON.parse(data);
-          if (parsed.type === 'related_posts' && parsed.posts) {
+          if (Array.isArray(parsed.posts)) {
             relatedPosts = parsed.posts as PostData[];
             onRelatedPosts(relatedPosts);
             continue;

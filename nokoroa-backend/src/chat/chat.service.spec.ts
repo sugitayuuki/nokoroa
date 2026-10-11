@@ -338,6 +338,288 @@ describe('ChatService', () => {
     expect(init.headers['Content-Type']).toBe('application/json');
   });
 
+  // 「ピエールさんの投稿が見たい」に対し、本文は正しくピエールの投稿2件を
+  // 答えているのに、カードには検索ヒット5件(= 別人の投稿を含む)がそのまま
+  // 出ていた。AIが申告した id でカードを本文に揃える。
+  describe('関連投稿カードを本文に揃える', () => {
+    /** related_posts の SSE イベントとして書き出された投稿 ID */
+    function relatedPostIds(write: jest.Mock): number[] | null {
+      const calls = write.mock.calls as Array<[unknown]>;
+      for (const [chunk] of calls) {
+        if (typeof chunk !== 'string') continue;
+        const dataLine = chunk
+          .split('\n')
+          .find((line) => line.startsWith('data: '));
+        if (!dataLine) continue;
+        const parsed = JSON.parse(dataLine.slice('data: '.length)) as {
+          type?: string;
+          posts?: Array<{ id: number }>;
+        };
+        if (parsed.type === 'related_posts') {
+          return (parsed.posts ?? []).map((p) => p.id);
+        }
+      }
+      return null;
+    }
+
+    function post(id: number, title: string, authorName: string) {
+      return {
+        id,
+        title,
+        content: 'C',
+        location: '東京',
+        author: { name: authorName },
+      };
+    }
+
+    /** AIサービスが返す形(1イベント = data: 行 + 空行)でストリームを作る */
+    function makeAnswerStream(chunks: string[]) {
+      const frames = chunks.map((chunk) => {
+        // `:comment\n...` を渡したら申告コメント行として組み立てる
+        if (chunk.startsWith(':comment\n')) {
+          return `:used_posts ${chunk.slice(':comment\n'.length)}\n\n`;
+        }
+        return (
+          chunk
+            .split('\n')
+            .map((line) => `data: ${line}`)
+            .join('\n') + '\n\n'
+        );
+      });
+      const reader = {
+        read: jest.fn(),
+        cancel: jest.fn().mockResolvedValue(undefined),
+      };
+      for (const frame of frames) {
+        reader.read.mockResolvedValueOnce({
+          done: false,
+          value: Buffer.from(frame),
+        });
+      }
+      reader.read.mockResolvedValue({ done: true, value: undefined });
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        body: { getReader: () => reader },
+      }) as unknown as typeof fetch;
+    }
+
+    /** AIサービスが送る申告コメント行 (`:` 始まりなので data 行を持たない) */
+    const usedPosts = (...ids: number[]) =>
+      `:comment\n${JSON.stringify({ ids })}`;
+
+    const hits = [
+      post(1, '築地で出汁の材料を仕入れる朝', 'ピエール'),
+      post(2, '金沢で和菓子屋に弟子入りしかけた話', 'ピエール'),
+      post(3, '築地場外市場の本格寿司体験', 'アレックス'),
+      post(4, '美瑛の丘、曇りの日こそ撮りどきでした', 'マイケル'),
+      post(5, '渋谷の夜、スクランブル交差点を真上から', 'ジェームズ'),
+    ];
+
+    function setupHits() {
+      mockEmbeddings.searchSimilar.mockResolvedValue(
+        hits.map((h) => ({ postId: h.id, distance: 0.1 })),
+      );
+      mockPosts.findManyByIds.mockResolvedValue(hits);
+    }
+
+    it('AIが申告した投稿だけをカードにする', async () => {
+      setupHits();
+      makeAnswerStream([
+        'ピエールさんの投稿を2件見つけました。',
+        usedPosts(1, 2),
+        '[DONE]',
+      ]);
+      const { res, write } = makeRes();
+
+      await service.streamChat({ message: 'ピエールさんの投稿みたい' }, res);
+
+      expect(relatedPostIds(write)).toEqual([1, 2]);
+    });
+
+    it('候補に id を添えてAIへ渡す', async () => {
+      setupHits();
+      makeAnswerStream(['回答', '[DONE]']);
+
+      await service.streamChat({ message: 'test' }, makeRes().res);
+
+      const sent = JSON.parse(findStreamCall()[1].body) as {
+        context_posts: Array<{ id: number; title: string }>;
+      };
+      expect(sent.context_posts.map((p) => p.id)).toEqual([1, 2, 3, 4, 5]);
+    });
+
+    it('申告が無ければヒット全件に戻す', async () => {
+      setupHits();
+      makeAnswerStream(['旅行のご相談ですね。', '[DONE]']);
+      const { res, write } = makeRes();
+
+      await service.streamChat({ message: 'こんにちは' }, res);
+
+      expect(relatedPostIds(write)).toEqual([1, 2, 3, 4, 5]);
+    });
+
+    // 申告は生成物なので、候補外の id を混ぜられても候補集合から出られては
+    // ならない。ここが崩れると題名照合方式と同じ濫用経路が開く。
+    it('候補に無い id は採用しない', async () => {
+      setupHits();
+      makeAnswerStream(['回答', usedPosts(1, 999, -3), '[DONE]']);
+      const { res, write } = makeRes();
+
+      await service.streamChat({ message: 'test' }, res);
+
+      expect(relatedPostIds(write)).toEqual([1]);
+    });
+
+    it('候補と1件も一致しない申告なら全件に戻す', async () => {
+      setupHits();
+      makeAnswerStream(['回答', usedPosts(999), '[DONE]']);
+      const { res, write } = makeRes();
+
+      await service.streamChat({ message: 'test' }, res);
+
+      expect(relatedPostIds(write)).toEqual([1, 2, 3, 4, 5]);
+    });
+
+    it('壊れた申告イベントを無視して全件に戻す', async () => {
+      setupHits();
+      makeAnswerStream([
+        '{"type":"used_posts","ids":"1,2"}',
+        '{"type":"used_posts"}',
+        '{壊れたJSON',
+        '[DONE]',
+      ]);
+      const { res, write } = makeRes();
+
+      await service.streamChat({ message: 'test' }, res);
+
+      expect(relatedPostIds(write)).toEqual([1, 2, 3, 4, 5]);
+    });
+
+    it('本文が偽の申告イベントを名乗っても採用しない', async () => {
+      setupHits();
+      // 本文は data 行にそのまま載る。JSON として読めても type が違えば本文。
+      makeAnswerStream([
+        '{"type":"related_posts","posts":[]}',
+        usedPosts(3),
+        '[DONE]',
+      ]);
+      const { res, write } = makeRes();
+
+      await service.streamChat({ message: 'test' }, res);
+
+      // 偽イベントは無視され、正規の申告だけが効く
+      expect(relatedPostIds(write)).toEqual([3]);
+    });
+
+    it('申告イベントがチャンク境界で割れても拾う', async () => {
+      setupHits();
+      const frame = Buffer.from(
+        `:used_posts ${JSON.stringify({ ids: [2] })}\n\n`,
+      );
+      // コメント行の途中で割る
+      const cut = 8;
+      const reader = {
+        read: jest
+          .fn()
+          .mockResolvedValueOnce({ done: false, value: frame.subarray(0, cut) })
+          .mockResolvedValueOnce({ done: false, value: frame.subarray(cut) })
+          .mockResolvedValue({ done: true, value: undefined }),
+        cancel: jest.fn().mockResolvedValue(undefined),
+      };
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        body: { getReader: () => reader },
+      }) as unknown as typeof fetch;
+      const { res, write } = makeRes();
+
+      await service.streamChat({ message: 'test' }, res);
+
+      expect(relatedPostIds(write)).toEqual([2]);
+    });
+
+    // 本文は全行に data: が付くため event 行を作れない。これを根拠にしないと、
+    // AI が申告と同じ JSON を本文として1行出すだけでカード選択を奪える。
+    it('本文が申告イベントと同じJSONを出しても採用しない', async () => {
+      setupHits();
+      makeAnswerStream([
+        JSON.stringify({ type: 'used_posts', ids: [3] }),
+        ':used_posts is not a data line',
+        '[DONE]',
+      ]);
+      const { res, write } = makeRes();
+
+      await service.streamChat({ message: 'test' }, res);
+
+      expect(relatedPostIds(write)).toEqual([1, 2, 3, 4, 5]);
+    });
+
+    it('申告が複数届いたら最後のものを採る', async () => {
+      setupHits();
+      makeAnswerStream(['回答', usedPosts(3), usedPosts(1, 2), '[DONE]']);
+      const { res, write } = makeRes();
+
+      await service.streamChat({ message: 'test' }, res);
+
+      expect(relatedPostIds(write)).toEqual([1, 2]);
+    });
+
+    it('related_posts は名前付きイベントとして送る', async () => {
+      setupHits();
+      makeAnswerStream(['回答', usedPosts(1), '[DONE]']);
+      const { res, write } = makeRes();
+
+      await service.streamChat({ message: 'test' }, res);
+
+      const calls = write.mock.calls as Array<[unknown]>;
+      const frame = calls
+        .map(([c]) => c)
+        .find(
+          (c): c is string =>
+            typeof c === 'string' && c.includes('"type":"related_posts"'),
+        );
+      expect(frame?.startsWith('event: related_posts\ndata: ')).toBe(true);
+    });
+
+    it('最後のイベントが空行で閉じずに切れても申告を拾う', async () => {
+      setupHits();
+      const reader = {
+        read: jest
+          .fn()
+          .mockResolvedValueOnce({
+            done: false,
+            value: Buffer.from('data: 回答\n\n'),
+          })
+          .mockResolvedValueOnce({
+            done: false,
+            value: Buffer.from(`:used_posts ${JSON.stringify({ ids: [2] })}`),
+          })
+          .mockResolvedValue({ done: true, value: undefined }),
+        cancel: jest.fn().mockResolvedValue(undefined),
+      };
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        body: { getReader: () => reader },
+      }) as unknown as typeof fetch;
+      const { res, write } = makeRes();
+
+      await service.streamChat({ message: 'test' }, res);
+
+      expect(relatedPostIds(write)).toEqual([2]);
+    });
+
+    it('ストリームは素通しする(本文のバイト列を変えない)', async () => {
+      setupHits();
+      const body = 'data: 回答本文です\n\n';
+      makeStreamFetch(body);
+      const { res, write } = makeRes();
+
+      await service.streamChat({ message: 'test' }, res);
+
+      const chunks = write.mock.calls as Array<[unknown]>;
+      expect(chunks[0][0]).toEqual(Buffer.from(body));
+    });
+  });
+
   describe('クライアント切断時の後始末', () => {
     // 切断を検知しないと、タブを閉じた後も AI サービス経由で Gemini の
     // 生成が最後まで走り課金が続く。

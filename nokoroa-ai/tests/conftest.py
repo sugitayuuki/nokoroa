@@ -41,6 +41,8 @@ class FakeModels:
         self.generate_content_error: Exception | None = None
         self.stream_chunks: list[str] = ["こんにちは"]
         self.stream_error: Exception | None = None
+        # n 個目のチャンクを返す直前で落とす (None なら落とさない)
+        self.stream_error_after: int | None = None
         self.embed_values: list[float] | None = [0.1] * 768
         self.embed_error: Exception | None = None
         self.prompts: list[str] = []
@@ -62,9 +64,13 @@ class FakeModels:
 
     def generate_content_stream(self, *, model: str, contents: Any, config: Any):
         self._record(contents)
+        # stream_error は「生成を始める前に落ちる」ケース。途中で落ちる経路
+        # (送り残しの扱いなど) を踏めないので、stream_error_after で分ける。
         if self.stream_error:
             raise self.stream_error
-        for chunk in self.stream_chunks:
+        for index, chunk in enumerate(self.stream_chunks):
+            if self.stream_error_after is not None and index == self.stream_error_after:
+                raise RuntimeError("stream interrupted")
             yield FakeResponse(text=chunk)
 
     def embed_content(self, *, model: str, contents: Any, config: Any) -> FakeEmbedResponse:

@@ -32,6 +32,45 @@ const AI_STREAM_TIMEOUT_MS = 60_000;
 // 検索ヒット0件時のキーワード分割フォールバックで走査する最大単語数。
 // 上限が無いと1リクエストで単語数ぶんのDB検索が直列実行される。
 const MAX_FALLBACK_KEYWORDS = 5;
+// イベント境界(空行)待ちで保持する長さの上限。上流が空行を一度も送らない
+// 壊れ方をすると、これが無いとストリーム全体を抱え込む。
+const MAX_FRAME_BUFFER_CHARS = 100_000;
+// 採用する申告 id の上限。候補は5件なので、それ以上は壊れた出力とみなす。
+// 上流が壊れて大量に送ってきても、こちらで抱え込まないための歯止め。
+const MAX_USED_POSTS = 10;
+
+// AIサービスが「本文で触れた投稿」を申告するコメント行。
+// 値を変える場合は nokoroa-ai/app/routers/chat.py と同時に変更すること。
+const USED_POSTS_COMMENT = ':used_posts ';
+
+/**
+ * AIサービスが申告した id を、SSE の1イベントから取り出す。
+ *
+ * 申告は**コメント行**(`:` 始まり)で届く。生成テキストは全行に `data: ` が
+ * 付くため、本文が申告を名乗ることが構造的にできない。`data:` に載せて
+ * JSON の中身だけで判定すると、AIが本文として同じ JSON を1行出しただけで
+ * 正規の申告とバイト列が一致し、カードの選択を本文経由で操作できてしまう。
+ * コメント行はどのクライアントも本文として扱わないため、旧い frontend にも
+ * 生の JSON が表示されない。
+ */
+function usedPostIdsOf(event: string): number[] {
+  const line = event
+    .split('\n')
+    .find((candidate) => candidate.startsWith(USED_POSTS_COMMENT));
+  if (line === undefined) return [];
+
+  try {
+    const parsed = JSON.parse(line.slice(USED_POSTS_COMMENT.length)) as {
+      ids?: unknown;
+    };
+    if (!Array.isArray(parsed.ids)) return [];
+    return parsed.ids
+      .filter((id): id is number => Number.isInteger(id))
+      .slice(0, MAX_USED_POSTS);
+  } catch {
+    return [];
+  }
+}
 
 @Injectable()
 export class ChatService {
@@ -96,6 +135,7 @@ export class ChatService {
 
   async streamChat(dto: ChatRequestDto, res: Response): Promise<void> {
     let contextPosts: Array<{
+      id: number;
       title: string;
       content: string;
       location: string;
@@ -153,6 +193,9 @@ export class ChatService {
       if (posts.length > 0) {
         relatedPostsRaw = posts;
         contextPosts = posts.map((post) => ({
+          // AIはこの id で「本文で触れた投稿」を申告する。申告された id は
+          // ここで送った候補と突き合わせてから使う (relatedPostsEvent)。
+          id: post.id,
           title: post.title,
           content: post.content,
           location: post.location ?? '',
@@ -205,6 +248,25 @@ export class ChatService {
     res.setHeader('Connection', 'keep-alive');
 
     const reader = response.body.getReader();
+    // AIが申告した「本文で触れた投稿」の id を拾う。ストリームは素通しのまま
+    // 読むだけで、クライアントへ送るバイト列は変えない。
+    const decoder = new TextDecoder();
+    let frameBuffer = '';
+    const usedPostIds: number[] = [];
+
+    const collectUsedPosts = (chunk: Uint8Array): void => {
+      frameBuffer += decoder.decode(chunk, { stream: true });
+      const events = frameBuffer.split('\n\n');
+      frameBuffer = events.pop() ?? '';
+      for (const event of events) {
+        const ids = usedPostIdsOf(event);
+        // 申告は最後のものだけを採る。AIサービス側も末尾の申告だけを送るが、
+        // 壊れた上流から複数届いても無制限に積まないようにする。
+        if (ids.length > 0) usedPostIds.splice(0, usedPostIds.length, ...ids);
+      }
+      if (frameBuffer.length > MAX_FRAME_BUFFER_CHARS) frameBuffer = '';
+    };
+
     try {
       while (true) {
         const { done, value } = await reader.read();
@@ -212,13 +274,26 @@ export class ChatService {
         // 切断後に write すると ERR_STREAM_DESTROYED になる
         if (res.destroyed) break;
         res.write(Buffer.from(value));
+        collectUsedPosts(value);
       }
+      // 最後のイベントが空行で閉じずに終わった場合 (接続断など) の取りこぼし。
+      // 捨てると、本文は特定の投稿だけを語っているのにカードは全件、という
+      // 食い違いになる。
+      const lastIds = usedPostIdsOf(frameBuffer + decoder.decode());
+      if (lastIds.length > 0) {
+        usedPostIds.splice(0, usedPostIds.length, ...lastIds);
+      }
+
       if (relatedPostsRaw.length > 0 && !res.destroyed) {
-        const relatedPostsEvent = JSON.stringify({
-          type: 'related_posts',
-          posts: relatedPostsRaw,
-        });
-        res.write(`data: ${relatedPostsEvent}\n\n`);
+        // 制御イベントには名前を付ける。本文は全行に data: が付くため
+        // event 行を作れず、本文がカード差し替えを名乗れなくなる。
+        // payload の type は、名前を見ない旧 frontend との互換のために残す。
+        res.write(
+          `event: related_posts\ndata: ${this.relatedPostsEvent(
+            relatedPostsRaw,
+            usedPostIds,
+          )}\n\n`,
+        );
       }
     } catch (err) {
       // 切断・タイムアウトによる中断は異常ではない。ヘッダは送出済みで
@@ -261,6 +336,34 @@ export class ChatService {
       );
       return [];
     }
+  }
+
+  /**
+   * 関連投稿カードとして送る SSE イベントを組み立てる。
+   *
+   * 検索でヒットした投稿をそのまま並べると本文と食い違う。「ピエールさんの
+   * 投稿が見たい」に対し、AIは渡された候補の中からピエールの投稿だけを選んで
+   * 答えるのに、カードには候補5件(= 別人の投稿を含む)がそのまま出ていた。
+   *
+   * 絞り込みの根拠は、AIが申告した id だけを使う。題名や本文の文字列照合に
+   * すると、題名は利用者が自由に決められるため「AIが必ず口にする定型文を
+   * 題名にして、他人の投稿をカードから追い出す」経路ができる。
+   * id は backend が採番したもので、ここで送った候補と突き合わせるため、
+   * 申告をどう細工されても候補集合の外へは出られない。
+   */
+  private relatedPostsEvent(
+    posts: FormattedPost[],
+    usedPostIds: number[],
+  ): string {
+    const used = new Set(usedPostIds);
+    const mentioned = posts.filter((post) => used.has(post.id));
+
+    return JSON.stringify({
+      type: 'related_posts',
+      // 申告が無い / 候補と1件も一致しないのは、AIが投稿に触れずに答えた場合か
+      // 申告が壊れた場合。絞り込む根拠が無いので従来どおり全件返す。
+      posts: mentioned.length > 0 ? mentioned : posts,
+    });
   }
 
   private async searchByVector(
