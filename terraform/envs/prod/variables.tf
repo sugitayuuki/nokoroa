@@ -166,7 +166,7 @@ variable "embedding_provider" {
 # embedding_provider の既定は "gemini" なので、既定値どうしの組み合わせは
 # 実測の裏付けが無い。tfvars で openai を指定する前提の値。
 variable "semantic_min_similarity" {
-  description = "Minimum cosine similarity for semantic search results (0-1). Calibrated for embedding_provider = openai"
+  description = "Minimum cosine similarity for semantic search and chat RAG results (0-1). Calibrated for embedding_provider = openai"
   type        = number
   default     = 0.4
 

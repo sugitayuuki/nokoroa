@@ -211,7 +211,7 @@ variable "embedding_provider" {
 }
 
 variable "semantic_min_similarity" {
-  description = "Minimum cosine similarity for a post to be returned by semantic search (0-1)"
+  description = "Minimum cosine similarity for a post to be used by semantic search and chat RAG (0-1)"
   type        = number
   default     = 0.4
 
