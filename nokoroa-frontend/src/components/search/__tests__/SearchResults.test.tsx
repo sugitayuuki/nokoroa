@@ -127,4 +127,15 @@ describe('SearchResults の結果あり表示', () => {
     expect(screen.getByText(/類似度が高い投稿はありませんでした/)).toBeTruthy();
     expect(screen.queryByText(/関連の薄い投稿は除いています/)).toBeNull();
   });
+
+  it('lowRelevance のときは件数を該当件数として見せない', () => {
+    // 「2件の投稿が見つかりました」と出すと、候補が 2 件しか無かったように
+    // 読める。実際は候補はあるが全て下限未満、という状態。
+    render(
+      <SearchResults {...withPosts} mode="semantic" aiAvailable lowRelevance />,
+    );
+
+    expect(screen.queryByText(/件の投稿が見つかりました/)).toBeNull();
+    expect(screen.getByText(/近いものを2件表示しています/)).toBeTruthy();
+  });
 });

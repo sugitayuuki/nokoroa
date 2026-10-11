@@ -246,7 +246,7 @@ export const SearchForm = ({ onSearch, initialFilters }: SearchFormProps) => {
               <SearchIcon fontSize="small" sx={{ mr: 0.5 }} />
               キーワード
             </ToggleButton>
-            <Tooltip title="自然文クエリを Gemini で埋め込み、意味の近い投稿を検索します">
+            <Tooltip title="文章で書くと、意味の近い投稿を探します">
               <ToggleButton value="semantic" aria-label="AI意味検索">
                 <AutoAwesomeIcon fontSize="small" sx={{ mr: 0.5 }} />
                 AI意味検索

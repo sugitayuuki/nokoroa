@@ -142,7 +142,9 @@ export const SearchResults = ({
       return (
         <EmptyState
           message="関連する投稿が見つかりませんでした"
-          description="別の言い回しで試すか、キーワード検索に切り替えてみてください。"
+          // キーワード検索は q 全体の部分一致なので、自然文のまま切り替えても
+          // また 0 件になる。切り替えを勧めるなら短くすることまで言う。
+          description="言い方を変えるか、「桜」「温泉」のような短い言葉にしてキーワード検索も試してみてください。"
         />
       );
     }
@@ -157,7 +159,11 @@ export const SearchResults = ({
           検索結果
         </Typography>
         <Typography variant="body2" color="text.secondary">
-          {total ?? posts.length}件の投稿が見つかりました
+          {lowRelevance
+            ? // 件数は「候補が 3 件しか無かった」ではなく「関連が薄いので
+              // 上位だけ見せている」を意味する。該当件数として読ませない。
+              `近いものを${posts.length}件表示しています`
+            : `${total ?? posts.length}件の投稿が見つかりました`}
         </Typography>
         {mode === 'semantic' &&
           (lowRelevance ? (
