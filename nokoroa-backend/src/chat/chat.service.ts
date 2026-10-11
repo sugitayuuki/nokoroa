@@ -245,6 +245,12 @@ export class ChatService {
       }
     }
 
+    // 候補が埋め草だけ、つまりどの手段でも「関連あり」と言える根拠が
+    // 得られなかった状態か。カードを出すかどうかの判断に使う。
+    const weakIds = new Set(weakVectorHits.map((p) => p.id));
+    const contextIsWeakOnly =
+      posts.length > 0 && posts.every((p) => weakIds.has(p.id));
+
     if (posts.length > 0) {
       relatedPostsRaw = posts;
       contextPosts = posts.map((post) => ({
@@ -334,15 +340,17 @@ export class ChatService {
         usedPostIds.splice(0, usedPostIds.length, ...lastIds);
       }
 
-      if (relatedPostsRaw.length > 0 && !res.destroyed) {
+      const related = this.resolveRelatedPosts(
+        relatedPostsRaw,
+        usedPostIds,
+        contextIsWeakOnly,
+      );
+      if (related.length > 0 && !res.destroyed) {
         // 制御イベントには名前を付ける。本文は全行に data: が付くため
         // event 行を作れず、本文がカード差し替えを名乗れなくなる。
         // payload の type は、名前を見ない旧 frontend との互換のために残す。
         res.write(
-          `event: related_posts\ndata: ${this.relatedPostsEvent(
-            relatedPostsRaw,
-            usedPostIds,
-          )}\n\n`,
+          `event: related_posts\ndata: ${this.relatedPostsEvent(related)}\n\n`,
         );
       }
     } catch (err) {
@@ -401,19 +409,29 @@ export class ChatService {
    * id は backend が採番したもので、ここで送った候補と突き合わせるため、
    * 申告をどう細工されても候補集合の外へは出られない。
    */
-  private relatedPostsEvent(
+  private resolveRelatedPosts(
     posts: FormattedPost[],
     usedPostIds: number[],
-  ): string {
+    contextIsWeakOnly: boolean,
+  ): FormattedPost[] {
     const used = new Set(usedPostIds);
     const mentioned = posts.filter((post) => used.has(post.id));
+    if (mentioned.length > 0) return mentioned;
 
-    return JSON.stringify({
-      type: 'related_posts',
-      // 申告が無い / 候補と1件も一致しないのは、AIが投稿に触れずに答えた場合か
-      // 申告が壊れた場合。絞り込む根拠が無いので従来どおり全件返す。
-      posts: mentioned.length > 0 ? mentioned : posts,
-    });
+    // 申告が無い / 候補と1件も一致しないのは、AIが投稿に触れずに答えた場合か
+    // 申告が壊れた場合。後者と区別できないので、原則は従来どおり全件返す。
+    //
+    // ただし候補が全て下限未満(埋め草)だったなら話が別で、
+    // 「類似度も低い」「AIも使わなかった」の二つが揃っている。
+    // 実際「確定申告の書き方」に AI が『旅行の相談にお答えする役割です』と
+    // 断ったうえで、テスト投稿や高山陣屋が「関連する投稿」として並んでいた。
+    // この場合だけカードを出さない。
+    if (contextIsWeakOnly) return [];
+    return posts;
+  }
+
+  private relatedPostsEvent(posts: FormattedPost[]): string {
+    return JSON.stringify({ type: 'related_posts', posts });
   }
 
   /**
