@@ -3,6 +3,7 @@ import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SearchResults } from '@/components/search/SearchResults';
+import type { SearchResponse } from '@/types/search';
 
 // PostCard は画像・リンク・MUI テーマなど検索結果の外側の関心を持ち込むため、
 // 「0 件のときの案内」を見たいここでは最小のスタブに差し替える。
@@ -65,6 +66,9 @@ describe('SearchResults の 0 件表示', () => {
     );
 
     expect(screen.getByText(/関連する投稿が見つかりませんでした/)).toBeTruthy();
+    // 「言い方を変えて」だけでは足りない。キーワード検索は q 全体の部分一致で、
+    // 自然文のまま切り替えると再び 0 件になるため、短くする指示まで要る。
+    expect(screen.getByText(/短い言葉にして/)).toBeTruthy();
   });
 
   it('キーワード検索の 0 件文言は変えない', () => {
@@ -96,9 +100,22 @@ describe('SearchResults の 0 件表示', () => {
 });
 
 describe('SearchResults の結果あり表示', () => {
+  // as never で潰すと SearchResponse['posts'] の形が変わっても気づけないので、
+  // 実際の型のまま最小限を組む。
+  const post = (id: number): SearchResponse['posts'][number] => ({
+    id,
+    title: `投稿${id}`,
+    content: '本文',
+    tags: [],
+    isPublic: true,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    author: { id: 1, name: 'テスト' },
+  });
+
   const withPosts = {
     ...baseProps,
-    posts: [{ id: 1 }, { id: 2 }] as never,
+    posts: [post(1), post(2)],
     total: 2,
   };
 
