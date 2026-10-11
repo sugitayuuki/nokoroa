@@ -187,6 +187,114 @@ describe('ChatService', () => {
       await service.streamChat({ message: 'ピエールの投稿' }, makeRes().res);
 
       expect(mockPosts.search).toHaveBeenCalled();
+      // 呼ばれただけでは足りない。その結果が AI へ渡る文脈に先頭で載ること、
+      // つまり下限未満のベクトル候補に埋もれないことまで固定する。
+      const sent = JSON.parse(findStreamCall()[1].body) as {
+        context_posts: Array<{ id: number }>;
+      };
+      expect(sent.context_posts[0].id).toBe(9);
+    });
+
+    it('後段が枠を埋めきらなければ、下限未満の候補で埋める', async () => {
+      // 「全滅したときだけ使う」にすると、後段が 1 件でも拾った時点で捨てられる。
+      // 単語分割は「おすすめ」のような汎用語にも当たるため、
+      // 「箱根で温泉のおすすめを教えてください」では類似度 0.38 の温泉の投稿が
+      // 消え、"おすすめ" に当たっただけの無関係な投稿だけが AI へ渡っていた。
+      vectorHitWith(0.62); // 類似度 0.38
+      mockPosts.search.mockResolvedValue({
+        posts: [
+          {
+            id: 9,
+            title: 'おすすめに当たっただけの投稿',
+            content: 'C',
+            location: '東京',
+            author: { name: 'u' },
+          },
+        ],
+        total: 1,
+        hasMore: false,
+      });
+      makeStreamFetch();
+
+      await service.streamChat(
+        { message: '箱根で温泉のおすすめを教えてください' },
+        makeRes().res,
+      );
+
+      const sent = JSON.parse(findStreamCall()[1].body) as {
+        context_posts: Array<{ id: number }>;
+      };
+      // 後段の結果を先に、余った枠へ下限未満の候補を回す
+      expect(sent.context_posts.map((p) => p.id)).toEqual([9, 1]);
+    });
+
+    it('下限以上の候補があるときは下限未満を混ぜない', async () => {
+      mockEmbeddings.searchSimilar.mockResolvedValue([
+        { postId: 1, distance: 0.5 }, // 0.50 残る
+        { postId: 2, distance: 0.8 }, // 0.20 落ちる
+      ]);
+      mockPosts.findManyByIds.mockResolvedValue([
+        {
+          id: 1,
+          title: 'A',
+          content: 'C',
+          location: '',
+          author: { name: 'u' },
+        },
+        {
+          id: 2,
+          title: 'B',
+          content: 'C',
+          location: '',
+          author: { name: 'u' },
+        },
+      ]);
+      makeStreamFetch();
+
+      await service.streamChat({ message: 'test' }, makeRes().res);
+
+      const sent = JSON.parse(findStreamCall()[1].body) as {
+        context_posts: Array<{ id: number }>;
+      };
+      // 枠は空いているが、関連ありが取れた以上わざわざ雑音を足さない
+      expect(sent.context_posts.map((p) => p.id)).toEqual([1]);
+      expect(mockPosts.search).not.toHaveBeenCalled();
+    });
+
+    it('SEMANTIC_MIN_SIMILARITY で下限を上書きできる', async () => {
+      // 設定を読まず既定値に固定する実装でも、キー名を打ち間違えても
+      // 気づけるよう、既定(0.4)なら残る類似度 0.45 が落ちる値を与える。
+      // 共有モックを書き換えると clearAllMocks では実装が戻らず後続へ漏れるので、
+      // このテスト専用の ConfigService を組む。
+      const config = {
+        get: (key: string): string | undefined => {
+          if (key === 'AI_SERVICE_URL') return 'http://test-ai:8000';
+          if (key === 'INTERNAL_AI_TOKEN') return 'test-token';
+          if (key === 'SEMANTIC_MIN_SIMILARITY') return '0.6';
+          return undefined;
+        },
+      };
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          ChatService,
+          { provide: PostsService, useValue: mockPosts },
+          { provide: EmbeddingsService, useValue: mockEmbeddings },
+          { provide: ConfigService, useValue: config },
+        ],
+      }).compile();
+      const svc = module.get<ChatService>(ChatService);
+
+      vectorHitWith(0.55); // 類似度 0.45: 既定なら残り、0.6 なら落ちる
+      mockPosts.search.mockResolvedValue({
+        posts: [],
+        total: 0,
+        hasMore: false,
+      });
+      makeStreamFetch();
+
+      await svc.streamChat({ message: 'test' }, makeRes().res);
+
+      expect(mockPosts.search).toHaveBeenCalled();
     });
 
     it('下限以上のヒットがあればキーワード検索は呼ばない', async () => {

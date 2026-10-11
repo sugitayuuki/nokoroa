@@ -54,7 +54,7 @@ export function resolveSemanticMinSimilarity(
     // 事故で 0 が入ると元の不具合(無関係な投稿が並ぶ)に静かに戻るため、
     // 無効値と違って正常系でも必ず痕跡を残す。
     logger.warn(
-      'SEMANTIC_MIN_SIMILARITY=0: 足切りは無効です（関連の薄い投稿も返します）',
+      'SEMANTIC_MIN_SIMILARITY=0: 意味検索とチャットの足切りは無効です（関連の薄い投稿も返します）',
     );
   }
   return parsed;

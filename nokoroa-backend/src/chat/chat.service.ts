@@ -33,6 +33,9 @@ const AI_STREAM_TIMEOUT_MS = 60_000;
 // 検索ヒット0件時のキーワード分割フォールバックで走査する最大単語数。
 // 上限が無いと1リクエストで単語数ぶんのDB検索が直列実行される。
 const MAX_FALLBACK_KEYWORDS = 5;
+
+// AI へ渡す関連投稿の上限。各段の検索もこの数で打ち切る。
+const MAX_CONTEXT_POSTS = 5;
 // イベント境界(空行)待ちで保持する長さの上限。上流が空行を一度も送らない
 // 壊れ方をすると、これが無いとストリーム全体を抱え込む。
 const MAX_FRAME_BUFFER_CHARS = 100_000;
@@ -93,6 +96,9 @@ export class ChatService {
       this.configService.get('SEMANTIC_MIN_SIMILARITY'),
       this.logger,
     );
+    // 意味検索と同じ値だが、チャットにも効いていることはこの 1 行が無いと
+    // ログからは読み取れない(閾値を動かす人が影響範囲を見誤る)。
+    this.logger.log(`RAG min similarity: ${this.minSimilarity}`);
     this.internalToken =
       this.configService.get<string>('INTERNAL_AI_TOKEN') || '';
     if (!this.internalToken) {
@@ -150,18 +156,25 @@ export class ChatService {
     }> = [];
     let relatedPostsRaw: FormattedPost[] = [];
 
+    // DB 検索が落ちても、拾えていたベクトル候補まで捨てないよう try の外に置く。
+    let posts: FormattedPost[] = [];
+    // 下限に届かなかったベクトル候補。意味的に近いものが 1 件も無いときの埋め草。
+    let weakVectorHits: FormattedPost[] = [];
+    let hasRelatedVectorHit = false;
+
     try {
       // ベクトル検索だけは外部の埋め込みAPIに依存する。ここの失敗を
       // 外へ投げると、外部APIを一切使わない下のDB検索まで巻き添えで
       // 飛ばされ、プロバイダ障害時に関連投稿が完全に出なくなる。
       // ヒット0件と同じ扱いにしてフォールバックへ進ませる。
-      let posts: FormattedPost[] = [];
-      // 下限に届かなかったベクトル候補。他の手段が全て空振りしたときだけ使う。
-      let weakVectorHits: FormattedPost[] = [];
       try {
-        const vector = await this.searchByVector(dto.message, 5);
+        const vector = await this.searchByVector(
+          dto.message,
+          MAX_CONTEXT_POSTS,
+        );
         posts = vector.related;
         weakVectorHits = vector.weak;
+        hasRelatedVectorHit = vector.related.length > 0;
       } catch (error) {
         this.logger.warn(
           `Vector search unavailable, falling back to keyword search: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -200,29 +213,49 @@ export class ChatService {
         }
         if (posts.length > 5) posts.length = 5;
       }
-
-      if (posts.length === 0 && weakVectorHits.length > 0) {
-        // どの手段でも見つからなかったときの最後の手がかり。
-        // 下限を入れたことで、以前なら渡っていた文脈が減るのは避ける。
-        posts = weakVectorHits;
-      }
-
-      if (posts.length > 0) {
-        relatedPostsRaw = posts;
-        contextPosts = posts.map((post) => ({
-          // AIはこの id で「本文で触れた投稿」を申告する。申告された id は
-          // ここで送った候補と突き合わせてから使う (relatedPostsEvent)。
-          id: post.id,
-          title: post.title,
-          content: post.content,
-          location: post.location ?? '',
-          author: post.author.name,
-        }));
-      }
     } catch (error) {
       this.logger.error(
         `Failed to search related posts: ${error instanceof Error ? error.message : 'Unknown error'}`,
       );
+    }
+
+    // 意味的に十分近い候補が 1 件も無かったときに限り、下限未満のベクトル候補で
+    // 空いている枠を埋める。
+    //
+    // 「全滅したときだけ使う」にすると、後段が 1 件でも拾った時点で捨てられる。
+    // 単語分割は「おすすめ」「教えてください」のような汎用語にも当たるため、
+    // 「箱根で温泉のおすすめを教えてください」では類似度 0.38 の温泉の投稿が
+    // 捨てられ、"おすすめ" に当たっただけの無関係な新着 1 件だけが AI へ渡る。
+    // それは足切りを入れる前より悪い。後段の結果を先に並べたうえで、
+    // 余った枠にだけ回す(DB 検索が例外で落ちた場合もここへ来る)。
+    //
+    // 逆に下限以上の候補が取れているときは足さない。雑音を混ぜる理由が無く、
+    // それをやると足切りの意味が消える。
+    if (
+      !hasRelatedVectorHit &&
+      posts.length < MAX_CONTEXT_POSTS &&
+      weakVectorHits.length > 0
+    ) {
+      const seen = new Set(posts.map((p) => p.id));
+      for (const post of weakVectorHits) {
+        if (posts.length >= MAX_CONTEXT_POSTS) break;
+        if (seen.has(post.id)) continue;
+        seen.add(post.id);
+        posts.push(post);
+      }
+    }
+
+    if (posts.length > 0) {
+      relatedPostsRaw = posts;
+      contextPosts = posts.map((post) => ({
+        // AIはこの id で「本文で触れた投稿」を申告する。申告された id は
+        // ここで送った候補と突き合わせてから使う (relatedPostsEvent)。
+        id: post.id,
+        title: post.title,
+        content: post.content,
+        location: post.location ?? '',
+        author: post.author.name,
+      }));
     }
 
     // クライアントが切断したら上流 (AIサービス → Gemini) も畳む。
@@ -406,18 +439,22 @@ export class ChatService {
 
     const related: FormattedPost[] = [];
     const weak: FormattedPost[] = [];
+    let best = 0;
     for (const hit of hits) {
       const post = byId.get(hit.postId);
       if (!post) continue;
       const similarity = Math.max(0, 1 - hit.distance);
+      best = Math.max(best, similarity);
       (similarity >= this.minSimilarity ? related : weak).push(post);
     }
 
-    if (weak.length > 0) {
-      // 閾値が実データに対して厳しすぎないかは、落とした件数が分からないと
-      // 判断できない。クエリ本文は利用者のデータなので出さない。
+    if (related.length === 0 && weak.length > 0) {
+      // 閾値がチャットの入力(検索クエリより長い会話文)に対して厳しすぎないかは、
+      // 最高類似度の分布が分からないと判断できない。一部だけ落ちたケースは
+      // 候補が残るので鳴らさず、全部落ちたときだけ残す。
+      // クエリ本文は利用者のデータなので出さない。
       this.logger.log(
-        `Chat vector search cut ${weak.length}/${hits.length} below ${this.minSimilarity}`,
+        `Chat vector search: none of ${hits.length} reached ${this.minSimilarity} (best=${best.toFixed(2)})`,
       );
     }
     return { related, weak };
