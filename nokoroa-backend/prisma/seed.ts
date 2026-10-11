@@ -26,7 +26,23 @@ async function main() {
     return;
   }
 
-  const hashedPassword = await hash('password123', 10);
+  // このリポジトリは公開されている。seed.ts に固定パスワードを書くと、
+  // それをそのまま本番へ流した時点で「誰でもログインできる本番アカウント」が
+  // 5 つできる。ログインできると AI チャットが叩けるため、課金が青天井になる。
+  //
+  // ローカルの利便性は保ちたいので、固定値を使うのは本番以外に限る。
+  // 本番(NODE_ENV=production)では SEED_PASSWORD を明示したときだけ設定し、
+  // 無ければパスワード無しで作る。validateUser は user.password が無い行を
+  // 弾くので、パスワードログインは成立しない(Google ログインは従来どおり動く)。
+  const seedPassword =
+    process.env.SEED_PASSWORD ??
+    (process.env.NODE_ENV === 'production' ? undefined : 'password123');
+  const hashedPassword = seedPassword ? await hash(seedPassword, 10) : null;
+  console.log(
+    seedPassword
+      ? 'seed ユーザーにパスワードを設定します'
+      : 'seed ユーザーをパスワード無しで作成します(パスワードログイン不可)',
+  );
 
   // Create 5 test users
   const user1 = await prisma.user.upsert({
