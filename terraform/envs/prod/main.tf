@@ -313,6 +313,7 @@ module "ecs" {
   # AI プロバイダの選択
   chat_provider           = var.chat_provider
   embedding_provider      = var.embedding_provider
+  semantic_min_similarity = var.semantic_min_similarity
   secrets_read_policy_arn = module.secrets.secrets_read_policy_arn
 
   # ALB

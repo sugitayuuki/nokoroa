@@ -41,13 +41,22 @@ export class EmbeddingsService {
     }
   }
 
-  async generateForPost(
+  /**
+   * 埋め込みを生成して保存する。失敗時は例外を投げる。
+   * 成否を呼び出し側が知る必要がある経路(backfill スクリプト)はこちらを使う。
+   *
+   * 戻り値は「実際に埋め込みを書いたか」。タイトルも本文も空の投稿は書かずに
+   * false を返す。これを成功と区別しないと、埋め込みが作られていないのに
+   * backfill が success に数えて終了コード 0 で終わってしまう。
+   * 失敗はどの段で落ちたかが分かるよう、投げ直す前にここで記録する。
+   */
+  async generateForPostStrict(
     postId: number,
     title: string,
     content: string,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const fullText = `${title}\n\n${content}`.trim();
-    if (!fullText) return;
+    if (!fullText) return false;
     const text = fullText.slice(0, MAX_TEXT_LEN);
 
     let vector: number[];
@@ -57,7 +66,7 @@ export class EmbeddingsService {
       this.logger.error(
         `Failed to embed post ${postId}: ${err instanceof Error ? err.message : 'unknown'}`,
       );
-      return;
+      throw err;
     }
 
     const literal = this.vectorLiteral(vector);
@@ -74,6 +83,33 @@ export class EmbeddingsService {
       this.logger.error(
         `Failed to upsert embedding for post ${postId}: ${err instanceof Error ? err.message : 'unknown'}`,
       );
+      throw err;
+    }
+    return true;
+  }
+
+  /**
+   * 埋め込みを生成して保存する。失敗はログに残して飲み込む。
+   * 投稿の作成・更新を埋め込みの失敗で巻き添えにしない経路はこちらを使う。
+   *
+   * searchSimilar / searchSimilarStrict と同じく、対になる 2 つの違いは
+   * 呼び出し側から見て「例外を投げるか、飲み込むか」だけ。
+   * ただしログの置き場所は検索側と逆で、どの段で落ちたかを残すために
+   * Strict が書く(ここで重ねて出すと二重記録になる)。
+   *
+   * 戻り値は Strict と同じ「実際に書いたか」だが、false は
+   * 「対象外(タイトルも本文も空)」と「失敗」の両方を意味する。
+   * 戻り値で集計したい呼び出し側は、両者を区別できる Strict を使うこと。
+   */
+  async generateForPost(
+    postId: number,
+    title: string,
+    content: string,
+  ): Promise<boolean> {
+    try {
+      return await this.generateForPostStrict(postId, title, content);
+    } catch {
+      return false;
     }
   }
 

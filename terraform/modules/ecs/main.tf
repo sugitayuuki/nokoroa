@@ -179,6 +179,12 @@ resource "aws_ecs_task_definition" "backend" {
         {
           name  = "AI_SERVICE_URL"
           value = "http://localhost:${var.ai_port}"
+        },
+        # 意味検索の足切り閾値。適正値は投稿データの分布で変わるため、
+        # イメージを焼き直さずに調整できるよう環境変数で渡す。
+        {
+          name  = "SEMANTIC_MIN_SIMILARITY"
+          value = tostring(var.semantic_min_similarity)
         }
       ]
 

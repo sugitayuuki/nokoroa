@@ -43,6 +43,30 @@ google_client_secret = "YOUR_GOOGLE_CLIENT_SECRET"
 chat_provider      = "claude"
 embedding_provider = "openai"
 
+# --- 意味検索の足切り ---
+# 類似度がこの値未満の投稿は検索結果に出さない (0〜1)。
+# 適正値は投稿データの分布で変わる。本番の実測では
+# 完全一致=0.73 / 関連あり=0.44 / 無関係=0.33〜0.36 だったため 0.4 が既定。
+# 下げるとハズレが混ざり、上げると「関連が薄い」扱いが増える。
+# 0 を入れると足切りを完全に無効化する(逃げ道。起動ログに警告が出る)。
+# この値を超える投稿が 1 件も無いときは 0 件にせず、上位 3 件を
+# 「関連が薄いかもしれません」と断って返す。閾値を外しても主要導線が
+# 無言で 0 件にならないようにするため。効き具合は
+# 「Semantic search cut …」のログで確認できる。
+#
+# ★ embedding_provider を変えたらこの値も実測し直すこと。
+#   プロバイダが変わると類似度の分布ごと変わるため、同じ 0.4 が
+#   「ほぼ全件0件」にも「足切りが実質無効」にも化ける。
+#
+# ★ この値は terraform apply だけでは反映されない。
+#   ECS サービスは lifecycle.ignore_changes = [task_definition] を持つため、
+#   apply は新しいタスク定義リビジョンを登録するだけで、稼働中のタスクは
+#   古い値を使い続ける(エラーも差分も出ないので気づけない)。
+#   apply のあとに必ずデプロイワークフローを流すこと。deploy.yml は
+#   ファミリ名で最新リビジョンを引くので、新しい値がそのまま載る。
+#   急ぐ場合のみ: aws ecs update-service --task-definition <新リビジョン>
+semantic_min_similarity = 0.4
+
 gemini_api_key    = ""
 anthropic_api_key = "YOUR_ANTHROPIC_API_KEY"
 openai_api_key    = "YOUR_OPENAI_API_KEY"

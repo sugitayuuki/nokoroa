@@ -210,6 +210,17 @@ variable "embedding_provider" {
   }
 }
 
+variable "semantic_min_similarity" {
+  description = "Minimum cosine similarity for a post to be returned by semantic search (0-1)"
+  type        = number
+  default     = 0.4
+
+  validation {
+    condition     = var.semantic_min_similarity >= 0 && var.semantic_min_similarity <= 1
+    error_message = "semantic_min_similarity must be between 0 and 1."
+  }
+}
+
 variable "internal_api_key_secret_arn" {
   description = "ARN of the internal API key secret (Backend <-> AI sidecar)"
   type        = string

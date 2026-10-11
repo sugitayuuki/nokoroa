@@ -159,3 +159,21 @@ variable "embedding_provider" {
   type        = string
   default     = "gemini"
 }
+
+# 意味検索で「関連あり」とみなす下限。下げるとハズレが混ざり、上げると
+# 「関連が薄い」扱いが増える。投稿が増えて分布が変わったらここで調整する。
+# 既定 0.4 は embedding_provider = "openai" で実測した値。上の
+# embedding_provider の既定は "gemini" なので、既定値どうしの組み合わせは
+# 実測の裏付けが無い。tfvars で openai を指定する前提の値。
+variable "semantic_min_similarity" {
+  description = "Minimum cosine similarity for semantic search results (0-1). Calibrated for embedding_provider = openai"
+  type        = number
+  default     = 0.4
+
+  # module 側にも同じ検証があるが、tfvars の誤りは呼び出し元で落ちた方が
+  # どこを直せばよいか分かる。
+  validation {
+    condition     = var.semantic_min_similarity >= 0 && var.semantic_min_similarity <= 1
+    error_message = "semantic_min_similarity must be between 0 and 1."
+  }
+}

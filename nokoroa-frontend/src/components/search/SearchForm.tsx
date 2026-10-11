@@ -201,7 +201,9 @@ export const SearchForm = ({ onSearch, initialFilters }: SearchFormProps) => {
   ) => {
     if (!newMode || newMode === mode) return;
     setMode(newMode);
-    setQuery('');
+    // クエリは持ち越す。どちらのモードも自由文を同じ入力欄で受けており、
+    // 意味検索が 0 件のときは「キーワード検索に切り替えて」と案内するため、
+    // ここで消すと案内に従った利用者が打ち直しになる。
     if (newMode === 'semantic') {
       setTags([]);
       setLocation('');
@@ -244,7 +246,7 @@ export const SearchForm = ({ onSearch, initialFilters }: SearchFormProps) => {
               <SearchIcon fontSize="small" sx={{ mr: 0.5 }} />
               キーワード
             </ToggleButton>
-            <Tooltip title="自然文クエリを Gemini で埋め込み、意味の近い投稿を検索します">
+            <Tooltip title="文章で書くと、意味の近い投稿を探します">
               <ToggleButton value="semantic" aria-label="AI意味検索">
                 <AutoAwesomeIcon fontSize="small" sx={{ mr: 0.5 }} />
                 AI意味検索
