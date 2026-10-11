@@ -97,4 +97,15 @@ describe('SearchResults の結果あり表示', () => {
 
     expect(screen.queryByText(/関連度の高い順/)).toBeNull();
   });
+
+  it('lowRelevance のときは「関連が薄い」と断ってから並べる', () => {
+    // 足切りで全滅したケース。0 件にはせず上位を見せているので、
+    // 通常の注記のまま出すと「精度が低いだけ」に見えて誤解させる。
+    render(
+      <SearchResults {...withPosts} mode="semantic" aiAvailable lowRelevance />,
+    );
+
+    expect(screen.getByText(/類似度が高い投稿はありませんでした/)).toBeTruthy();
+    expect(screen.queryByText(/関連の薄い投稿は除いています/)).toBeNull();
+  });
 });

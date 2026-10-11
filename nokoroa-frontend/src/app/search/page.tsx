@@ -67,6 +67,7 @@ function SearchPageContent() {
   const [resultMeta, setResultMeta] = useState<{
     total: number;
     aiAvailable?: boolean;
+    lowRelevance?: boolean;
   }>();
   // 同条件の再検索では SWR キーが変わらず data の参照も変わらないため、
   // [data] だけを依存にすると setResultMeta(undefined) を取り消せない。
@@ -75,7 +76,11 @@ function SearchPageContent() {
 
   useEffect(() => {
     if (data) {
-      setResultMeta({ total: data.total, aiAvailable: data.aiAvailable });
+      setResultMeta({
+        total: data.total,
+        aiAvailable: data.aiAvailable,
+        lowRelevance: data.lowRelevance,
+      });
     }
   }, [data, metaGeneration]);
 
@@ -132,6 +137,7 @@ function SearchPageContent() {
         posts={allPosts}
         total={resultMeta?.total}
         aiAvailable={resultMeta?.aiAvailable}
+        lowRelevance={resultMeta?.lowRelevance}
         isLoading={isLoading}
         error={error}
         hasSearched={hasSearched}

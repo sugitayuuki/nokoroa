@@ -29,6 +29,12 @@ interface SearchResultsProps {
   total?: number;
   /** 意味検索で AI が利用できなかったか */
   aiAvailable?: boolean;
+  /**
+   * 意味検索で、類似度の下限を超える投稿が 1 件も無かったか。
+   * このとき posts には上位数件が入っているので、そのまま並べず
+   * 「関連が薄い」と断る必要がある。
+   */
+  lowRelevance?: boolean;
   isLoading: boolean;
   error?: Error;
   hasSearched: boolean;
@@ -49,6 +55,7 @@ export const SearchResults = ({
   posts,
   total,
   aiAvailable,
+  lowRelevance,
   isLoading,
   error,
   hasSearched,
@@ -152,11 +159,18 @@ export const SearchResults = ({
         <Typography variant="body2" color="text.secondary">
           {total ?? posts.length}件の投稿が見つかりました
         </Typography>
-        {mode === 'semantic' && (
-          <Alert severity="info" sx={{ mt: 2 }} icon={false}>
-            AI意味検索は関連度の高い順に上位のみを表示し、関連の薄い投稿は除いています
-          </Alert>
-        )}
+        {mode === 'semantic' &&
+          (lowRelevance ? (
+            // 足切りで全滅したケース。0 件にはせず上位だけ見せているので、
+            // 「関連が薄い」と先に断らないと精度が低いだけに見える。
+            <Alert severity="warning" sx={{ mt: 2 }} icon={false}>
+              類似度が高い投稿はありませんでした。関連が薄いかもしれませんが、近いものを表示します
+            </Alert>
+          ) : (
+            <Alert severity="info" sx={{ mt: 2 }} icon={false}>
+              AI意味検索は関連度の高い順に上位のみを表示し、関連の薄い投稿は除いています
+            </Alert>
+          ))}
       </Box>
 
       <Divider sx={{ mb: 3 }} />

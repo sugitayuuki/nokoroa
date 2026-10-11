@@ -32,6 +32,11 @@ import {
 // (apply だけでは稼働中のタスクに反映されない)。
 const DEFAULT_SEMANTIC_MIN_SIMILARITY = 0.4;
 
+// 閾値を超える投稿が 1 件も無かったときに、代わりに見せる件数。
+// 「何も出ない」を避けるのが目的なので、関連の薄いものを 10 件並べても
+// 元の不具合に戻るだけ。手がかりとして足りる最小限に絞る。
+const SEMANTIC_LOW_RELEVANCE_LIMIT = 3;
+
 /**
  * 不正な設定値をログに出すための表現を作る。
  * 値をそのまま出すと、別の秘密値を貼り間違えたときに平文で残り、改行を含む値では
@@ -399,22 +404,31 @@ export class PostsService {
     // 利用者から見ると全件ハズレに見えるので、ここで足切りする。
     const kept = ranked.filter((p) => p.similarity >= this.minSimilarity);
 
+    // 閾値を超える投稿が 1 件も無いときは 0 件にせず、上位だけを返して
+    // 「関連が薄い」と断る。閾値の適正値は実測が薄く、外し方によっては
+    // 本来ヒットすべき投稿まで消える。意味検索はキーワード検索への自動
+    // フォールバックを持たないため、主要導線が無言で 0 件になる方が害が大きい。
+    const lowRelevance = kept.length === 0 && ranked.length > 0;
+    const posts = lowRelevance
+      ? ranked.slice(0, SEMANTIC_LOW_RELEVANCE_LIMIT)
+      : kept;
+
     if (kept.length < ranked.length) {
       // 閾値が実データに対して厳しすぎるかどうかは、落とした件数と
-      // 最高類似度が分からないと判断できない。特に全滅したケースは、
-      // ログ上「そもそも投稿が無い」と区別がつかなくなる。
+      // 最高類似度が分からないと判断できない。
       // クエリ本文は利用者のデータなので出さない。
       const best = ranked[0]?.similarity ?? 0;
       this.logger.log(
-        `Semantic search cut ${ranked.length - kept.length}/${ranked.length} below ${this.minSimilarity} (best=${best.toFixed(2)}${kept.length === 0 ? ', all cut' : ''})`,
+        `Semantic search cut ${ranked.length - kept.length}/${ranked.length} below ${this.minSimilarity} (best=${best.toFixed(2)}${lowRelevance ? ', none above threshold' : ''})`,
       );
     }
 
     return {
-      posts: kept,
-      total: kept.length,
+      posts,
+      total: posts.length,
       hasMore: false,
       aiAvailable: true,
+      lowRelevance,
     };
   }
 

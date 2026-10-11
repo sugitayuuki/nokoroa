@@ -781,9 +781,9 @@ describe('PostsService', () => {
       expect(result.aiAvailable).toBe(true);
     });
 
-    it('全件が下限未満なら空結果だが aiAvailable は true のまま', async () => {
-      // 「AIが落ちている」と「関連が無い」を取り違えると、
-      // 利用者に出す案内が逆になる。
+    it('全件が下限未満でも 0 件にせず、lowRelevance を立てて上位を返す', async () => {
+      // 閾値の適正値は実測が薄く、外すと本来ヒットすべき投稿まで消える。
+      // 意味検索はキーワード検索へ自動で落ちないので、無言の 0 件は避ける。
       mockEmbeddingsService.searchSimilarStrict.mockResolvedValueOnce([
         { postId: 1, distance: 0.67 },
       ]);
@@ -793,9 +793,41 @@ describe('PostsService', () => {
 
       const result = await service.searchSemantic({ q: 'q', limit: 5 });
 
-      expect(result.posts).toEqual([]);
-      expect(result.total).toBe(0);
+      expect(result.posts).toHaveLength(1);
+      expect(result.total).toBe(1);
+      expect(result.lowRelevance).toBe(true);
       expect(result.aiAvailable).toBe(true);
+    });
+
+    it('lowRelevance のときに並べるのは上位 3 件まで', async () => {
+      // 関連の薄いものを 10 件並べると元の不具合に戻る。
+      mockEmbeddingsService.searchSimilarStrict.mockResolvedValueOnce(
+        [1, 2, 3, 4, 5].map((id) => ({ postId: id, distance: 0.7 })),
+      );
+      mockPrismaService.post.findMany.mockResolvedValue(
+        [1, 2, 3, 4, 5].map((id) => ({ ...mockPost, id })),
+      );
+
+      const result = await service.searchSemantic({ q: 'q', limit: 5 });
+
+      expect(result.posts).toHaveLength(3);
+      expect(result.lowRelevance).toBe(true);
+    });
+
+    it('1 件でも下限を超えていれば lowRelevance は立てず、超えた分だけ返す', async () => {
+      mockEmbeddingsService.searchSimilarStrict.mockResolvedValueOnce([
+        { postId: 1, distance: 0.2 },
+        { postId: 2, distance: 0.9 },
+      ]);
+      mockPrismaService.post.findMany.mockResolvedValue([
+        { ...mockPost, id: 1 },
+        { ...mockPost, id: 2 },
+      ]);
+
+      const result = await service.searchSemantic({ q: 'q', limit: 5 });
+
+      expect(result.posts.map((p) => p.id)).toEqual([1]);
+      expect(result.lowRelevance).toBe(false);
     });
 
     it('distance が 1 を超えても similarity は 0 にクランプする', async () => {
@@ -816,37 +848,46 @@ describe('PostsService', () => {
   });
 
   describe('searchSemantic の類似度下限設定', () => {
-    // 下限は「落ちる側」と「残る側」の両方を見ないと固定できない。
-    // 片側だけだと、常に 1.0 を返す実装や NaN を返す実装でも通ってしまう。
-    const runWith = async (envValue: unknown, distance: number) => {
+    const SUBJECT_ID = 1;
+    // 常に下限を満たす当て馬。これが無いと「全件が下限未満」になって
+    // lowRelevance 経路で上位が返るため、対象が落ちたのかどうかを観測できない。
+    const ANCHOR_ID = 99;
+
+    /** 指定した設定値のもとで、類似度 1-distance の投稿が結果に残るか */
+    const survives = async (envValue: unknown, distance: number) => {
       const svc = await buildService(() => envValue);
       mockEmbeddingsService.searchSimilarStrict.mockResolvedValueOnce([
-        { postId: 1, distance },
+        { postId: ANCHOR_ID, distance: 0 },
+        { postId: SUBJECT_ID, distance },
       ]);
       mockPrismaService.post.findMany.mockResolvedValue([
-        { ...mockPost, id: 1 },
+        { ...mockPost, id: SUBJECT_ID },
+        { ...mockPost, id: ANCHOR_ID },
       ]);
-      return svc.searchSemantic({ q: 'q', limit: 5 });
+      const result = await svc.searchSemantic({ q: 'q', limit: 5 });
+      return result.posts.some((p) => p.id === SUBJECT_ID);
     };
 
+    // 下限は「落ちる側」と「残る側」の両方を見ないと固定できない。
+    // 片側だけだと、常に 1.0 を返す実装や NaN を返す実装でも通ってしまう。
     it('SEMANTIC_MIN_SIMILARITY で指定した値がそのまま下限になる', async () => {
       // 0.6 指定: 類似度 0.5 は落ち、0.65 は残る
-      expect((await runWith('0.6', 0.5)).posts).toEqual([]);
-      expect((await runWith('0.6', 0.35)).posts).toHaveLength(1);
+      expect(await survives('0.6', 0.5)).toBe(false);
+      expect(await survives('0.6', 0.35)).toBe(true);
     });
 
     it('数値型で渡されても文字列と同じに扱う', async () => {
       // ConfigService の get は string を謳うが実体は unknown。
       // 数値経路を落として既定値に倒す実装でも気づけるよう、両側を見る。
-      expect((await runWith(0.6, 0.5)).posts).toEqual([]);
-      expect((await runWith(0.6, 0.35)).posts).toHaveLength(1);
+      expect(await survives(0.6, 0.5)).toBe(false);
+      expect(await survives(0.6, 0.35)).toBe(true);
     });
 
     it('1 を指定すると完全一致に近いものしか残らない', async () => {
       // 範囲の上端。1 を「範囲外」として弾くと既定値 0.4 に落ち、
       // 類似度 0.5 の投稿が残ってしまう。
-      expect((await runWith('1', 0.5)).posts).toEqual([]);
-      expect((await runWith('1', 0)).posts).toHaveLength(1);
+      expect(await survives('1', 0.5)).toBe(false);
+      expect(await survives('1', 0)).toBe(true);
     });
 
     it('読み出すキーは SEMANTIC_MIN_SIMILARITY である', async () => {
@@ -866,22 +907,20 @@ describe('PostsService', () => {
       ['空白だけの値', '   '],
     ])('%s は既定値 0.4 へ戻す', async (_label, envValue) => {
       // 0 に落ちると足切りが無言で消え、元の不具合に戻る。
-      // 逆に 1.0 等へ飛んでも全件 0 件になるので、両側を固定する。
-      expect((await runWith(envValue, 0.7)).posts).toEqual([]);
-      expect((await runWith(envValue, 0.55)).posts).toHaveLength(1);
+      // 逆に 1.0 等へ飛ぶと全件落ちるので、両側を固定する。
+      expect(await survives(envValue, 0.7)).toBe(false);
+      expect(await survives(envValue, 0.55)).toBe(true);
     });
 
     it('未設定時の既定値はちょうど 0.4', async () => {
       // 本変更の主題そのものの定数。境界の両側を押さえないと、
       // 既定値が 0.35 や 0.45 へ動いても全テストが緑のまま通る。
-      expect((await runWith(undefined, 0.6)).posts).toHaveLength(1); // 類似度 0.40
-      expect((await runWith(undefined, 0.601)).posts).toEqual([]); // 類似度 0.399
+      expect(await survives(undefined, 0.6)).toBe(true); // 類似度 0.40
+      expect(await survives(undefined, 0.601)).toBe(false); // 類似度 0.399
     });
 
     it('0 を明示指定すると足切りを無効化できる（逃げ道として残す）', async () => {
-      const result = await runWith('0', 0.99);
-
-      expect(result.posts).toHaveLength(1);
+      expect(await survives('0', 0.99)).toBe(true);
     });
   });
 
