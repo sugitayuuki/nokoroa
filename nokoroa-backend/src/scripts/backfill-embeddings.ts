@@ -6,6 +6,64 @@ import { AppModule } from '../app.module';
 import { EmbeddingsService } from '../embeddings/embeddings.service';
 import { PrismaService } from '../prisma/prisma.service';
 
+export interface BackfillTally {
+  success: number;
+  skipped: number;
+  failed: number;
+}
+
+type BackfillPost = { id: number; title: string; content: string };
+
+/**
+ * 投稿を 1 件ずつ埋め込み、成否を数える。
+ * スクリプト本体から切り出してあるのは、終了コードの根拠になる
+ * 「失敗を success に数えない」という不変条件をテストで固定するため。
+ */
+export async function tallyBackfill(
+  posts: BackfillPost[],
+  embeddings: Pick<EmbeddingsService, 'generateForPostStrict'>,
+  logger: Pick<Logger, 'warn'>,
+): Promise<BackfillTally> {
+  let success = 0;
+  let failed = 0;
+  let skipped = 0;
+
+  for (const post of posts) {
+    try {
+      // 飲み込む側ではなく Strict を使う。このスクリプトはプロバイダ切替時の
+      // 唯一の復旧手段(README 参照)で、成否を取り違えると
+      // 「直したつもり」で壊れたまま運用が続く。
+      const embedded = await embeddings.generateForPostStrict(
+        post.id,
+        post.title,
+        post.content,
+      );
+      if (embedded) {
+        success += 1;
+      } else {
+        skipped += 1;
+        logger.warn(`post ${post.id}: skipped (title と content が空)`);
+      }
+    } catch (err) {
+      failed += 1;
+      logger.warn(
+        `post ${post.id}: failed (${err instanceof Error ? err.message : 'unknown'})`,
+      );
+    }
+  }
+
+  return { success, skipped, failed };
+}
+
+/**
+ * 1 件でも落ちたら埋め込みは歯抜けのままなので、終了コードで分かるようにする。
+ * CI やデプロイ手順から呼ばれたとき、無言で次の手順へ進ませない。
+ * skipped は「失敗」ではなく「対象外」なので非ゼロにはしない(README 参照)。
+ */
+export function exitCodeFor(tally: BackfillTally): number {
+  return tally.failed > 0 ? 1 : 0;
+}
+
 async function main() {
   const logger = new Logger('backfill');
   const app = await NestFactory.createApplicationContext(AppModule, {
@@ -36,48 +94,26 @@ async function main() {
 
     logger.log(`${posts.length} posts to embed (onlyMissing=${onlyMissing})`);
 
-    let success = 0;
-    let failed = 0;
-    let skipped = 0;
-
-    for (const post of posts) {
-      try {
-        // 飲み込む側ではなく Strict を使う。このスクリプトはプロバイダ切替時の
-        // 唯一の復旧手段(README 参照)で、成否を取り違えると
-        // 「直したつもり」で壊れたまま運用が続く。
-        const embedded = await embeddings.generateForPostStrict(
-          post.id,
-          post.title,
-          post.content,
-        );
-        if (embedded) {
-          success += 1;
-        } else {
-          skipped += 1;
-          logger.warn(`post ${post.id}: skipped (title と content が空)`);
-        }
-      } catch (err) {
-        failed += 1;
-        logger.warn(
-          `post ${post.id}: failed (${err instanceof Error ? err.message : 'unknown'})`,
-        );
-      }
-    }
+    const { success, skipped, failed } = await tallyBackfill(
+      posts,
+      embeddings,
+      logger,
+    );
 
     logger.log(
       `done — success=${success}, skipped=${skipped}, failed=${failed}`,
     );
-    // 1件でも落ちたら埋め込みは歯抜けのままなので、終了コードで分かるようにする。
-    // CI やデプロイ手順から呼ばれたとき、無言で次の手順へ進ませない。
-    if (failed > 0) {
-      process.exitCode = 1;
-    }
+    process.exitCode = exitCodeFor({ success, skipped, failed });
   } finally {
     await app.close();
   }
 }
 
-main().catch((err) => {
-  console.error('[backfill] fatal:', err);
-  process.exit(1);
-});
+// 直接実行されたときだけ走らせる。これが無いと、集計と終了コードを
+// テストから import しただけで Nest のアプリ全体が起動してしまう。
+if (require.main === module) {
+  main().catch((err) => {
+    console.error('[backfill] fatal:', err);
+    process.exit(1);
+  });
+}

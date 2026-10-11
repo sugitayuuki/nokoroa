@@ -74,6 +74,25 @@ describe('SearchResults の 0 件表示', () => {
       screen.getByText(/検索条件にマッチする投稿がありません/),
     ).toBeTruthy();
   });
+
+  it('クエリ無しのキーワード検索（タグ検索）では入力を促さない', () => {
+    // /search?tags=X から来るタグ検索は q を持たないため hasQuery=false。
+    // 「入力してください」の分岐から mode の条件が外れると、
+    // タグ検索の結果案内がこの文言に乗っ取られる。
+    render(
+      <SearchResults
+        {...baseProps}
+        mode="keyword"
+        hasQuery={false}
+        total={0}
+      />,
+    );
+
+    expect(screen.queryByText(/探したいことを入力してください/)).toBeNull();
+    expect(
+      screen.getByText(/検索条件にマッチする投稿がありません/),
+    ).toBeTruthy();
+  });
 });
 
 describe('SearchResults の結果あり表示', () => {
