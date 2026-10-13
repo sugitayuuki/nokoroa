@@ -718,6 +718,43 @@ describe('ChatService', () => {
       expect(relatedPostIds(write)).toEqual([1, 2, 3, 4, 5]);
     });
 
+    /** 全候補を下限未満(埋め草)にし、後段も空振りさせる */
+    function setupWeakOnlyHits() {
+      mockEmbeddings.searchSimilar.mockResolvedValue(
+        hits.map((h) => ({ postId: h.id, distance: 0.8 })), // 類似度 0.20
+      );
+      mockPosts.findManyByIds.mockResolvedValue(hits);
+      mockPosts.search.mockResolvedValue({
+        posts: [],
+        total: 0,
+        hasMore: false,
+      });
+    }
+
+    it('候補が埋め草だけで申告も無ければカードを出さない', async () => {
+      // 「確定申告の書き方」に AI が『旅行の相談にお答えする役割です』と
+      // 断ったのに、テスト投稿や高山陣屋が「関連する投稿」として並んでいた。
+      // 類似度も低く AI も使わなかった以上、関連だと言える根拠が無い。
+      setupWeakOnlyHits();
+      makeAnswerStream(['確定申告のご質問には対応できません。', '[DONE]']);
+      const { res, write } = makeRes();
+
+      await service.streamChat({ message: '確定申告の書き方' }, res);
+
+      expect(relatedPostIds(write)).toBeNull();
+    });
+
+    it('埋め草でも AI が使ったと申告すればカードに出す', async () => {
+      // 下限未満でも、AI がその投稿を根拠に答えたなら本文と食い違わない。
+      setupWeakOnlyHits();
+      makeAnswerStream(['築地の投稿が近いです。', usedPosts(1), '[DONE]']);
+      const { res, write } = makeRes();
+
+      await service.streamChat({ message: '市場の朝' }, res);
+
+      expect(relatedPostIds(write)).toEqual([1]);
+    });
+
     // 申告は生成物なので、候補外の id を混ぜられても候補集合から出られては
     // ならない。ここが崩れると題名照合方式と同じ濫用経路が開く。
     it('候補に無い id は採用しない', async () => {
