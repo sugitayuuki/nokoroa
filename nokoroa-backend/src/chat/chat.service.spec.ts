@@ -755,6 +755,85 @@ describe('ChatService', () => {
       expect(relatedPostIds(write)).toEqual([1]);
     });
 
+    /**
+     * 全候補を下限未満にし、メッセージ全体の検索は空振り、単語分割だけが
+     * 汎用語で 1 件拾う状態にする。本番で「確定申告の書き方を教えて」の
+     * "教えて" が「京都の隠れた名所巡り」の本文に当たった形。
+     */
+    function setupWordSplitOnlyHit() {
+      mockEmbeddings.searchSimilar.mockResolvedValue(
+        hits.map((h) => ({ postId: h.id, distance: 0.8 })),
+      );
+      mockPosts.findManyByIds.mockResolvedValue(hits);
+      mockPosts.search
+        .mockResolvedValueOnce({ posts: [], total: 0, hasMore: false })
+        .mockResolvedValue({
+          posts: [post(10, '京都の隠れた名所巡り', 'ジェームズ')],
+          total: 1,
+          hasMore: false,
+        });
+    }
+
+    it('単語分割の汎用語に当たっただけの候補は、申告が無ければカードに出さない', async () => {
+      // 埋め草だけなら隠す、という条件は本番で崩れた。"教えて" が本文に
+      // 当たった 1 件が「埋め草ではない候補」扱いになり、AI が断った回答の
+      // 下に 5 件が並んだ。単語分割の部分一致は「関連あり」の根拠にならない。
+      setupWordSplitOnlyHit();
+      makeAnswerStream(['確定申告のご質問には対応できません。', '[DONE]']);
+      const { res, write } = makeRes();
+
+      await service.streamChat({ message: '確定申告の書き方を教えて' }, res);
+
+      expect(relatedPostIds(write)).toBeNull();
+    });
+
+    it('単語分割由来でも AI が使ったと申告すればカードに出す', async () => {
+      setupWordSplitOnlyHit();
+      makeAnswerStream(['京都の投稿が近いです。', usedPosts(10), '[DONE]']);
+      const { res, write } = makeRes();
+
+      await service.streamChat({ message: '京都 静か 教えて' }, res);
+
+      expect(relatedPostIds(write)).toEqual([10]);
+    });
+
+    it('ベクトル検索が落ちて単語分割しか無い場合も、申告が無ければカードに出さない', async () => {
+      mockEmbeddings.searchSimilar.mockRejectedValue(new Error('down'));
+      mockPosts.search
+        .mockResolvedValueOnce({ posts: [], total: 0, hasMore: false })
+        .mockResolvedValue({
+          posts: [post(10, '京都の隠れた名所巡り', 'ジェームズ')],
+          total: 1,
+          hasMore: false,
+        });
+      makeAnswerStream(['確定申告のご質問には対応できません。', '[DONE]']);
+      const { res, write } = makeRes();
+
+      await service.streamChat({ message: '確定申告の書き方を教えて' }, res);
+
+      expect(relatedPostIds(write)).toBeNull();
+    });
+
+    it('メッセージ全体に一致した候補があれば、申告が無くても従来どおり全件出す', async () => {
+      // 全文一致は利用者の言葉がそのまま載っている投稿で、根拠として十分。
+      // ここは変えない(埋め草で埋めた残り枠も従来どおり一緒に出る)。
+      mockEmbeddings.searchSimilar.mockResolvedValue(
+        hits.map((h) => ({ postId: h.id, distance: 0.8 })),
+      );
+      mockPosts.findManyByIds.mockResolvedValue(hits);
+      mockPosts.search.mockResolvedValue({
+        posts: [post(10, '築地場外市場の朝', 'アレックス')],
+        total: 1,
+        hasMore: false,
+      });
+      makeAnswerStream(['旅行のご相談ですね。', '[DONE]']);
+      const { res, write } = makeRes();
+
+      await service.streamChat({ message: '築地場外市場' }, res);
+
+      expect(relatedPostIds(write)).toEqual([10, 1, 2, 3, 4]);
+    });
+
     // 申告は生成物なので、候補外の id を混ぜられても候補集合から出られては
     // ならない。ここが崩れると題名照合方式と同じ濫用経路が開く。
     it('候補に無い id は採用しない', async () => {
