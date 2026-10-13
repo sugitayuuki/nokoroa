@@ -161,6 +161,10 @@ export class ChatService {
     // 下限に届かなかったベクトル候補。意味的に近いものが 1 件も無いときの埋め草。
     let weakVectorHits: FormattedPost[] = [];
     let hasRelatedVectorHit = false;
+    // 単語分割の部分一致で拾った候補。「教えて」「おすすめ」のような汎用語が
+    // 本文に当たっただけのものを含むため、埋め草と同じく「関連あり」の根拠には
+    // しない(AI へは渡す。使ったなら申告で返ってくる)。
+    const weakKeywordIds = new Set<number>();
 
     try {
       // ベクトル検索だけは外部の埋め込みAPIに依存する。ここの失敗を
@@ -207,6 +211,7 @@ export class ChatService {
             if (!seen.has(p.id)) {
               seen.add(p.id);
               posts.push(p);
+              weakKeywordIds.add(p.id);
             }
           }
           if (posts.length >= 5) break;
@@ -245,9 +250,14 @@ export class ChatService {
       }
     }
 
-    // 候補が埋め草だけ、つまりどの手段でも「関連あり」と言える根拠が
+    // 候補が根拠の弱いものだけ、つまりどの手段でも「関連あり」と言える根拠が
     // 得られなかった状態か。カードを出すかどうかの判断に使う。
-    const weakIds = new Set(weakVectorHits.map((p) => p.id));
+    // 弱い根拠は 2 種類: 下限未満のベクトル候補(埋め草)と、単語分割の部分一致。
+    // メッセージ全体の一致は利用者の言葉がそのまま載っている投稿なので強いまま。
+    const weakIds = new Set([
+      ...weakVectorHits.map((p) => p.id),
+      ...weakKeywordIds,
+    ]);
     const contextIsWeakOnly =
       posts.length > 0 && posts.every((p) => weakIds.has(p.id));
 
@@ -421,10 +431,11 @@ export class ChatService {
     // 申告が無い / 候補と1件も一致しないのは、AIが投稿に触れずに答えた場合か
     // 申告が壊れた場合。後者と区別できないので、原則は従来どおり全件返す。
     //
-    // ただし候補が全て下限未満(埋め草)だったなら話が別で、
-    // 「類似度も低い」「AIも使わなかった」の二つが揃っている。
-    // 実際「確定申告の書き方」に AI が『旅行の相談にお答えする役割です』と
-    // 断ったうえで、テスト投稿や高山陣屋が「関連する投稿」として並んでいた。
+    // ただし候補が全て根拠の弱いもの(下限未満の埋め草か、単語分割の部分一致)
+    // だったなら話が別で、「関連と言える根拠が無い」「AIも使わなかった」の
+    // 二つが揃っている。実際「確定申告の書き方を教えて」に AI が『旅行の
+    // 相談にお答えする役割です』と断ったうえで、"教えて" が本文に当たった
+    // 1 件を足がかりに埋め草ごと 5 件が「関連する投稿」として並んでいた。
     // この場合だけカードを出さない。
     if (contextIsWeakOnly) return [];
     return posts;
